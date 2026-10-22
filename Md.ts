@@ -48,8 +48,12 @@ export type Block =
 
 const NAME  = new RegExp("\\[(" + Names.NAME + ")\\]", "g");
 // where a link may go: http(s), mailto, or a path on this site ("/x",
-// but not "//x" nor "/\x", which a browser reads as another site's)
-const HREF  = /(?:https?:\/\/|mailto:|\/(?![\/\\]))/.source;
+// but not "//x" nor "/\x", which a browser reads as another site's, nor
+// "/ x": a browser drops tabs and newlines, so "/\t/x" would be "//x")
+const HREF  = /(?:https?:\/\/|mailto:|\/(?![\s\/\\]))/.source;
+// no control chars in a link's address (a browser drops some, which may
+// change where it goes)
+const CTRL  = "\\x00-\\x1f\\x7f";
 // a link's place inside bold or italics: [x](k), skipped whole, so the
 // marks in x don't end them (span_parse reads it again)
 const HOLD  = /\[[^\]\n]*\]\([^)\n]*\)/.source;
@@ -59,12 +63,12 @@ const HOLD  = /\[[^\]\n]*\]\([^)\n]*\)/.source;
 const IN    = HOLD + "|[^*\\n\\[]|(?!" + HOLD + ")\\[";
 const SPAN  = new RegExp([
   /`([^`\n]+)`/.source,
-  "\\[([^\\]\\n]+)\\]\\((<" + HREF + "[^>\\n]*>|" + HREF + /(?:[^\s()]|\([^\s()]*\))*/.source + ")" + /(?:\s+"[^"\n]*")?\)/.source,
+  "\\[([^\\]\\n]+)\\]\\((<" + HREF + "[^>" + CTRL + "]*>|" + HREF + "(?:[^\\s()" + CTRL + "]|\\([^\\s()" + CTRL + "]*\\))*)" + /(?:\s+"[^"\n]*")?\)/.source,
   NAME.source,
   "\\*\\*(?!\\*)((?:" + IN + "|\\*(?!\\*))+?)\\*\\*",
   "(?<![*\\w])\\*(?![*\\s])((?:" + IN + ")+?)\\*(?![\\w*])",
-  /(?<![^\s(])(https?:\/\/(?:[^\s<()]|\([^\s<()]*\))*(?:[^\s<().,;:!?]|\([^\s<()]*\)))/.source,
-  /<(https?:\/\/[^\s<>]+)>/.source,
+  /(?<![^\s(])(https?:\/\/(?:[^\s<()\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\))*(?:[^\s<().,;:!?\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\)))/.source,
+  /<(https?:\/\/[^\s<>\x00-\x1f\x7f]+)>/.source,
 ].join("|"), "g");
 const LIST  = /^ {0,3}([-*+]|\d{1,9}[.)])(?=[ \t]|$)/;
 const FENCE = /^\s*```/;
