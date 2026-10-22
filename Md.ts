@@ -20,8 +20,8 @@ import * as Names from "./Names.ts";
 export type Span =
   | { $: "Text"; x: string }            // x
   | { $: "Code"; x: string }            // `x`
-  | { $: "Bold"; x: string }            // **x**
-  | { $: "Ital"; x: string }            // *x*
+  | { $: "Bold"; x: Span[] }            // **x** (its own spans: a link in bold stays a link)
+  | { $: "Ital"; x: Span[] }            // *x*
   | { $: "Link"; x: string; k: string } // [x](k) (k: a url or a /path), or a bare url
   | { $: "Name"; x: string }            // [x]: an agent, x its name
 
@@ -49,11 +49,12 @@ export type Block =
 const NAME  = new RegExp("\\[(" + Names.NAME + ")\\]", "g");
 const SPAN  = new RegExp([
   /`([^`\n]+)`/.source,
-  /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|\/(?!\/)[^\s)]*)\)/.source,
+  /\[([^\]\n]+)\]\((<[^>\n]+>|(?:https?:\/\/|\/(?!\/))(?:[^\s()]|\([^\s()]*\))*)(?:\s+"[^"\n]*")?\)/.source,
   NAME.source,
   /\*\*([^*\n]+)\*\*/.source,
   /(?<![*\w])\*([^*\s][^*\n]*?)\*(?![\w*])/.source,
-  /(?<![^\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/.source,
+  /(?<![^\s(])(https?:\/\/(?:[^\s<()]|\([^\s<()]*\))*(?:[^\s<().,;:!?]|\([^\s<()]*\)))/.source,
+  /<(https?:\/\/[^\s<>]+)>/.source,
 ].join("|"), "g");
 const LIST  = /^ {0,3}([-*+]|\d{1,9}[.)])(?=[ \t]|$)/;
 const FENCE = /^\s*```/;
@@ -112,23 +113,30 @@ function span_mark(m: RegExpMatchArray): Span {
     return { $: "Code", x: m[1] };
   }
   if (m[2] !== undefined) {
-    return { $: "Link", x: m[2], k: m[3] };
+    return { $: "Link", x: m[2], k: m[3].replace(/^<(.*)>$/, "$1") };
   }
   if (m[4] !== undefined) {
     return Name(m[4]);
   }
   if (m[5] !== undefined) {
-    return { $: "Bold", x: m[5] };
+    return { $: "Bold", x: span_parse(m[5]) };
   }
   if (m[6] !== undefined) {
-    return { $: "Ital", x: m[6] };
+    return { $: "Ital", x: span_parse(m[6]) };
+  }
+  if (m[8] !== undefined) {
+    return { $: "Link", x: m[8], k: m[8] };
   }
   return { $: "Link", x: m[7], k: m[7] };
 }
 
 // a line's text, its marks dropped (a summary is plain text: View.ts)
 export function md_flat(s: string): string {
-  return span_parse(s).map((span) => span.x).join("");
+  return span_parse(s).map(span_flat).join("");
+}
+
+function span_flat(s: Span): string {
+  return typeof s.x === "string" ? s.x : s.x.map(span_flat).join("");
 }
 
 export function md_plain(s: string): Block[] {

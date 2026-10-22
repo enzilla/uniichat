@@ -376,27 +376,27 @@ function table_fit(want: number[], w: number): number[] {
 // ====
 
 function spans_runs(spans: Md.Span[], ink: Ink): Line {
-  return spans.map((s) => span_run(s, ink));
+  return spans.flatMap((s) => span_run(s, ink));
 }
 
-function span_run(s: Md.Span, ink: Ink): Run {
+function span_run(s: Md.Span, ink: Ink): Run[] {
+  if (s.$ === "Bold") {
+    return spans_runs(s.x, { ...ink, b: true });
+  }
+  if (s.$ === "Ital") {
+    return spans_runs(s.x, { ...ink, i: true });
+  }
   const x = text_clean(s.x);
   switch (s.$) {
     case "Text":
     case "Code": {
-      return Run(x, ink);
-    }
-    case "Bold": {
-      return Run(x, { ...ink, b: true });
-    }
-    case "Ital": {
-      return Run(x, { ...ink, i: true });
+      return [Run(x, ink)];
     }
     case "Link": {
-      return Run(x, { ...ink, u: true, k: text_clean(s.k) });
+      return [Run(x, { ...ink, u: true, k: text_clean(s.k) })];
     }
     case "Name": {
-      return Run("[" + x + "]", { ...ink, b: true, u: true });
+      return [Run("[" + x + "]", { ...ink, b: true, u: true })];
     }
   }
 }

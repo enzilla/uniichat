@@ -473,10 +473,10 @@ function span_html(s: Md.Span): string {
       return `<code>${esc(s.x)}</code>`;
     }
     case "Bold": {
-      return `<strong>${esc(s.x)}</strong>`;
+      return `<strong>${spans_html(s.x)}</strong>`;
     }
     case "Ital": {
-      return `<em>${esc(s.x)}</em>`;
+      return `<em>${spans_html(s.x)}</em>`;
     }
     case "Link": {
       return `<a href="${esc(s.k)}" target="_blank" rel="noopener">${esc(s.x)}</a>`;
