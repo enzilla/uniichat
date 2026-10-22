@@ -20,9 +20,9 @@ import * as Names from "./Names.ts";
 export type Span =
   | { $: "Text"; x: string }            // x
   | { $: "Code"; x: string }            // `x`
-  | { $: "Bold"; x: string }            // **x**
-  | { $: "Ital"; x: string }            // *x*
-  | { $: "Link"; x: string; k: string } // [x](k) (k: a url or a /path), or a bare url
+  | { $: "Bold"; x: Span[] }            // **x** (its own spans: a link in bold stays a link)
+  | { $: "Ital"; x: Span[] }            // *x*
+  | { $: "Link"; x: Span[]; k: string } // [x](k) (k: an http(s) or mailto url, or a /path), or a bare url; x its spans, no link or name in them
   | { $: "Name"; x: string }            // [x]: an agent, x its name
 
 // k: a label, or ""
@@ -47,13 +47,28 @@ export type Block =
 // =========
 
 const NAME  = new RegExp("\\[(" + Names.NAME + ")\\]", "g");
+// where a link may go: http(s), mailto, or a path on this site ("/x",
+// but not "//x" nor "/\x", which a browser reads as another site's, nor
+// "/ x": a browser drops tabs and newlines, so "/\t/x" would be "//x")
+const HREF  = /(?:https?:\/\/|mailto:|\/(?![\s\/\\]))/.source;
+// no control chars in a link's address (a browser drops some, which may
+// change where it goes)
+const CTRL  = "\\x00-\\x1f\\x7f";
+// a link's place inside bold or italics: [x](k), skipped whole, so the
+// marks in x don't end them (span_parse reads it again)
+const HOLD  = /\[[^\]\n]*\]\([^)\n]*\)/.source;
+// what bold or italics hold: a link whole, a "[" starting none, any
+// other char but "*". No two share a start (else matching backtracks
+// exponentially)
+const IN    = HOLD + "|[^*\\n\\[]|(?!" + HOLD + ")\\[";
 const SPAN  = new RegExp([
   /`([^`\n]+)`/.source,
-  /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|\/(?!\/)[^\s)]*)\)/.source,
+  "\\[([^\\]\\n]+)\\]\\((<" + HREF + "[^>" + CTRL + "]*>|" + HREF + "(?:[^\\s()" + CTRL + "]|\\([^\\s()" + CTRL + "]*\\))*)" + /(?:\s+"[^"\n]*")?\)/.source,
   NAME.source,
-  /\*\*([^*\n]+)\*\*/.source,
-  /(?<![*\w])\*([^*\s][^*\n]*?)\*(?![\w*])/.source,
-  /(?<![^\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/.source,
+  "\\*\\*(?!\\*)((?:" + IN + "|\\*(?!\\*))+?)\\*\\*",
+  "(?<![*\\w])\\*(?![*\\s])((?:" + IN + ")+?)\\*(?![\\w*])",
+  /(?<![^\s(])(https?:\/\/(?:[^\s<()\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\))*(?:[^\s<().,;:!?\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\)))/.source,
+  /<(https?:\/\/[^\s<>\x00-\x1f\x7f]+)>/.source,
 ].join("|"), "g");
 const LIST  = /^ {0,3}([-*+]|\d{1,9}[.)])(?=[ \t]|$)/;
 const FENCE = /^\s*```/;
@@ -112,23 +127,44 @@ function span_mark(m: RegExpMatchArray): Span {
     return { $: "Code", x: m[1] };
   }
   if (m[2] !== undefined) {
-    return { $: "Link", x: m[2], k: m[3] };
+    return { $: "Link", x: unlinked(span_parse(m[2])), k: m[3].replace(/^<(.*)>$/, "$1") };
   }
   if (m[4] !== undefined) {
     return Name(m[4]);
   }
   if (m[5] !== undefined) {
-    return { $: "Bold", x: m[5] };
+    return { $: "Bold", x: span_parse(m[5]) };
   }
   if (m[6] !== undefined) {
-    return { $: "Ital", x: m[6] };
+    return { $: "Ital", x: span_parse(m[6]) };
   }
-  return { $: "Link", x: m[7], k: m[7] };
+  if (m[8] !== undefined) {
+    return { $: "Link", x: [Text(m[8])], k: m[8] };
+  }
+  return { $: "Link", x: [Text(m[7])], k: m[7] };
+}
+
+// a link's text: a link in it its text, a name in it as written (a link
+// holds no link nor button)
+function unlinked(spans: Span[]): Span[] {
+  return spans.flatMap((s): Span[] => {
+    switch (s.$) {
+      case "Link": return unlinked(s.x);
+      case "Name": return [Text("[" + s.x + "]")];
+      case "Bold": return [{ $: "Bold", x: unlinked(s.x) }];
+      case "Ital": return [{ $: "Ital", x: unlinked(s.x) }];
+      default:     return [s];
+    }
+  });
 }
 
 // a line's text, its marks dropped (a summary is plain text: View.ts)
 export function md_flat(s: string): string {
-  return span_parse(s).map((span) => span.x).join("");
+  return span_parse(s).map(span_flat).join("");
+}
+
+function span_flat(s: Span): string {
+  return typeof s.x === "string" ? s.x : s.x.map(span_flat).join("");
 }
 
 export function md_plain(s: string): Block[] {
