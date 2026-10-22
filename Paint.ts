@@ -123,9 +123,10 @@ function ink_ansi(was: Ink | null, s: Ink): string {
   if (was !== null && was.d === s.d && was.b === s.b && was.i === s.i && was.u === s.u && was.k === s.k && was.c === s.c && was.g === s.g) {
     return "";
   }
-  const end  = was !== null && was.k !== "" ? "\x1b]8;;\x1b\\" : "";
+  const keep = was !== null && was.k === s.k; // the same link: kept open
+  const end  = was !== null && was.k !== "" && !keep ? "\x1b]8;;\x1b\\" : "";
   const sgr  = "\x1b[0" + (s.b ? ";1" : "") + (s.i ? ";3" : "") + (s.u ? ";4" : "") + (s.d ? ";2" : "") + color_sgr(38, s.c) + color_sgr(48, s.g) + "m";
-  const link = s.k === "" ? "" : "\x1b]8;;" + s.k + "\x1b\\";
+  const link = s.k === "" || keep ? "" : "\x1b]8;;" + s.k + "\x1b\\";
   return end + sgr + link;
 }
 
@@ -386,14 +387,14 @@ function span_run(s: Md.Span, ink: Ink): Run[] {
   if (s.$ === "Ital") {
     return spans_runs(s.x, { ...ink, i: true });
   }
+  if (s.$ === "Link") { // each of its runs in the link (OSC 8)
+    return spans_runs(s.x, { ...ink, u: true, k: text_clean(s.k) });
+  }
   const x = text_clean(s.x);
   switch (s.$) {
     case "Text":
     case "Code": {
       return [Run(x, ink)];
-    }
-    case "Link": {
-      return [Run(x, { ...ink, u: true, k: text_clean(s.k) })];
     }
     case "Name": {
       return [Run("[" + x + "]", { ...ink, b: true, u: true })];

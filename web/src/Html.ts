@@ -479,7 +479,7 @@ function span_html(s: Md.Span): string {
       return `<em>${spans_html(s.x)}</em>`;
     }
     case "Link": {
-      return `<a href="${esc(s.k)}" target="_blank" rel="noopener">${esc(s.x)}</a>`;
+      return `<a href="${esc(s.k)}" target="_blank" rel="noopener">${spans_html(s.x)}</a>`;
     }
     case "Name": {
       return `<button class="name"${act_html({ $: "Goto", name: s.x })}>[${esc(s.x)}]</button>`;
