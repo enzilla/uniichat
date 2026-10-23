@@ -40,12 +40,16 @@ type Place = Spot & { pos: number };
 // Esc comes as CSI 27u, and a bare ESC only starts a sequence), the
 // input, input not read yet (cut by a read's end), the footer's rows
 // above the cursor (its blank rows too), the rows from the footer's top
-// to the screen's bottom, where keys go; off: the input is not shown
+// to the screen's bottom, where keys go; off: the input is not shown;
+// full: the whole screen is drawn (screen_frame), the mouse read; grab:
+// every key and character goes to Term.ts, none edits the input
 export type Screen = {
   tty    : boolean;
   kitty  : boolean;
   ed     : Ed;
   off    : boolean;
+  full   : boolean;
+  grab   : boolean;
   rest   : string;
   up     : number;
   rows   : number;
@@ -72,6 +76,14 @@ const WIPE     = "\x1b[2J\x1b[3J\x1b[H";
 // shown again
 const MODES_ON  = "\x1b[?2004h\x1b[<u\x1b[>1u\x1b[?u";
 const MODES_OFF = "\x1b[?2004l\x1b[<u\x1b[?25h";
+
+// the full screen: the alternate screen, the mouse's clicks and wheel
+// (SGR); off, the screen as it was
+const FULL_ON  = "\x1b[?1049h\x1b[?1000h\x1b[?1006h";
+const FULL_OFF = "\x1b[?1000l\x1b[?1006l\x1b[?1049l";
+
+// a mouse event (SGR): button, column, row, M pressed or m released
+const MOUSE = /^<(\d+);(\d+);(\d+)$/;
 
 // the cursor shown, hidden
 const CURSOR_ON  = "\x1b[?25h";
@@ -105,6 +117,8 @@ const KEYS: Record<string, string> = {
   "1~"  : "Home",
   "3~"  : "Delete",
   "4~"  : "End",
+  "5~"  : "PageUp",
+  "6~"  : "PageDown",
   "7~"  : "Home",
   "8~"  : "End",
 };
@@ -121,11 +135,11 @@ const MODS: [number, string][] = [[4, "Ctrl+"], [2, "Alt+"], [1, "Shift+"]];
 export function screen_new(on: (key: string) => void): Screen {
   const tty = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const ed  = { text: "", pos: 0, hist: [], at: 0, draft: "", moved: false, w: 80, tall: 1 };
-  const scr = { tty, kitty: false, ed, off: false, rest: "", up: 0, rows: 0, on };
+  const scr = { tty, kitty: false, ed, off: false, full: false, grab: false, rest: "", up: 0, rows: 0, on };
   if (tty) {
     process.stdin.setRawMode(true);
     process.stdout.write(MODES_ON);
-    process.on("exit", () => process.stdout.write(screen_erase(scr) + MODES_OFF));
+    process.on("exit", () => process.stdout.write(scr.full ? MODES_OFF + FULL_OFF : screen_erase(scr) + MODES_OFF));
   }
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (data: string) => screen_feed(scr, data)).resume();
@@ -164,6 +178,22 @@ export function screen_paint(scr: Screen, body: Paint.Line[], wipe: boolean, foo
   scr.up   = pad + spot.row;
   scr.rows = pad + foot.length;
   process.stdout.write(SYNC_ON + erase + lines + draw + move + (at === null ? CURSOR_OFF : CURSOR_ON) + SYNC_OFF);
+}
+
+// the full screen on (a terminal's only): from now on, screen_frame
+export function screen_full(scr: Screen): void {
+  if (scr.tty) {
+    scr.full = true;
+    process.stdout.write(FULL_ON);
+  }
+}
+
+// the whole screen drawn, top to bottom (no more lines than its rows),
+// the cursor at its spot (null: hidden)
+export function screen_frame(scr: Screen, lines: Paint.Line[], at: Spot | null): void {
+  const draw = lines.map((l) => Paint.line_ansi(l) + "\x1b[K").join("\r\n");
+  const move = at === null ? CURSOR_OFF : "\x1b[" + (at.row + 1) + ";" + (at.col + 1) + "H" + CURSOR_ON;
+  process.stdout.write(SYNC_ON + "\x1b[H" + draw + "\x1b[J" + move + SYNC_OFF);
 }
 
 // the footer erased
@@ -205,6 +235,11 @@ function screen_key(scr: Screen, data: string): number {
     scr.kitty = true;
     return seq[0].length;
   }
+  const mouse = seq !== null && /^[Mm]$/.test(seq[2]) ? MOUSE.exec(seq[1] ?? "") : null;
+  if (mouse !== null) {
+    scr.on("Mouse:" + mouse.slice(1).join(":") + ":" + seq![2]);
+    return seq![0].length;
+  }
   if (seq !== null) {
     screen_press(scr, seq_name(seq[1] ?? "", seq[2]));
     return seq[0].length;
@@ -216,7 +251,9 @@ function screen_key(scr: Screen, data: string): number {
     return 1 + ch.length;
   }
   if (text !== null) {
-    if (!scr.off) {
+    if (scr.grab) {
+      Paint.text_graphemes(text[0]).forEach((g) => scr.on(g));
+    } else if (!scr.off) {
       ed_type(scr.ed, text[0]);
     }
     return text[0].length;
@@ -227,7 +264,7 @@ function screen_key(scr: Screen, data: string): number {
 
 // a key: an editing key edits the input, if on; any other goes to Term.ts
 function screen_press(scr: Screen, key: string): void {
-  if (scr.off || !ed_key(scr.ed, key)) {
+  if (scr.grab || scr.off || !ed_key(scr.ed, key)) {
     scr.on(key);
   }
 }
@@ -238,13 +275,13 @@ export function screen_suspend(scr: Screen): void {
   if (process.platform === "win32") {
     return; // no job control
   }
-  process.stdout.write(screen_erase(scr) + MODES_OFF);
+  process.stdout.write(scr.full ? MODES_OFF + FULL_OFF : screen_erase(scr) + MODES_OFF);
   scr.up   = 0;
   scr.rows = 0;
   process.stdin.setRawMode(false);
   process.once("SIGCONT", () => {
     process.stdin.setRawMode(true);
-    process.stdout.write(MODES_ON);
+    process.stdout.write(MODES_ON + (scr.full ? FULL_ON : ""));
     scr.on("");
   });
   process.kill(0, "SIGTSTP");
@@ -256,7 +293,7 @@ function screen_paste(scr: Screen, data: string): number {
   if (end < 0) {
     return 0;
   }
-  if (!scr.off) {
+  if (!scr.off && !scr.grab) {
     ed_type(scr.ed, data.slice(PASTE_ON.length, end).replace(/\r\n?/g, "\n"));
   }
   return end + PASTE_OFF.length;

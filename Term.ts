@@ -2,7 +2,9 @@
 // ====
 // `unii [url]`: a terminal view of the agent (Server.ts). It feeds a View
 // the server's messages and the person's acts, and prints what it says
-// (Paint.ts, Screen.ts) into the terminal's own scrollback. Every act of
+// (Paint.ts, Screen.ts) into the terminal's own scrollback; or, on the
+// full screen (Panel.ts, the default unless --classic), draws the chat
+// whole beside the pending list at each paint. Every act of
 // the site is a command here (COMMANDS, /help). From a pipe, each line is
 // a message. Its file is tui.json (Client.ts): the server it opens by
 // default (the last one signed in to) and its sign-in to each, by host.
@@ -14,6 +16,7 @@ import type { Kind } from "./AskAI.ts";
 import * as Client from "./Client.ts";
 import * as Import from "./Import.ts";
 import * as Paint from "./Paint.ts";
+import * as Panel from "./Panel.ts";
 import { type Move, Pick } from "./Pick.ts";
 import * as Screen from "./Screen.ts";
 import * as View from "./View.ts";
@@ -26,7 +29,8 @@ import * as View from "./View.ts";
 // to it not printed (term_settle); out: lines to print; wipe: first;
 // due: a paint; settle: the page's print at a new size; imgs: for the
 // next message; flow: how much of each message streaming is printed
-// (Infinity: logged); logs: of each agent's page, the messages printed
+// (Infinity: logged); logs: of each agent's page, the messages printed;
+// panel: the full screen's (null: the classic scrollback, or a pipe)
 type Term = {
   v       : View.View;
   scr     : Screen.Screen;
@@ -43,6 +47,7 @@ type Term = {
   imgs    : Blob[];
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
+  panel   : Panel.Panel | null;
 };
 
 // a line of /help: how it is typed ("": keys only), its keys, what it
@@ -84,6 +89,10 @@ const HOW = "Pick with /import [claude] [chatgpt] [since 2026-06-01] [tools] [se
 // suspend and Esc (UniiChat's turn interrupted; agents go on); none that
 // types, sends or moves the pick
 const PAGE_KEYS = ["Tab", "Ctrl+D", "Ctrl+Z", "Esc"];
+
+// the full screen: whether this terminal draws it (main), the chat's
+// share of the width then
+let FULL = false;
 
 // the pick's moves by Shift and an arrow
 const ARROWS: Record<string, Move> = { "Shift+Left": "prev", "Shift+Right": "next", "Shift+Up": "up", "Shift+Down": "down" };
@@ -132,6 +141,8 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/descartar P7 [comentário]", "",               "descarta a pendência",                          (t, a) => term_task(t, a, "dropped", false)],
       ["/reabrir P7",       "",                        "reabre uma pendência resolvida",                 (t, a) => term_task(t, a, "open", false)],
       ["/avisar",           "",                        "avisa o Unii agora das pendências resolvidas que ele ainda não viu", (t) => term_send(t, { $: "tasks_tell" })],
+      ["",                  "Ctrl+P",                  "na tela cheia: o foco vai à coluna de pendências e volta (lá: setas, espaço marca, 1-9 opção, ! marca e avisa, d descarta, c comenta, a avisa, Esc sai; o clique marca)", term_focus],
+      ["",                  "PageUp, PageDown",        "na tela cheia: rola a conversa (a roda do mouse também; Shift e arrastar seleciona texto)", term_page_key],
     ]],
   ];
 }
@@ -160,6 +171,7 @@ function term_new(url: string, token: string): Term {
     imgs    : [],
     flow    : new Map(),
     logs    : new Map(),
+    panel   : null,
   };
   process.stdin.on("end", () => {
     if (t.scr.ed.text.trim() !== "") {
@@ -221,7 +233,9 @@ function term_hear(t: Term, msg: View.Server): void {
     term_send(t, out);
   }
   term_went(t, was);
-  term_print(t, msg);
+  if (t.panel === null) {
+    term_print(t, msg);
+  }
   if (first) {
     term_history(t);
   }
@@ -260,7 +274,9 @@ function term_back(t: Term, sent: View.Sent): void {
 // input (a pipe's lines still go on)
 function term_went(t: Term, was: View.Page | null): void {
   t.scr.off = t.scr.tty && !View.view_typing(t.v);
-  if (t.v.page !== was) {
+  if (t.v.page !== was && t.panel !== null) {
+    t.panel.scroll = 0;
+  } else if (t.v.page !== was) {
     term_rows(t, t.v.page === null ? [View.Cap(View.MAIN)] : [], false);
     term_show(t);
   }
@@ -286,6 +302,9 @@ function term_idle(t: Term): void {
 // a key ("": text typed): its line of COMMANDS (an agent's page: of
 // PAGE_KEYS)
 function term_press(t: Term, key: string): void {
+  if (t.panel !== null && term_panel(t, t.panel, key)) {
+    return term_draw(t);
+  }
   const cmd = term_commands(t.v).find((c) => c[1] !== "" && c[1].split(", ").includes(key));
   if (cmd !== undefined && (!t.scr.off || PAGE_KEYS.includes(key))) {
     cmd[3](t, cmd[0] === "" ? key : "");
@@ -304,6 +323,9 @@ function term_enter(t: Term): void {
     term_note(t, "Messages go to UniiChat: Tab or /tab goes back.");
   } else if (term_act(t, { $: "Send", text, images: t.imgs }).length > 0) {
     t.imgs = [];
+    if (t.panel !== null) {
+      [t.panel.extra, t.panel.scroll] = [[], 0];
+    }
     return;
   }
   Screen.ed_type(t.scr.ed, text);
@@ -327,6 +349,48 @@ function term_cycle(t: Term): void {
   const tabs = View.view_tabs(t.v);
   const at   = tabs.findIndex((tab) => tab.here) + 1;
   term_act(t, { $: "Goto", name: tabs[at % tabs.length].name });
+}
+
+// a key on the full screen, if its: the list's while focused (Esc lets
+// it go), the mouse's; true if taken
+function term_panel(t: Term, p: Panel.Panel, key: string): boolean {
+  const out = key.startsWith("Mouse:") ? Panel.panel_mouse(p, t.v, key) : p.focus ? Panel.panel_key(p, t.v, key) : undefined;
+  if (out === undefined && p.focus && key === "Esc") {
+    term_focus(t);
+    return true;
+  }
+  if (out === undefined) {
+    return key.startsWith("Mouse:");
+  }
+  t.scr.grab = p.focus;
+  if (out?.$ === "act") {
+    term_act(t, out.act);
+  } else if (out?.$ === "note") {
+    term_note(t, out.text);
+  } else if (out?.$ === "type") {
+    term_focus(t);
+    Screen.ed_take(t.scr.ed);
+    Screen.ed_type(t.scr.ed, out.text);
+  }
+  return true;
+}
+
+// Ctrl+P: the keys to the pending list, or back to the input
+function term_focus(t: Term): void {
+  const p = t.panel;
+  if (p === null || Panel.panel_width(Screen.screen_width()) === 0) {
+    return term_note(t, p === null ? "A coluna de pendências é da tela cheia: unii sem --classic. Aqui, /p." : "A tela é estreita para a coluna de pendências: /p as lista.");
+  }
+  p.focus = !p.focus;
+  t.scr.grab = p.focus;
+}
+
+// PageUp, PageDown: the chat half a screen up, down
+function term_page_key(t: Term, key: string): void {
+  const half = Math.max(1, Math.floor((process.stdout.rows || 24) / 2));
+  if (t.panel !== null) {
+    Panel.panel_scroll(t.panel, key === "PageUp" ? half : -half);
+  }
 }
 
 // Commands
@@ -418,7 +482,7 @@ function term_block(t: Term, arg: string, open: boolean): void {
     return;
   }
   term_act(t, { $: open ? "Open" : "Shut", id, n });
-  if (!open || n === 1) {
+  if (t.panel === null && (!open || n === 1)) {
     term_shown(t, id, n, open);
   }
 }
@@ -730,6 +794,9 @@ function term_print(t: Term, msg: View.Server): void {
 // the page shown, whole, alone on the screen and its scrollback (a new
 // size, /fold): no other is printed then
 function term_page(t: Term): void {
+  if (t.panel !== null) {
+    return term_draw(t);
+  }
   term_rows(t, [], true);
   [t.last, t.wait, t.logs] = [-1, [], new Map()];
   term_show(t);
@@ -839,8 +906,10 @@ function term_inset(lines: Paint.Line[]): Paint.Line[] {
   return lines.map((l) => [pad, ...l]);
 }
 
+// the width inside the margins: the chat's, on the full screen
 function term_inner(): number {
-  return Screen.screen_width() - 2 * MARGIN;
+  const w = Screen.screen_width();
+  return w - (FULL ? Panel.panel_width(w) : 0) - 2 * MARGIN;
 }
 
 // a new size: the page laid out again, at the new width, once the size
@@ -865,6 +934,9 @@ function term_draw(t: Term): void {
 // the screen, which tmux keeps in its scrollback at each paint
 function term_paint(t: Term): void {
   t.out = t.out.concat(term_lines(t.v.notes.splice(0).map(View.Cap)));
+  if (t.panel !== null) {
+    return term_frame(t, t.panel);
+  }
   term_flow(t);
   const w     = Screen.screen_width();
   const iw    = term_inner();
@@ -885,12 +957,35 @@ function term_paint(t: Term): void {
   t.due  = false;
 }
 
+// the full screen: the chat whole (its stream, what waits for the
+// usage limit or a summary) and what was printed under it, the pending
+// list beside, the footer as term_paint's at the full width (the list's
+// line in it only if the column doesn't fit); the cursor in the input
+function term_frame(t: Term, p: Panel.Panel): void {
+  Panel.panel_extra(p, t.out);
+  const w     = Screen.screen_width();
+  const fw    = w - 2 * MARGIN;
+  const h     = process.stdout.rows || 24;
+  const off   = t.scr.off || p.focus;
+  const input = t.scr.off ? null : Screen.screen_input(t.scr, fw, Math.max(1, Math.floor(h / 3)), p.focus ? "Ctrl+P ou Esc volta à mensagem" : View.HINT + " · /help");
+  const under = t.scr.off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", fw)];
+  const tasks = Panel.panel_width(w) === 0 ? term_tasks_line(t.v, fw) : [];
+  const foot  = term_inset([Paint.rule_line(t.v, fw), ...(input?.lines ?? []), ...under, ...tasks, Paint.tabs_line(t.v, fw)]);
+  const body  = term_lines([...View.view_body(t.v), ...View.view_tail(t.v)]);
+  const lines = Panel.panel_frame(p, t.v, body, foot, w, h);
+  const at    = input === null || off ? null : { row: h - foot.length + 1 + input.at.row, col: input.at.col + MARGIN };
+  Screen.screen_frame(t.scr, lines, at);
+  t.out = [];
+  t.wipe = false;
+  t.due = false;
+}
+
 // Main
 // ====
 
 // the chat in this terminal: signed in first, if not yet (the server
-// it signs in to becomes the default)
-export async function main(given: string | undefined): Promise<void> {
+// it signs in to becomes the default); on the full screen unless classic
+export async function main(given: string | undefined, classic = false): Promise<void> {
   const conf = Client.read("tui");
   const url = Client.server(given, conf);
   const tokens = conf.tokens ?? {};
@@ -900,5 +995,10 @@ export async function main(given: string | undefined): Promise<void> {
     Client.write("tui", { ...conf, url, tokens: { ...tokens, [Client.host(url)]: token } });
   }
   const t = term_new(url, token!);
+  if (!classic && t.scr.tty) {
+    FULL = true;
+    t.panel = Panel.panel_new();
+    Screen.screen_full(t.scr);
+  }
   term_connect(t);
 }

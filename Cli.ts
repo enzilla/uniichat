@@ -19,10 +19,15 @@ import * as Update from "./Update.ts";
 const ARGS = process.argv.slice(2);
 const WEB  = /^https?:\/\//;
 const URL_ = ARGS.find((a) => WEB.test(a));
-const REST = ARGS.filter((a) => !WEB.test(a));
+const REST = ARGS.filter((a) => !WEB.test(a) && a !== "--classic");
+
+// the terminal as it printed before the full screen (Panel.ts)
+const CLASSIC = ARGS.includes("--classic");
 
 const USAGE = `Usage: unii [url]           the chat in this terminal (url: $UNII_URL, else
-                            the last one, else http://127.0.0.1:8788)
+                            the last one, else http://127.0.0.1:8788), full
+                            screen with the pending list beside it
+       unii --classic [url] the same in the terminal's own scrollback
        unii device [url]    this computer as a device of the server: the
                             agent's shell and files here (run it as a
                             service to keep it up)
@@ -102,7 +107,7 @@ const [cmd, sub, more] = REST;
 const odd = (words: string[]) => REST.slice(words.length).length > 0;
 
 if (cmd === undefined) {
-  await (await import("./Term.ts")).main(URL_);
+  await (await import("./Term.ts")).main(URL_, CLASSIC);
 } else if (["help", "--help", "-h"].includes(cmd)) {
   console.log(USAGE);
 } else if (cmd === "version" && !odd([cmd])) {
