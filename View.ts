@@ -395,9 +395,12 @@ export function view_act(v: View, act: Act): Client[] {
       const text   = act.text.trim();
       const images = act.images ?? [];
       // a `/word` reaching here is no command (the terminal ran its
-      // own), but /goal (a message, sent as typed, set as the goal) and
-      // /halt: it errs, never goes to the AI as a message
+      // own), but /goal (a message, sent as typed, set as the goal),
+      // /halt, and a skill's name on an open device (sent as typed: the
+      // server loads that skill for the turn, Chat.invoked): else it
+      // errs, never goes to the AI as a message
       const word   = /^\/[a-z]+(?=\s|$)/i.exec(text)?.[0];
+      const skill  = word !== undefined && v.skills.some((s) => "/" + s.name === word);
       const goal   = word === "/goal" ? text.slice(word.length).trim() : null;
       if (!view_typing(v)) {
         return [];
@@ -412,7 +415,7 @@ export function view_act(v: View, act: Act): Client[] {
         v.notes.push("/goal needs one: /goal <message>.");
         return [];
       }
-      if (word !== undefined && goal === null) {
+      if (word !== undefined && goal === null && !skill) {
         v.notes.push(word + " is no command; nothing was sent. The terminal's /help lists its commands; the site's are in its ☰ menu.");
         return [];
       }

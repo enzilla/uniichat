@@ -60,3 +60,13 @@ test("a message's /name loads that skill for the turn, from the device that has 
     Tools.job = job;
   }
 });
+
+test("the client sends a /word that is a skill's name as a message; another /word stays a note", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  v.skills = [{ name: "resumir", description: "Resume a conversa.", device: "notebook" }];
+  v.up = true;
+  expect(View.view_act(v, { $: "Send", text: "/resumir a semana" }).map((m) => m.$)).toEqual(["say"]);
+  expect(View.view_act(v, { $: "Send", text: "/inventado" })).toEqual([]);
+  expect(v.notes.at(-1)).toContain("/inventado is no command");
+});
