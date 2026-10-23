@@ -63,6 +63,7 @@ create table if not exists web_pushes (endpoint text primary key, p256dh text no
 create trigger if not exists web_pushes_go after delete on sessions begin delete from web_pushes where session = old.hash; end;
 create table if not exists acts     (id text primary key, ans text not null, at integer not null);
 create index if not exists acts_big on acts (at) where ans <> '{}';
+create table if not exists inbox    (hash text primary key, at integer not null);
 `;
 
 // the db (open: Owner.open), the terminals waiting for their sign-in, by
@@ -168,6 +169,45 @@ export namespace Owner {
   // server's files are (who can, owns them)
   export function cli(): void {
     console.log("Open this link in your browser within 15 minutes to sign in (it works once):\n\n  " + config.SITE + "/auth?t=" + Owner.ticket({ session: null, what: "" }) + "\n");
+  }
+
+  // Inbox
+  // -----
+  // The inbox token: what a script on the owner's side (a sorter of
+  // Slack's messages) sends as its Bearer to add the user's tasks
+  // (Server.ts /api/inbox), and nothing else: it is no session, so it
+  // opens no socket, page or other /api/. One at a time, kept as a hash.
+  // `unii serve inbox`: a new one, printed alone on stdout (so it can go
+  // straight to a file), the old one gone; `unii serve inbox off`: none
+
+  export function inbox_new(): string {
+    const db = Owner.open();
+    const token = Owner.random();
+    db.transaction(() => {
+      db.query("delete from inbox").run();
+      db.query("insert into inbox values (?, ?)").run(Owner.hash(token), Date.now());
+    })();
+    return token;
+  }
+
+  export function inbox_off(): number {
+    return Owner.open().query("delete from inbox").run().changes;
+  }
+
+  // whether a request bears the inbox token (its Authorization only: no
+  // cookie, which a browser sends by itself)
+  export function inbox_is(req: Request): boolean {
+    const m = /^Bearer ([A-Za-z0-9_-]{32,128})$/.exec(req.headers.get("authorization") ?? "");
+    return m !== null && Owner.open().query("select 1 from inbox where hash = ?").get(Owner.hash(m[1])) !== null;
+  }
+
+  export function inbox_cli(off: boolean): void {
+    if (off) {
+      const n = Owner.inbox_off();
+      return console.error(n === 0 ? "No inbox token." : "Inbox token revoked: scripts with it can no longer add tasks.");
+    }
+    console.error("A new inbox token (any before it no longer works). It only adds the user's tasks from outside (POST /api/inbox); keep it in a file only you can read.");
+    console.log(Owner.inbox_new());
   }
 
   // Acts

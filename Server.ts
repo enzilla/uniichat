@@ -163,6 +163,9 @@ const PIECE      = 2 ** 16;
 // the paths of the owner's, but /api/'s (the rest: the site's files)
 const OWN        = ["/ws", "/tree", "/export"];
 
+// the most an inbox post holds (Main.inbox)
+const INBOX_BODY = 16 * 1024;
+
 // the chat's first message, ending in the installer of the terminal
 // (Term.ts), and its line
 const HELLO      = hello_md.trim().replace("{install}", config.SITE + "/install.sh");
@@ -1505,6 +1508,50 @@ export namespace Main {
     return Response.json(read());
   }
 
+  // a task of the user's from outside (Tasks.task_inbox): a POST of JSON
+  // { id, task } bearing the inbox token (Owner.inbox_is), nothing else
+  // (not the owner's cookie). id: the post's own (letters, digits, . : _
+  // -), so one sent again (its answer lost) is done once, answered the
+  // same. No turn: the views are told the list changed
+  export async function inbox(chat: Chat, req: Request): Promise<Response> {
+    if (req.method !== "POST") {
+      return Response.json({ error: "POST only." }, { status: 405 });
+    }
+    if (!Owner.inbox_is(req)) {
+      return Response.json({ error: "No inbox token (unii serve inbox)." }, { status: 401 });
+    }
+    if (!/^application\/json\b/i.test(req.headers.get("content-type") ?? "")) {
+      return Response.json({ error: "Send JSON (content-type: application/json)." }, { status: 415 });
+    }
+    if (Number(req.headers.get("content-length") ?? 0) > INBOX_BODY) {
+      return Response.json({ error: "At most " + INBOX_BODY + " bytes." }, { status: 413 });
+    }
+    const text = await req.text();
+    if (Buffer.byteLength(text) > INBOX_BODY) {
+      return Response.json({ error: "At most " + INBOX_BODY + " bytes." }, { status: 413 });
+    }
+    let msg: any = null;
+    try {
+      msg = JSON.parse(text);
+    } catch {}
+    const id = typeof msg?.id === "string" && /^[A-Za-z0-9][A-Za-z0-9.:_-]{0,119}$/.test(msg.id) ? "inbox:" + msg.id : null;
+    if (id === null) {
+      return Response.json({ error: "Send { id, task }: id of letters, digits, . : _ - (at most 120)." }, { status: 400 });
+    }
+    const was = Owner.act_get(id);
+    if (was !== null) {
+      return Response.json({ ...was, again: true });
+    }
+    const got = Tasks.task_inbox(Tasks.tasks_load(chat.mem.dir), msg.task, Date.now());
+    if (typeof got === "string") {
+      return Response.json({ error: got }, { status: 400 });
+    }
+    const ans = { task: got.task.id, made: got.made };
+    Owner.act_put(id, ans);
+    Chat.change(chat);
+    return Response.json(ans, { status: got.made ? 201 : 200 });
+  }
+
   // a request. Another site's page (its browser says so: Sec-Fetch-Site)
   // only links here: it posts nothing, reaches no /api/ and opens no
   // socket, so no site acts for the owner's browser
@@ -1518,6 +1565,9 @@ export namespace Main {
       const own = await Owner.http(req);
       if (own !== null) {
         return own;
+      }
+      if (p === "/api/inbox") {
+        return await Main.inbox(Main.chat, req);
       }
       if (!OWN.includes(p) && !p.startsWith("/image/") && !p.startsWith("/api/")) {
         return Main.file(p);

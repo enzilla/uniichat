@@ -788,6 +788,86 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   return task;
 }
 
+// Inbox
+// -----
+// A task from outside (Server.ts /api/inbox: a script with the inbox
+// token, as the Slack sorter), always the user's, from slack or github,
+// keyed by its ref (one conversation, "slack:D0123"): an open one of
+// that ref and origin gets the new text appended (its oldest lines
+// dropped past DETAIL), the newest title and link; else a new one (by
+// "inbox"). Nothing is told to Unii and no turn starts: the user
+// decides, and their resolution reaches Unii as any other. Only the keys
+// below are taken; any other, or a wrong value, is refused, said why
+
+export const INBOX_ORIGINS = ["slack", "github"];
+const INBOX_KEYS = ["title", "detail", "origin", "origin_url", "ref", "choices"];
+
+export function task_inbox(s: Store, x: unknown, now: number): { task: Task; made: boolean } | string {
+  if (typeof x !== "object" || x === null || Array.isArray(x)) {
+    return "task is an object {title, detail, origin, origin_url, ref, choices}.";
+  }
+  const o = x as Record<string, unknown>;
+  const odd = Object.keys(o).filter((k) => !INBOX_KEYS.includes(k));
+  if (odd.length > 0) {
+    return "Unknown key(s): " + odd.slice(0, 5).map((k) => text_line(k, 40)).join(", ") + ".";
+  }
+  const bad = INBOX_KEYS.filter((k) => k !== "choices" && o[k] !== undefined && typeof o[k] !== "string");
+  if (bad.length > 0) {
+    return bad.join(", ") + " must be text.";
+  }
+  const origin = origin_read(o.origin);
+  if (origin === null || !INBOX_ORIGINS.includes(origin)) {
+    return "origin is one of: " + INBOX_ORIGINS.join(", ") + ".";
+  }
+  const ref = text_line(o.ref, REF);
+  if (ref === "") {
+    return "A task from outside needs a ref (its conversation).";
+  }
+  const title = text_line(o.title, TITLE);
+  if (title === "") {
+    return "A task needs a title.";
+  }
+  const url = o.origin_url === undefined || o.origin_url === "" ? null : url_read(o.origin_url);
+  if (o.origin_url !== undefined && o.origin_url !== "" && url === null) {
+    return "origin_url is an http(s) link of at most " + ORIGIN_URL + " characters, without spaces, quotes or angle brackets.";
+  }
+  const choices = choices_read(o.choices);
+  if (typeof choices === "string") {
+    return choices;
+  }
+  const detail = text_body(o.detail, DETAIL);
+  const had = s.tasks.find((t) => t.state === "open" && t.assignee === "user" && t.origin === origin && t.ref === ref);
+  if (had === undefined) {
+    const t = task_new(s, { title, detail, choices, ref, origin, origin_url: url, assignee: "user" }, "inbox", now);
+    return typeof t === "string" ? t : { task: t, made: true };
+  }
+  const twin = s.tasks.find((t) => t !== had && t.state === "open" && t.title.toLowerCase() === title.toLowerCase());
+  if (twin !== undefined) {
+    return twin.id + " is open with this title already.";
+  }
+  had.title = title;
+  had.detail = detail_join(had.detail, detail, DETAIL);
+  had.origin_url = url ?? had.origin_url;
+  if (choices.length > 0) {
+    had.choices = choices;
+  }
+  had.changed = new Date(now).toISOString();
+  tasks_save(s);
+  return { task: had, made: false };
+}
+
+// two texts, one after the other; past n, the first's oldest lines go
+// (an ellipsis line where they were), the newest kept whole if it can be
+export function detail_join(a: string, b: string, n: number): string {
+  const all = a === "" ? b : b === "" ? a : a + "\n" + b;
+  if (all.length <= n) {
+    return all;
+  }
+  const tail = all.slice(all.length - (n - 2));
+  const cut = tail.indexOf("\n");
+  return "…\n" + (cut >= 0 && cut < tail.length - 1 ? tail.slice(cut + 1) : tail);
+}
+
 // a task changed by Unii (task_edit): any field, its state too. A new
 // state makes the task told (Unii did it), unless a change by the user
 // is still untold: then, as any other edit, told and rev stay as they
