@@ -167,6 +167,9 @@ const IMAGES = "/docs/images/";
 
 const AGENTS = "/docs/agent/";
 
+// the most of an agent's log read for its note (Memory.agent_heads)
+const AGENT_HEAD = 4096;
+
 // a compaction's task, before its <input>: one message to compress
 // (level 0), or two lines to merge
 const LEAF = `Compaction: compress message {id} into one line of at most ${NODE} bytes
@@ -1578,6 +1581,34 @@ addEventListener("keydown", (e) => e.key === "Escape" && big && (big.focus({ pre
     Memory.append(mem.dir + AGENTS + name + ".jsonl", [JSON.stringify(root)]);
     mem.agents.set(name, n + 1);
     return root.i;
+  }
+
+  // each agent's first message's text (its note: Tools.ts SUB_NOTE), by
+  // name: of each log only its first line, a HEAD's bytes at most read
+  export function agent_heads(mem: Memory): Map<string, string> {
+    const out = new Map<string, string>();
+    const dir = mem.dir + AGENTS;
+    const files = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+    const buf = Buffer.alloc(AGENT_HEAD);
+    for (const file of files.filter((f) => /^[A-Za-z-]+\.jsonl$/.test(f))) {
+      try {
+        const fd = fs.openSync(dir + file, "r");
+        let n = 0;
+        try {
+          n = fs.readSync(fd, buf, 0, AGENT_HEAD, 0);
+        } finally {
+          fs.closeSync(fd);
+        }
+        const line = buf.toString("utf8", 0, n).split("\n")[0];
+        const text = JSON.parse(line)?.text;
+        if (typeof text === "string") {
+          out.set(file.slice(0, -".jsonl".length), text);
+        }
+      } catch {
+        // empty, cut short past AGENT_HEAD or unreadable: no note
+      }
+    }
+    return out;
   }
 
   export function agent_show(mem: Memory, name: string): string {

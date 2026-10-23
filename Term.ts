@@ -384,9 +384,12 @@ function term_stop(t: Term, arg: string): void {
   term_send(t, arg === "" ? { $: "stop" } : { $: "stop", name });
 }
 
-// an agent at work whose name starts with arg, else arg
+// an agent at work whose name or label starts with arg, else the one
+// agent done whose label does, else arg
 function term_agent(t: Term, arg: string): string {
-  return t.v.agents.find((a) => a.toLowerCase().startsWith(arg.toLowerCase())) ?? arg;
+  const starts = (s: string | undefined) => s !== undefined && s.toLowerCase().startsWith(arg.toLowerCase());
+  const done = Object.keys(t.v.labels ?? {}).filter((a) => starts(View.agent_label(a)));
+  return t.v.agents.find((a) => starts(a)) ?? t.v.agents.find((a) => starts(View.agent_label(a))) ?? (done.length === 1 ? done[0] : arg);
 }
 
 // the person's choice for block #id or #id+n (its name, View.block_name),
@@ -441,12 +444,12 @@ function term_fold(t: Term): void {
   }
 }
 
-// shows an agent's chat, by the start of its name, or UniiChat's; no
+// shows an agent's chat, by the start of its name or label, or UniiChat's; no
 // name lists the tabs
 function term_tab(t: Term, arg: string): void {
   const main = arg.toLowerCase() === View.MAIN.toLowerCase();
   if (arg === "") {
-    return term_note(t, "Tabs: " + View.view_tabs(t.v).map((tab) => tab.text).join("  "));
+    return term_note(t, "Tabs: " + View.view_tabs(t.v).map((tab) => tab.text + (tab.sub === undefined ? "" : " (" + tab.sub + ")")).join("  "));
   }
   term_act(t, { $: "Goto", name: main ? null : term_agent(t, arg) });
 }

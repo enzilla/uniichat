@@ -336,6 +336,8 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 .msg .brand { font: 600 .92em var(--brand); font-style: normal; letter-spacing: -.01em; color: var(--accent); }
 .msg .name { font: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .msg .name:hover { background: var(--ink); color: var(--paper); }
+/* a labeled agent's generated name, after its label (Html.ts) */
+:is(.msg .name, #tabs button) small { font-size: .85em; font-weight: 400; opacity: .6; }
 
 /* Copy: under a message, and in a code block's corner, on hover */
 .copy { position: absolute; right: 0; bottom: calc(100% + 4px); z-index: 1; display: grid; place-items: center; width: 26px; height: 26px; color: var(--mid); background: var(--paper); border-radius: 6px; opacity: 0; user-select: none; }
