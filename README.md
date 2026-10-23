@@ -1,5 +1,10 @@
-UniiChat (arteeh's fork)
-========================
+UniiChat (enzilla's fork)
+=========================
+
+A fork of [arteeh's fork](https://github.com/arteeh/uniichat), with
+[morum's](https://github.com/morum/uniichat) pending list (tasks),
+subagent labels and markdown, and what is listed under "What enzilla's
+fork adds" below.
 
 UniiChat is an AI agent with one chat that never ends. There is no "new
 chat" button: you talk to the same agent for days, weeks, years, and it
@@ -44,6 +49,26 @@ What this fork adds:
 - **Subagents**: their own tab, a `stop` that ends one and its jobs, and
   a report when one hits a usage limit.
 - **No telemetry or update checker**: `unii update` when you want it.
+
+What enzilla's fork adds:
+
+- **A full-screen terminal** (`unii`; `unii --classic` prints to the
+  scrollback as before): the chat beside the pending list, which Ctrl+P
+  focuses (arrows, space marks, 1-9 a choice, ! marks and tells Unii, d
+  drops, c comments, a click on a box marks it); PageUp, PageDown and the
+  wheel scroll the chat, keeping your place as lines come.
+- **A menu of the commands** as a `/word` is typed (the devices' skills
+  too), and **a chooser** for `/model`, `/effort`, `/speed`, `/mcp` and
+  `/tab` given no value. Shift+Tab steps the effort, Alt+M the speed.
+  Colors from the terminal's own palette.
+- **Your Claude Code on the device**: `unii device` reads `~/.claude`'s
+  skills, commands and enabled plugins (as `plugin:name`) and its MCP
+  servers (stdio, from `~/.claude.json` and the plugins' `.mcp.json`),
+  which run on that device, each off in a chat till `/mcp` turns it on;
+  their commands and env never leave the device.
+- **Skills in a steady block** before the memory, so the vendor's cache
+  keeps it; `skills_search` finds one by words, and a message starting
+  with `/name` loads that skill whole for its turn.
 
 Install and set up
 ------------------
@@ -155,6 +180,10 @@ Use
   this computer's Claude and Codex sessions.
 - `unii help` lists every command. unii never checks for updates by
   itself: `unii update` installs the newest release.
+- **First day:** run `/import` in the terminal on each computer you used
+  Claude Code or Codex on (it lists what it found; `/import go` sends it),
+  so Unii starts out knowing your projects and past decisions. An import
+  is summarized in the background; `/import pause` and `resume` hold it.
 
 From source (Bun): `bun install`, `bun run web` (rebuilds web/app.js),
 `bun Cli.ts <command>`, `bun run build` (one `unii` executable).
