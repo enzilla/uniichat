@@ -17,6 +17,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Out } from "./Agent.ts";
 import { CAP, clip, clip_end } from "./Clip.ts";
+import * as Instructions from "./Instructions.ts";
 import { Mcp } from "./Mcp.ts";
 import { FIT, HEAD, IMAGE, image_kind, PIXELS } from "./View.ts";
 
@@ -67,6 +68,10 @@ const SHELLS = new Map<Bun.Subprocess, string>();
 
 // how long halt() tries to see an agent's processes gone (ms)
 const GONE = 3000;
+
+// how long the instructions job waits for the session start hooks before
+// answering without them (ms): under Tools.ts's LOOK
+const WAIT = 1500;
 
 // the lines kept around each change in a diff
 const CONTEXT = 3;
@@ -165,6 +170,13 @@ export namespace Machine {
         }
         case "skill": {
           return Machine.skill(os.homedir(), cwd, String(input.name));
+        }
+        case "instructions": {
+          return { text: JSON.stringify(await Instructions.global(os.homedir(), work, Instructions.MANAGED, WAIT)), fail: false };
+        }
+        case "project_instructions": {
+          const at = (Array.isArray(input.paths) ? input.paths : []).map((p: unknown) => path.resolve(cwd, String(p).replace(/^~(?=\/|$)/, os.homedir())));
+          return { text: JSON.stringify({ parts: Instructions.project(os.homedir(), at), at }), fail: false };
         }
         case "claude_mcps": {
           return { text: JSON.stringify(Machine.claude_mcps(os.homedir()).map((m) => m.name)), fail: false };
@@ -680,16 +692,9 @@ function json_file(file: string): any {
   }
 }
 
-// the plugins Claude Code's user settings enable, installed for the user:
-// each one's name (its key's before "@") and folder
+// the plugins Claude Code enables, the organization's too (Instructions.ts)
 function claude_plugins(home: string): [string, string][] {
-  const json = json_file;
-  const on = json(home + "/.claude/settings.json")?.enabledPlugins ?? {};
-  const all = json(home + "/.claude/plugins/installed_plugins.json")?.plugins ?? {};
-  return Object.keys(on).filter((key) => on[key] === true).flatMap((key): [string, string][] => {
-    const at = [all[key]].flat().find((e: any) => e?.scope === "user" && typeof e.installPath === "string")?.installPath;
-    return at === undefined ? [] : [[key.split("@")[0], at]];
-  });
+  return Instructions.plugins(home);
 }
 
 // Diff
