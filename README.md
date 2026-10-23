@@ -24,6 +24,16 @@ Features
   and Codex sessions (or the websites' exports).
 - **Web, phone and terminal.** The server hosts the web app (installable,
   with push notifications); `unii` is the same chat in a terminal.
+- **Pending list (pendências).** Unii keeps what it needs of you beside
+  the chat: approvals, decisions, steps only you can do. A task may wait
+  for others (shown once they're closed), ask several things at once
+  (fields: one choice, many, a text, yes or no; each answer kept as a
+  draft till you conclude), and have a thread: talk with Unii about it
+  without resolving it (your message is a message of the chat, marked
+  `[Pendência P7: …]`; it shows "aguardando o Unii", then "sua vez").
+  Terminal: `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
+  `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
+  `/descartar`, `/reabrir`, `/avisar`.
 
 What this fork adds: one owner per server, no accounts or email; Claude
 and ChatGPT plans as vendors (`claude-sub`, `openai-sub`) beside API

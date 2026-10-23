@@ -404,6 +404,23 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 #tasks li.waiting .title { color: var(--mid); }
 #tasks .frees { padding: 0 6px; border-radius: 6px; background: var(--ink); color: var(--paper); font-weight: 500; }
 #tasks .closed summary { padding: 4px 0; }
+/* a task's fields (each answered apart, a draft till Concluir) and its
+   thread (talk without concluding), with whose turn it is */
+#tasks .fields { margin-top: 6px; display: grid; gap: 6px; }
+#tasks .field { margin: 0; padding: 6px 8px; border: 1px solid var(--hair); border-radius: 8px; min-width: 0; }
+#tasks .field legend { padding: 0 4px; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+#tasks .field .req { color: var(--mid); }
+#tasks .field .picks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
+#tasks .field label { display: flex; align-items: center; gap: 4px; cursor: pointer; overflow-wrap: anywhere; }
+#tasks .field textarea, #tasks .thread textarea { width: 100%; box-sizing: border-box; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); resize: vertical; }
+#tasks .talk { padding: 0 6px; border-radius: 6px; background: var(--block); }
+#tasks .talk.user { background: var(--ink); color: var(--paper); font-weight: 500; }
+#tasks .thread { margin-top: 8px; }
+#tasks .thread ol { margin: 6px 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+#tasks .thread ol li { padding: 0; border: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+#tasks .thread .who { display: block; font-size: 12px; color: var(--mid); }
+#tasks .thread li.user p { margin: 0; white-space: pre-wrap; }
+#tasks .thread .acts { justify-content: flex-end; }
 @media (min-width: 1100px) {
   body.tasking { padding-right: 376px; }
   body.tasking header .tasks { display: none; }

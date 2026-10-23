@@ -310,7 +310,7 @@ test("tasks.json without a list of tasks, or null: kept aside, the list empty an
 // told and versions (SmokyRadish's ressalvas 1 and 2)
 // ===================================================
 
-test("Unii editing a task the user resolved, unseen, keeps it to tell; a change of state by Unii tells it", () => {
+test("Unii editing a task the user resolved, unseen, keeps it to tell, a change of state too (said as made since)", () => {
   const s = T.tasks_load(dir);
   add(s, { title: "Abrir PR?", choices: ["sim", "não"] });
   add(s, { title: "Outra" });
@@ -324,8 +324,13 @@ test("Unii editing a task the user resolved, unseen, keeps it to tell; a change 
   expect(T.tasks_told(s)).toBe(1);
   T.task_resolve(s, "P2", "dropped", null, null, NOW + 5);
   const o = T.task_edit(s, { id: "P2", state: "open" }, NOW + 6) as T.Task;
-  expect(o.told).toBe(true);
+  expect(o.told).toBe(false);
+  expect(T.tasks_block(s, NOW + 7)).toContain("- P2 dropped by user: \"Outra\" — since then you made it open");
+  expect(T.tasks_told(s)).toBe(1);
   expect(T.tasks_untold(s)).toEqual([]);
+  // told, a change of state by Unii is its own: nothing to tell
+  const d = T.task_edit(s, { id: "P2", state: "dropped" }, NOW + 8) as T.Task;
+  expect([d.told, d.heard]).toEqual([true, null]);
 });
 
 test("two changes by the user in one millisecond: the one after the block stays to tell", () => {

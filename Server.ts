@@ -369,6 +369,7 @@ export namespace Chat {
       chat.wait = [];
       chat.busy = false;
       Chat.live(chat, null, []);
+      Chat.talked(chat);
       Chat.phone(chat);
       Chat.after(chat);
       Chat.change(chat);
@@ -635,6 +636,18 @@ export namespace Chat {
       }
       Chat.change(chat);
     });
+  }
+
+  // a turn ended: each task whose thread still waits for Unii (the user
+  // wrote there, Unii didn't task_reply) gets the turn's last reply, if
+  // Unii's, and it's the user's turn (Tasks.tasks_talked)
+  export function talked(chat: Chat): void {
+    const s = Tasks.tasks_load(chat.mem.dir);
+    if (!s.tasks.some((t) => t.talk === "unii")) {
+      return;
+    }
+    const last = Memory.message(chat.mem, chat.mem.count - 1);
+    Tasks.tasks_talked(s, last !== null && last.kind === "unii" ? last.text : null, Date.now());
   }
 
   // a turn's last message, Unii's reply or why there was none, to the
@@ -1199,7 +1212,7 @@ export namespace Chat {
         // at once, by a message that starts a turn (a resolution made
         // before, untold, too)
         const s = Tasks.tasks_load(chat.mem.dir);
-        const t = Tasks.task_resolve(s, msg.task, msg.state, msg.answer, msg.note, Date.now());
+        const t = Tasks.task_resolve(s, msg.task, msg.state, msg.answer, msg.note, Date.now(), msg.fields);
         if (typeof t === "string") {
           return { error: t };
         }
@@ -1208,6 +1221,30 @@ export namespace Chat {
         if (t !== null || (go && was !== null && !was.told)) {
           Chat.resolved(chat, [was!], go);
         }
+        Chat.change(chat);
+        return {};
+      }
+      case "task_draft": {
+        // a task's fields answered by the user, kept as a draft: no turn,
+        // nothing told (Tasks.task_draft); set again, the same
+        const t = Tasks.task_draft(Tasks.tasks_load(chat.mem.dir), msg.task, msg.fields);
+        if (typeof t === "string") {
+          return { error: t };
+        }
+        Chat.change(chat);
+        return {};
+      }
+      case "task_say": {
+        // the user talks about a task: a message of the chat, marked with
+        // it (one memory), in its thread too, that starts a turn; the
+        // task waits for Unii (Tasks.task_say). Recorded as the message's
+        // last page, so done again it adds nothing
+        const s = Tasks.tasks_load(chat.mem.dir);
+        const t = Tasks.task_say(s, msg.task, msg.text, Date.now());
+        if (typeof t === "string") {
+          return { error: t };
+        }
+        await Chat.writing(chat, async () => Chat.take(chat, Chat.push(chat, null, "user", Tasks.task_mark(t, t.thread.at(-1)!.text), [], false, id)));
         Chat.change(chat);
         return {};
       }

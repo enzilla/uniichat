@@ -132,8 +132,10 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ]],
     ["Pendências", [
       ["/p [P7|aguardando]", "",                       "a lista de pendências; com um id, o detalhe dela; aguardando: as que esperam outras", term_tasks],
-      ["/ok P7 [opção] [comentário]", "",             "conclui a pendência; o Unii a vê no próximo turno", (t, a) => term_task(t, a, "done", false)],
-      ["/ok! P7 [opção] [comentário]", "",            "conclui a pendência e avisa o Unii agora",       (t, a) => term_task(t, a, "done", true)],
+      ["/ok P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência (com as respostas dos campos: 1=a 2=\"um texto\"); o Unii a vê no próximo turno", (t, a) => term_task(t, a, "done", false)],
+      ["/ok! P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência e avisa o Unii agora",     (t, a) => term_task(t, a, "done", true)],
+      ["/rascunho P7 campo=valor", "",                 "responde campos da pendência sem concluir (salvo como rascunho)", term_draft],
+      ["/conversa P7 [mensagem]", "",                  "conversa sobre a pendência sem concluir: a mensagem inicia um turno do Unii; sem mensagem, mostra a conversa", term_talk],
       ["/descartar P7 [comentário]", "",               "descarta a pendência",                          (t, a) => term_task(t, a, "dropped", false)],
       ["/reabrir P7",       "",                        "reabre uma pendência resolvida",                 (t, a) => term_task(t, a, "open", false)],
       ["/avisar",           "",                        "avisa o Unii agora das pendências resolvidas que ele ainda não viu", (t) => term_send(t, { $: "tasks_tell" })],
@@ -613,7 +615,36 @@ function term_task(t: Term, arg: string, state: "done" | "dropped" | "open", go:
   if (typeof got === "string") {
     return term_note(t, got);
   }
-  term_act(t, { $: "Task", task: got.task.id, state, ...(got.answer === undefined ? {} : { answer: got.answer }), note: got.note, go });
+  term_act(t, { $: "Task", task: got.task.id, state, ...(got.answer === undefined ? {} : { answer: got.answer }), note: got.note, go, ...(got.fields === undefined ? {} : { fields: got.fields }) });
+}
+
+// a task's fields answered (campo=valor), kept as a draft: not concluded
+function term_draft(t: Term, arg: string): void {
+  const got = View.task_args(t.v, arg, false);
+  if (typeof got === "string") {
+    return term_note(t, got);
+  }
+  const given = View.fields_args(got.task, got.note);
+  if (typeof given === "string") {
+    return term_note(t, given);
+  }
+  if (Object.keys(given.fields).length === 0) {
+    return term_note(t, (got.task.fields ?? []).length === 0 ? "A pendência " + got.task.id + " não tem campos." : "Informe as respostas como campo=valor, por exemplo /rascunho " + got.task.id + " 1=a.");
+  }
+  term_act(t, { $: "TaskDraft", task: got.task.id, fields: given.fields });
+}
+
+// a message about a task, in its thread (a turn of Unii's, the task
+// not concluded); none: the task whole, its thread with it
+function term_talk(t: Term, arg: string): void {
+  const got = View.task_args(t.v, arg, false);
+  if (typeof got === "string") {
+    return term_note(t, got);
+  }
+  if (got.note === "") {
+    return term_rows(t, View.entry_rows(null, "note", View.tasks_md(t.v, got.task)), false);
+  }
+  term_act(t, { $: "TaskSay", task: got.task.id, text: got.note });
 }
 
 // the footer's line of the pending list, if any is open

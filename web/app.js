@@ -1181,7 +1181,25 @@ function view_act(v, act) {
         return [];
       }
       const note = act.note?.trim() ?? "";
-      return [{ $: "task", task: t.id, state: act.state, ...act.answer === undefined ? {} : { answer: act.answer }, ...note === "" ? {} : { note }, ...act.go ? { go: true } : {} }];
+      const fields = act.state === "done" && act.fields !== undefined && Object.keys(act.fields).length > 0 ? { fields: act.fields } : {};
+      return [{ $: "task", task: t.id, state: act.state, ...act.answer === undefined ? {} : { answer: act.answer }, ...note === "" ? {} : { note }, ...act.go ? { go: true } : {}, ...fields }];
+    }
+    case "TaskDraft": {
+      const t = v.tasks.find((x) => x.id === act.task);
+      if (t === undefined) {
+        v.notes.push("Pendência " + act.task + " não encontrada.");
+        return [];
+      }
+      return [{ $: "task_draft", task: t.id, fields: act.fields }];
+    }
+    case "TaskSay": {
+      const t = v.tasks.find((x) => x.id === act.task);
+      const text = act.text.trim();
+      if (t === undefined || text === "") {
+        v.notes.push(t === undefined ? "Pendência " + act.task + " não encontrada." : "Escreva uma mensagem sobre a pendência " + t.id + ".");
+        return [];
+      }
+      return [{ $: "task_say", task: t.id, text }];
     }
     case "TasksTell": {
       return [{ $: "tasks_tell" }];
@@ -1191,11 +1209,20 @@ function view_act(v, act) {
 function task_waits_said(t, waits) {
   return "A pendência " + t.id + " aguarda " + waits.join(", ") + ": resolva " + (waits.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
 }
+function tasks_count_said(open, waiting) {
+  return open === 0 && waiting > 0 ? "+" + waiting : String(open);
+}
+function tasks_none_said(waiting) {
+  return waiting === 0 ? "Nenhuma pendência aberta." : "Nenhuma pendência para resolver agora.";
+}
 function tasks_waiting_said(n) {
   return n === 0 ? "" : "+" + n + " aguardando outras pendências";
 }
 function view_untold(v) {
   return v.tasks.filter((t) => !t.told && !t.freed);
+}
+function task_talk_said(t) {
+  return t.talk === "unii" ? "aguardando o Unii" : t.talk === "user" ? "sua vez" : "";
 }
 function view_body(v) {
   if (v.page !== null) {
@@ -1623,10 +1650,12 @@ function tasks_html(tasks) {
     const who = [...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...t.who === "unii" ? ["com o Unii"] : []];
     const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${md_parse(t.detail).map(block_html).join("")}</div></details>`;
     const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
-    const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}">`;
-    const go = `<label class="go"><input type="checkbox"> Avisar o Unii agora</label>`;
+    const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
+    const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
     const acts = `<div class="acts">${go}${act(t, "done", "Concluir", "done")}${act(t, "dropped", "Descartar", "drop")}</div>`;
-    return `<li class="task ${esc(t.who)}" data-task="${esc(t.id)}">${head(t)}${meta(t, [...who, `<time>${esc(when(t.made))}</time>`])}${detail}${opts}${note}${acts}</li>`;
+    const talk = task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`];
+    const cls = "task " + t.who + (t.talk === null ? "" : " talk-" + t.talk);
+    return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head(t)}${meta(t, [...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t)}${opts}${note}${acts}${thread_html(t)}</li>`;
   };
   const closed = (t) => {
     const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii ainda não viu"]];
@@ -1639,6 +1668,36 @@ function tasks_html(tasks) {
   };
   const opened = tasks.filter((t) => t.state === "open");
   return { open: opened.filter((t) => !blocked.has(t.id)).map(open), waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
+}
+function fields_html(t) {
+  const fields = t.fields ?? [];
+  if (fields.length === 0) {
+    return "";
+  }
+  const draft = t.draft ?? {};
+  const one = (f) => {
+    const v = Object.hasOwn(draft, f.id) ? draft[f.id] : undefined;
+    const name = "f-" + t.id + "-" + f.id;
+    const req = f.required ? ` <span class="req" title="Obrigatório">*</span>` : "";
+    const legend = `<legend>${esc(f.label)}${req}</legend>`;
+    if (f.kind === "text") {
+      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text">${legend}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
+    }
+    const type = f.kind === "multi" ? "checkbox" : "radio";
+    const on = (c) => Array.isArray(v) ? v.includes(c) : v === c;
+    const boxes = f.choices.map((c) => `<label><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> ${esc(c)}</label>`).join("");
+    return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}">${legend}<div class="picks">${boxes}</div></fieldset>`;
+  };
+  return `<div class="fields">${fields.map(one).join("")}</div>`;
+}
+function thread_html(t) {
+  const thread = t.thread ?? [];
+  const msg = (m) => m.who === "unii" ? `<li class="unii"><span class="who">Unii</span><div class="md">${md_parse(m.text).map(block_html).join("")}</div></li>` : `<li class="user"><span class="who">Você</span><p>${esc(m.text)}</p></li>`;
+  const open = thread.length > 0 && t.talk !== null ? " open" : "";
+  const said = thread.length === 0 ? "Conversar sobre esta pendência" : "Conversa (" + thread.length + ")";
+  const box = `<textarea class="say" rows="2" maxlength="4000" placeholder="Escreva sobre esta pendência (não a conclui)" aria-label="Mensagem sobre ${esc(t.id)}" data-keep="say"></textarea>`;
+  const send = `<button class="say-send"${act_html({ $: "TaskSay", task: t.id, text: "" })}>Enviar</button>`;
+  return `<details class="thread" data-keep="thread"${open}><summary>${esc(said)}</summary>${thread.length === 0 ? "" : `<ol>${thread.map(msg).join("")}</ol>`}${box}<div class="acts">${send}</div></details>`;
 }
 function account_html(prompts, notify = null) {
   const item = (what, note, act) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
@@ -1995,6 +2054,15 @@ function chat() {
     attach([...ev.dataTransfer?.files ?? []]);
   };
   document.onclick = click;
+  $("#tasks").addEventListener("change", task_draft);
+  $("#tasks").addEventListener("toggle", thread_toggle, true);
+  $("#tasks").addEventListener("keydown", (ev) => {
+    const el = ev.target;
+    if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+      ev.preventDefault();
+      task_say(el.closest("li[data-task]").dataset.task);
+    }
+  });
   visualViewport.onresize = () => {
     if (document.activeElement === BOX && BOX.selectionStart === BOX.value.length) {
       BOX.scrollTop = BOX.scrollHeight;
@@ -2092,7 +2160,12 @@ function click(ev) {
     go(path ?? "/");
   }
   if (a !== undefined) {
-    act(task_act(el, JSON.parse(a)));
+    const made = JSON.parse(a);
+    if (made.$ === "TaskSay") {
+      task_say(made.task);
+    } else {
+      act(task_act(el, made));
+    }
   }
   if (text !== undefined) {
     navigator.clipboard.writeText(text).then(() => copied(el), () => toast("Could not copy."));
@@ -2140,7 +2213,104 @@ function task_act(el, a) {
   }
   const note = item.querySelector("input.note")?.value ?? "";
   const go = item.querySelector(".go input")?.checked ?? false;
-  return { ...a, note, go };
+  const fields = a.state === "done" ? task_fields(item) : {};
+  return { ...a, note, go, ...Object.keys(fields).length === 0 ? {} : { fields } };
+}
+function field_value(set) {
+  if (set.dataset.kind === "text") {
+    return set.querySelector("textarea")?.value ?? "";
+  }
+  const on = [...set.querySelectorAll("input:checked")].map((i) => i.value);
+  return set.dataset.kind === "multi" ? on : on[0] ?? "";
+}
+function task_fields(item) {
+  const out = {};
+  for (const set of item.querySelectorAll("fieldset.field")) {
+    out[set.dataset.field] = field_value(set);
+  }
+  return out;
+}
+function task_draft(ev) {
+  const set = ev.target.closest("#tasks fieldset.field");
+  const item = set?.closest("li[data-task]");
+  if (set === null || set === undefined || item === null || item === undefined) {
+    return;
+  }
+  act({ $: "TaskDraft", task: item.dataset.task, fields: { [set.dataset.field]: field_value(set) } });
+}
+function task_say(task) {
+  const box = () => document.querySelector(`#tasks li[data-task="${CSS.escape(task)}"] textarea.say`);
+  const text = box()?.value ?? "";
+  for (const msg of view_act(v, { $: "TaskSay", task, text })) {
+    const was = box();
+    if (was !== null) {
+      was.value = "";
+    }
+    link_send(v, msg, (out) => {
+      if (out.error === undefined) {
+        return;
+      }
+      toast(out.error);
+      const now = box();
+      if (now !== null && now.value.trim() === "") {
+        now.value = text;
+      }
+    });
+  }
+  draw(false);
+}
+function keep_take() {
+  const kept = new Map;
+  for (const el of document.querySelectorAll("#tasks li[data-task] :is(input, textarea)[data-keep]")) {
+    const key = el.closest("li[data-task]").dataset.task + "/" + el.dataset.keep;
+    const box = el instanceof HTMLInputElement && el.type === "checkbox";
+    const focus = document.activeElement === el;
+    const value = !box && el.value !== el.defaultValue ? el.value : null;
+    const checked = box && el.checked !== el.defaultChecked ? el.checked : null;
+    if (value !== null || checked !== null || focus) {
+      kept.set(key, { el, value, checked, focus, start: box ? null : el.selectionStart, end: box ? null : el.selectionEnd });
+    }
+  }
+  return kept;
+}
+function keep_put(kept) {
+  for (const [key, k] of kept) {
+    const [task, name] = key.split("/");
+    const el = document.querySelector(`#tasks li[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
+    if (el === null || el === k.el) {
+      continue;
+    }
+    if (k.value !== null) {
+      el.value = k.value;
+    }
+    if (k.checked !== null) {
+      el.checked = k.checked;
+    }
+    if (k.focus) {
+      el.focus();
+      if (k.start !== null && k.end !== null) {
+        el.setSelectionRange(k.start, k.end);
+      }
+    }
+  }
+}
+var THREADS = new Map;
+function thread_toggle(ev) {
+  const el = ev.target;
+  const item = el.closest("#tasks li[data-task]");
+  if (!(el instanceof HTMLDetailsElement) || !el.classList.contains("thread") || item === null) {
+    return;
+  }
+  THREADS.set(item.dataset.task, { open: el.open, n: el.querySelectorAll("ol > li").length });
+}
+function threads_put() {
+  for (const el of document.querySelectorAll("#tasks li[data-task] details.thread")) {
+    const task = el.closest("li[data-task]").dataset.task;
+    const was = THREADS.get(task);
+    if (was !== undefined && was.n === el.querySelectorAll("ol > li").length && el.open !== was.open) {
+      el.open = was.open;
+    }
+  }
 }
 var TASKS = { of: null, html: { open: [], waiting: [], closed: [] } };
 function tasks_bar() {
@@ -2151,10 +2321,14 @@ function tasks_bar() {
   const untold = view_untold(v).length;
   document.body.classList.toggle("tasking", v.tasks.length > 0);
   $(".tasks").hidden = v.tasks.length === 0;
-  $(".tasks span").textContent = String(open.length);
+  $(".tasks span").textContent = tasks_count_said(open.length, waiting.length);
   $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
   $("#tasks .none").hidden = open.length > 0;
+  $("#tasks .none").textContent = tasks_none_said(waiting.length);
+  const kept = keep_take();
   markup($("#tasks ul.now"), open);
+  keep_put(kept);
+  threads_put();
   markup($("#tasks .waiting ul"), waiting);
   $("#tasks .waiting").hidden = waiting.length === 0;
   $("#tasks .waiting summary").textContent = tasks_waiting_said(waiting.length);

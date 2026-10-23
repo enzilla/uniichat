@@ -216,6 +216,13 @@ const OWN: Spec[] = [
   spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. With an agent's name as id, give that agent's whole chat. A long text comes in pages from character at, saying where to go on.", { id: { type: ["integer", "string"] }, n: INT, at: INT }, ["id"]),
   spec("date", "The date and time of message id.", { id: INT }, ["id"]),
 ];
+// a task's fields (Tasks.ts fields_read)
+const FIELDS_SPEC = {
+  type: "array",
+  description: "Questions asked at once, each answered apart (at most 12): id (letters, digits, - or _), label (the question, in the user's language), kind: choice (one of choices), multi (any of choices), text, yesno (sim or não); choices for choice and multi (2 to 9); required (true by default: the user can't conclude without it).",
+  items: { type: "object", properties: { id: STR, label: STR, kind: { type: "string", enum: ["choice", "multi", "text", "yesno"] }, choices: { type: "array", items: STR }, required: { type: "boolean" } }, required: ["id", "label", "kind"] },
+};
+
 const BOSS: Spec[] = [
   spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees the view and the user's instructions, but knows what you want only from its task.", { tasks: { type: "array", items: STR }, labels: { type: "array", items: STR, description: "A short label per task, in the tasks' order, that the user reads as that subagent's name instead of its generated one: <project>-<role>, as num-3182-verifier or uniichat-links-impl. Give one for every task. You still name it by its generated name in tell, stop and zoom." }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." }, model: { type: "string", enum: MODELS, description: "Their model; by default, the one they'd run on. Set it ONLY when the user asks for that model or vendor in this chat, since another vendor may come with additional costs." } }, ["tasks"]),
   spec("tell", "Send a message to a subagent, by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
@@ -230,15 +237,16 @@ const BOSS: Spec[] = [
   spec("stop", "Stop a subagent at once, by name, whatever it is doing (mid-call, waiting on a usage limit, running a tool on a device: that job is cancelled). Others keep running. Its report says it was stopped; its chat and work dir stay, so a later tell resumes it.", { name: STR, why: { type: "string", description: "Why, for its report." } }, ["name"]),
   spec("resume", "Wake every call on this server waiting for an AI service's usage limit (your turn, summaries), when the user says a limit was reset early. Each asks again once; one still limited waits again. A subagent at a usage limit ends and reports it instead: tell it to go on.", {}, []),
   // the pending list (Tasks.ts)
-  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with who \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. When one can only be resolved after another (a token before a test, a merge before a deploy), give it after: the user then sees only what they can do now, and the tasks that free others come first. Title: short, the action or question, in the user's language.", {
+  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with who \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. When one can only be resolved after another (a token before a test, a merge before a deploy), give it after: the user then sees only what they can do now, and the tasks that free others come first. Several questions or decisions on one subject go in one task as fields (each answered apart, kept as a draft, all sent when the user concludes, in your next turn's block). The user may also talk with you in a task's thread without resolving it: their message reaches you marked \"[Pendência P7: …]\"; reply with task_reply. Title: short, the action or question, in the user's language.", {
     title   : STR,
     detail  : { type: "string", description: "Markdown: the context needed to decide, with links." },
     who     : { type: "string", enum: ["user", "unii"], description: "Who must act; by default the user." },
     choices : { type: "array", items: STR, description: "Answers the user picks with one click (\"sim\", \"não\"), at most 9." },
     ref     : { type: "string", description: "What it belongs to: a project, an agent, a PR." },
     after   : { type: "array", items: STR, description: "Ids of the tasks this one waits for (\"P3\"), the user's or yours: while any is open it's hidden from the user and can't be resolved; once all are closed it shows, and your next turn is told it was freed." },
+    fields  : FIELDS_SPEC,
   }, ["title"]),
-  spec("task_edit", "Change a task of the pending list, by its id (P7): its texts, choices, ref or the tasks it waits for (after), or its state: close (done, dropped) one that you resolved or that no longer applies, or open one again.", {
+  spec("task_edit", "Change a task of the pending list, by its id (P7): its texts, choices, ref or the tasks it waits for (after), or its state: close (done, dropped) one that you resolved or that no longer applies, or open one again. Done is refused while it waits for open tasks (drop it, or change its after). A change by the user you haven't been told of yet stays to tell, even if you change the state meanwhile.", {
     id      : STR,
     title   : STR,
     detail  : STR,
@@ -249,7 +257,9 @@ const BOSS: Spec[] = [
     answer  : STR,
     note    : { type: "string", description: "How it was resolved." },
     after   : { type: "array", items: STR, description: "The ids it waits for, replacing the list; [] for none. No task that waits for this one (a cycle)." },
+    fields  : { ...FIELDS_SPEC, description: "Its fields, replacing the list (add or remove questions); [] for none. The user's draft answers to fields kept (same id) stay." },
   }, ["id"]),
+  spec("task_reply", "Reply in a task's thread, where the user talks with you about it without resolving it (their messages reach you marked \"[Pendência P7: …]\"). It's then the user's turn there. Use it for every reply to such a message; a turn that ends without one puts its last reply there. You may also write first, to ask about a task. Reply in the user's language; Markdown.", { id: STR, text: STR }, ["id", "text"]),
   spec("tasks", "List the pending list: the open tasks with their details; all: those closed in the last 7 days too; ref: only those whose ref contains it; id: that one whole.", { all: { type: "boolean" }, ref: STR, id: STR }, []),
 ];
 const DEVICE = { device: { type: "string", description: "The name of the device to run on, one listed under Devices." } };
@@ -510,6 +520,7 @@ export namespace Tools {
       }
       case "task_add":
       case "task_edit":
+      case "task_reply":
       case "tasks": {
         return Tools.task(tools, name, args, who);
       }
@@ -561,11 +572,14 @@ export namespace Tools {
     if (name === "tasks") {
       return { text: Tasks.tasks_list(s, args, now), fail: false };
     }
-    const t = name === "task_add" ? Tasks.task_new(s, args, who, now) : Tasks.task_edit(s, args, now);
+    const t = name === "task_add" ? Tasks.task_new(s, args, who, now) : name === "task_reply" ? Tasks.task_reply(s, args.id, args.text, now) : Tasks.task_edit(s, args, now);
     if (typeof t === "string") {
       return { text: t, fail: true };
     }
     tools.hooks.change();
+    if (name === "task_reply") {
+      return { text: "Replied in " + t.id + "'s thread" + (t.state === "open" ? "; the user's turn there." : " (it's closed)."), fail: false };
+    }
     return { text: (name === "task_add" ? "Added " : "Changed ") + Tasks.task_line(t, now, false, s.tasks).slice(2), fail: false };
   }
 
