@@ -3,7 +3,8 @@
 // `UNII_DIR=$(mktemp -d /tmp/unii-t.XXXX) bun test CursorSub.test.ts`: the
 // cursor-sub vendor's parts that need no agent (CursorSub.ts): Cursor's
 // ids, bubblewrap's command, the permissions, what a session streams
-// (updates as a real `agent acp` sent them), and a call refused unasked.
+// (updates as a real `agent acp` sent them), a call refused unasked, and
+// the Docker mode's container and calls.
 
 import { expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -11,7 +12,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Event } from "./AskAI.ts";
 import * as config from "./Config.ts";
-import { CursorSub, CLI_JSON, NO_SANDBOX, SIGN_IN } from "./CursorSub.ts";
+import { CursorSub, BAD_SANDBOX, CLI_JSON, CONTAINER, IMAGE, NO_DOCKER, NO_SANDBOX, SIGN_IN } from "./CursorSub.ts";
 import { EFFORTS, Pick } from "./Pick.ts";
 
 if (!config.DIR.startsWith("/tmp/")) {
@@ -123,3 +124,64 @@ test("a call is refused unasked, the agent never run, without bubblewrap; then w
     expect(await CursorSub.run(ask, () => {}, [], new AbortController().signal)).toEqual({ text: SIGN_IN });
   }
 });
+
+test("the Docker mode's container: read only but its home and /tmp, no capabilities, the host's uid and network, its CLI read only, no Docker socket, nothing more of the home", () => {
+  const cli = "/home/zola/.local/share/cursor-agent";
+  const home = "/home/zola/.unii/cursor-sub";
+  const argv = CursorSub.docker_run("/usr/bin/docker", cli, home, 1000, 1003, "/etc/ssl/certs");
+  const s = argv.join(" ");
+  expect(argv.slice(0, 5)).toEqual(["/usr/bin/docker", "run", "-d", "--name", CONTAINER]);
+  for (const flag of ["--read-only", "--cap-drop ALL", "--security-opt no-new-privileges", "--user 1000:1003", "--network host", "--init", "--tmpfs /tmp:rw,nosuid,nodev,size=256m"]) {
+    expect(s).toContain(flag);
+  }
+  const mounts = argv.flatMap((a, k) => (a === "-v" ? [argv[k + 1]] : []));
+  expect(mounts).toEqual([cli + ":" + cli + ":ro", home + ":" + home, "/etc/ssl/certs:/etc/ssl/certs:ro"]);
+  expect(s).not.toMatch(/docker\.sock|--privileged|--cap-add|--pid host|-v \/home\/zola:/);
+  expect(argv.slice(-3)).toEqual(["sleep", IMAGE, "infinity"]);
+  expect(IMAGE).toMatch(/^ubuntu@sha256:[0-9a-f]{64}$/);
+  const env = argv.flatMap((a, k) => (a === "-e" ? [argv[k + 1].split("=")[0]] : []));
+  expect(env).toEqual(["HOME", "XDG_CONFIG_HOME", "PATH", "LANG", "NO_OPEN_BROWSER"]);
+  // labeled by its setup: the same again, another for another uid or no certificates
+  const label = (a: string[]) => a[a.indexOf("--label") + 1];
+  expect(label(argv)).toBe(label(CursorSub.docker_run("/usr/bin/docker", cli, home, 1000, 1003, "/etc/ssl/certs")));
+  expect(label(argv)).not.toBe(label(CursorSub.docker_run("/usr/bin/docker", cli, home, 1001, 1003, "/etc/ssl/certs")));
+  expect(CursorSub.docker_run("/usr/bin/docker", cli, home, 1000, 1003, null).join(" ")).not.toContain("/etc/ssl/certs");
+});
+
+test("a Docker mode call is an exec in the container, in its work dir, saying its pid there first", () => {
+  expect(CursorSub.docker_exec("/usr/bin/docker", "/h/w/1", "/c/v/cursor-agent", "grok-4.7-low")).toEqual(["/usr/bin/docker", "exec", "-i", "-w", "/h/w/1", CONTAINER, "/bin/sh", "-c", 'echo "pid $$" >&2; exec "$0" "$@"', "/c/v/cursor-agent", "acp", "--model", "grok-4.7-low"]);
+});
+
+test("failing closed by mode: no docker, a mode not known; never the other mode", async () => {
+  const was = process.env.PATH;
+  process.env.PATH = "/nonexistent";
+  try {
+    expect(await CursorSub.isolated("docker", "/c/v/cursor-agent", "/w", "m")).toEqual({ text: NO_DOCKER + "no docker command" });
+    expect(await CursorSub.isolated("bwrap", "/c/v/cursor-agent", "/w", "m")).toEqual({ text: NO_SANDBOX });
+  } finally {
+    process.env.PATH = was;
+  }
+  expect(await CursorSub.isolated("none", "/c/v/cursor-agent", "/w", "m")).toEqual({ text: BAD_SANDBOX });
+  const ask = { vendor: "cursor-sub", model: "grok-4.7", effort: "low", speed: "slow", system: "", blocks: [], searches: 0, server: "" } as never;
+  expect(await CursorSub.run(ask, () => {}, [], new AbortController().signal, "")).toEqual({ text: BAD_SANDBOX });
+});
+
+test("closed, the agent's input ends and it exits on its own; one that won't is killed and its pid handed over", async () => {
+  const work = fs.mkdtempSync(os.tmpdir() + "/unii-cs-");
+  try {
+    const quits = CursorSub.spawn(["/bin/sh", "-c", 'echo "pid $$" >&2; cat > /dev/null'], work);
+    await Bun.sleep(100);
+    quits.close();
+    await Bun.sleep(300);
+    expect(quits.dead()).toBe(true);
+    let told = "";
+    const stays = CursorSub.spawn(["/bin/sh", "-c", 'echo "pid $$" >&2; trap "" TERM; while :; do sleep 1; done < /dev/null'], work, (err) => (told = err));
+    await Bun.sleep(100);
+    stays.close();
+    await Bun.sleep(5600);
+    expect(stays.dead()).toBe(true);
+    expect(told).toMatch(/^pid \d+$/m);
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+}, 15000);

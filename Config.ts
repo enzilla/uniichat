@@ -142,6 +142,10 @@ export const CLAUDE     = config_path(config_get("claude", ""));
 export const CURSOR_SUB = config_path(config_get("cursor_sub", DIR + "/cursor-sub"));
 export const CURSOR     = config_path(config_get("cursor", ""));
 
+// how cursor-sub contains Cursor's agent: "bwrap" (bubblewrap), or
+// "docker" (a container of its own, where unprivileged namespaces are shut)
+export const CURSOR_SANDBOX = config_get("cursor_sandbox", "bwrap").trim();
+
 // the keys the environment gave (removed from it), and every key as used:
 // the environment's, else keys.json's
 const ENV_KEYS: Record<string, string> = Object.fromEntries(Object.entries(VARS).map(([name, v]) => [name, config_key(v)]));

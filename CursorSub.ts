@@ -11,14 +11,20 @@
 //
 // Contained, failing closed: Cursor's own tools (a shell, files, search)
 // run with no permission asked, in its ask mode too, so they are shut
-// three ways. The agent runs in bubblewrap (CursorSub.sandbox): /usr and
-// the few files of /etc a program needs, read only, its CLI read only,
-// and its home (DIR) and an empty work dir (one per call) writable; no
-// user's home, no Docker socket. Its permissions deny every tool of its
-// own, in its home's config and the work dir's (CLI_JSON). A permission
-// it asks is granted to our tools alone. Without bubblewrap, or one that
-// won't start, the call ends unasked, as one not signed in does, saying
-// how to install it: the agent never runs bare.
+// three ways. The agent runs isolated, as config cursor_sandbox says:
+// "bwrap" (bubblewrap, CursorSub.sandbox: /usr and the few files of /etc
+// a program needs, read only, its CLI read only, its home (DIR) and an
+// empty work dir (one per call) writable), or "docker", where
+// unprivileged namespaces are shut (Ubuntu's AppArmor): a container of
+// its own (CONTAINER, CursorSub.docker_run) from a pinned Ubuntu, made
+// once and kept, each call a `docker exec` in it: read only but for its
+// home and /tmp, no capabilities, the host's uid, its CLI read only, no
+// Docker socket. Neither sees the user's home. Its permissions deny every
+// tool of its own, in its home's config and the work dir's (CLI_JSON). A
+// permission it asks is granted to our tools alone. Without the sandbox
+// set up (no bubblewrap, no usable Docker, one that won't start, a mode
+// not known) the call ends unasked, as one not signed in does, saying how
+// to set it up: the agent never runs bare, nor in the other mode.
 //
 // Its home is DIR, not the user's, so a Cursor the user runs (its MCP
 // servers, hooks, rules) is no part of it. Models: Pick.ts names each by
@@ -72,12 +78,26 @@ const TOP = ["/bin", "/sbin", "/lib", "/lib64"];
 
 export const SIGN_IN = "cursor-sub is not signed in, or its sign-in expired: run `unii serve cursor` on the server";
 export const NO_SANDBOX = "cursor-sub runs Cursor's agent only inside bubblewrap, which isn't here: install it on the server (sudo apt install bubblewrap) and ask again";
-const SANDBOX_FAILED = "cursor-sub couldn't start Cursor's agent inside bubblewrap, so it didn't run it: ";
+const SANDBOX_FAILED = "cursor-sub couldn't start Cursor's agent inside its sandbox, so it didn't run it: ";
+export const NO_DOCKER = "cursor-sub runs Cursor's agent in Docker here (cursor_sandbox), and Docker isn't usable, so it didn't run it: ";
+export const BAD_SANDBOX = "cursor-sub's cursor_sandbox must be bwrap or docker, so it didn't run Cursor's agent";
+
+// the Docker mode's container (one, kept), from Ubuntu 24.04 by digest
+export const CONTAINER = "unii-cursor";
+export const IMAGE = "ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac";
+
+// its container, once made or found (null: ready; else why not); a
+// failure asks again at the next call
+let READY: Promise<string | null> | null = null;
 const NO_BIN = "cursor-sub needs Cursor's CLI on the server (curl https://cursor.com/install -fsS | bash), or `cursor` set to its agent";
 
 // how long the agent may take to answer initialize, authenticate and
 // session/new (it connects our MCP server then)
 const START = 60e3;
+
+// how long an agent whose input ended has to exit (it does, in seconds)
+// before it is killed
+const GRACE = 5e3;
 
 // CursorSub
 // =========
@@ -129,6 +149,101 @@ export namespace CursorSub {
       "--chdir", work, "--clearenv", ...set,
       "--", script, "acp", "--model", model,
     ];
+  }
+
+  // the Docker mode's container: kept running (sleep), the host user's
+  // uid, the host's network (Cursor's API, our MCP server on loopback),
+  // read only but for /tmp and its home (DIR, its works under it), no
+  // capabilities nor new privileges, its CLI read only where the host has
+  // it, the system's CA certificates if given (Ubuntu's base has none), a
+  // clean environment; labeled by a hash of all that, so a change makes
+  // it anew
+  export function docker_run(docker: string, cli: string, home: string, uid: number, gid: number, certs: string | null): string[] {
+    const env = ["HOME=" + home, "XDG_CONFIG_HOME=" + path.join(home, ".config"), "PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8", "NO_OPEN_BROWSER=1"];
+    const args = [
+      "--init", "--user", uid + ":" + gid, "--network", "host",
+      "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
+      "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "512",
+      "-v", cli + ":" + cli + ":ro", "-v", home + ":" + home,
+      ...(certs === null ? [] : ["-v", certs + ":/etc/ssl/certs:ro"]),
+      ...env.flatMap((e) => ["-e", e]),
+      "--entrypoint", "sleep", IMAGE, "infinity",
+    ];
+    const label = new Bun.CryptoHasher("sha256").update(args.join("\0")).digest("hex").slice(0, 16);
+    return [docker, "run", "-d", "--name", CONTAINER, "--label", "unii.cursor=" + label, ...args];
+  }
+
+  // a call's agent in the container, in its work dir, its pid there said
+  // first on its stderr ("pid N"): killing `docker exec` leaves what it
+  // started running, so a forced end kills that (CursorSub.reap)
+  export function docker_exec(docker: string, work: string, script: string, model: string): string[] {
+    return [docker, "exec", "-i", "-w", work, CONTAINER, "/bin/sh", "-c", 'echo "pid $$" >&2; exec "$0" "$@"', script, "acp", "--model", model];
+  }
+
+  // the agent's process in the container ended, by the pid its stderr said
+  export function reap(docker: string, err: string): void {
+    const pid = /^pid (\d+)$/m.exec(err)?.[1];
+    if (pid !== undefined) {
+      Bun.spawn([docker, "exec", CONTAINER, "kill", "-KILL", pid], { stdout: "ignore", stderr: "ignore" });
+    }
+  }
+
+  // the container made (or made anew if its setup changed) and running;
+  // null, else why not (Docker's own words). Ours alone: CONTAINER's name
+  export function container(docker: string, script: string): Promise<string | null> {
+    READY ??= (async () => {
+      const certs = fs.existsSync("/etc/ssl/certs") ? "/etc/ssl/certs" : null;
+      const cli = path.dirname(path.dirname(path.dirname(script)));
+      const want = CursorSub.docker_run(docker, cli, DIR, process.getuid?.() ?? 0, process.getgid?.() ?? 0, certs);
+      const label = want[want.indexOf("--label") + 1].split("=")[1];
+      const has = await CursorSub.sh([docker, "inspect", "-f", "{{index .Config.Labels \"unii.cursor\"}} {{.State.Running}}", CONTAINER]);
+      const [was, up] = has.out.trim().split(" ");
+      if (has.code === 0 && was === label && up === "true") {
+        return null;
+      }
+      if (has.code === 0 && was === label) {
+        const start = await CursorSub.sh([docker, "start", CONTAINER]);
+        return start.code === 0 ? null : start.err;
+      }
+      if (has.code === 0) {
+        await CursorSub.sh([docker, "rm", "-f", CONTAINER]);
+      }
+      const made = await CursorSub.sh(want);
+      return made.code === 0 ? null : made.err;
+    })().then((why) => {
+      if (why !== null) {
+        READY = null;
+      }
+      return why === null ? null : why.trim().slice(-300) || "docker failed";
+    });
+    return READY;
+  }
+
+  // a command run to its end: its code, out, err
+  export async function sh(argv: string[]): Promise<{ code: number; out: string; err: string }> {
+    try {
+      const p = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+      const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
+      return { code: await p.exited, out, err };
+    } catch (e: any) {
+      return { code: 127, out: "", err: String(e?.message ?? e) };
+    }
+  }
+
+  // the command that runs the call's agent, isolated as configured; else
+  // why not, its call ending unasked
+  export async function isolated(mode: string, script: string, work: string, model: string): Promise<string[] | Partial<End>> {
+    const PATH = process.env.PATH ?? "";
+    if (mode === "bwrap") {
+      const bwrap = Bun.which("bwrap", { PATH });
+      return bwrap === null ? { text: NO_SANDBOX } : CursorSub.sandbox(bwrap, script, DIR, work, model);
+    }
+    if (mode === "docker") {
+      const docker = Bun.which("docker", { PATH });
+      const why = docker === null ? "no docker command" : await CursorSub.container(docker, script);
+      return why !== null ? { text: NO_DOCKER + why } : CursorSub.docker_exec(docker!, work, script, model);
+    }
+    return { text: BAD_SANDBOX };
   }
 
   // the home made (its owner's alone) with its config's permissions ours,
@@ -197,10 +312,12 @@ export namespace CursorSub {
   // the call's end: refused unasked with no sign-in, no CLI or no
   // bubblewrap; else its agent started (a summary's once it has a slot),
   // its session open, each prompt's turn read to its end
-  export async function run(ask: Ask, on: (ev: Event) => void, sent: Say[], signal: AbortSignal): Promise<Partial<End>> {
-    const bwrap = Bun.which("bwrap", { PATH: process.env.PATH ?? "" });
+  export async function run(ask: Ask, on: (ev: Event) => void, sent: Say[], signal: AbortSignal, mode = config.CURSOR_SANDBOX): Promise<Partial<End>> {
     const script = CursorSub.bin();
-    if (bwrap === null) {
+    if (mode !== "bwrap" && mode !== "docker") {
+      return { text: BAD_SANDBOX };
+    }
+    if (mode === "bwrap" && Bun.which("bwrap", { PATH: process.env.PATH ?? "" }) === null) {
       return { text: NO_SANDBOX };
     }
     if (script === null) {
@@ -209,13 +326,20 @@ export namespace CursorSub {
     if (!CursorSub.signed()) {
       return { text: SIGN_IN };
     }
-    const held = ask.patient === true;
-    if (held && !(await ClaudeSub.slot(ask, signal))) {
-      return {};
-    }
     CursorSub.home();
     const work = CursorSub.work();
-    const acp = CursorSub.spawn(CursorSub.sandbox(bwrap, script, DIR, work, CursorSub.model(ask.model, ask.effort, ask.speed)));
+    const argv = await CursorSub.isolated(mode, script, work, CursorSub.model(ask.model, ask.effort, ask.speed));
+    if (!Array.isArray(argv)) {
+      fs.rmSync(work, { recursive: true, force: true });
+      return argv;
+    }
+    const held = ask.patient === true;
+    if (held && !(await ClaudeSub.slot(ask, signal))) {
+      fs.rmSync(work, { recursive: true, force: true });
+      return {};
+    }
+    const docker = argv[1] === "exec" ? argv[0] : null;
+    const acp = CursorSub.spawn(argv, work, docker === null ? () => {} : (err) => CursorSub.reap(docker, err));
     const seen: Live[] = [];
     const turn = CursorSub.turn(on, seen);
     acp.listen = turn.update;
@@ -382,13 +506,14 @@ export namespace CursorSub {
     err    : () => string;
   };
 
-  // the agent started (argv: bubblewrap's, CursorSub.sandbox), spoken to
+  // the agent started (argv: its sandbox's, CursorSub.isolated) in its
+  // work dir (cwd), spoken to
   // a JSON line each way: our requests answered by id, its updates heard,
   // its requests answered (a permission by CursorSub.permit, any other
   // refused: we offer no files nor terminal). Its stderr kept (its last
-  // KB), for why it ended
-  export function spawn(argv: string[]): Acp {
-    const cwd = argv[argv.indexOf("--chdir") + 1];
+  // KB), for why it ended. Closed, its input ends, which ends it; one
+  // still running GRACE later is killed, and `forced` told its stderr
+  export function spawn(argv: string[], cwd: string, forced: (err: string) => void = () => {}): Acp {
     const proc = child.spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
     const waits = new Map<number, (r: Reply) => void>();
     let n = 0;
@@ -406,7 +531,13 @@ export namespace CursorSub {
     };
     proc.once("exit", end);
     proc.once("error", end);
-    proc.stderr.on("data", (d: Buffer) => (err = (err + d.toString()).slice(-1024)));
+    // its stderr: the first KB kept apart (the pid a Docker call says), the
+    // last KB for why it ended
+    let first = "";
+    proc.stderr.on("data", (d: Buffer) => {
+      first = first.length < 1024 ? (first + d.toString()).slice(0, 1024) : first;
+      err = (err + d.toString()).slice(-1024);
+    });
     let buf = "";
     const acp: Acp = {
       cwd,
@@ -422,7 +553,12 @@ export namespace CursorSub {
       notify: (method, params) => write({ method, params }),
       close: () => {
         proc.stdin.end();
-        proc.kill();
+        setTimeout(() => {
+          if (!gone) {
+            proc.kill("SIGKILL");
+            forced(first + err);
+          }
+        }, GRACE).unref();
       },
       dead: () => gone,
       err: () => err,
