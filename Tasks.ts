@@ -24,7 +24,10 @@
 // Each change by the user stamps the task with the list's next version
 // (rev, only ever up), so a block's shown changes are told by version,
 // never by clock: two in one millisecond stay apart. Unii's own edits
-// keep the stamp and whether it was told, unless it changes the state.
+// keep the stamp and whether it was told, unless it changes the state of
+// one already told; the user's change untold is kept as made (heard), so
+// Unii changing the state meanwhile can't hide it. Ids go to 15 digits
+// (MAXID), past which none is made.
 // A task may wait for others (after: their ids, TaskDeps.ts): blocked
 // while any is open, it's out of the user's list (a count of those
 // waiting shows instead) and can't be resolved; the open ones that free
@@ -51,7 +54,8 @@ export type Who   = "user" | "unii";
 // the comment it was closed with, a free link (a project, an agent, a
 // PR), when made, last changed and closed (ISO), whether Unii saw its
 // last change by the user; the ids it waits for (TaskDeps.ts), and
-// whether that last change untold is its being freed
+// whether that last change untold is its being freed; the user's
+// change untold as made (Heard)
 export type Task = {
   id      : string;
   title   : string;
@@ -70,7 +74,12 @@ export type Task = {
   rev     : number;
   after   : string[];
   freed   : boolean;
+  heard   : Heard | null;
 };
+
+// the user's last change as they made it, kept till Unii is told of it:
+// Unii changing the state meanwhile (task_edit) doesn't hide it
+export type Heard = { state: State; answer: string | null; note: string | null };
 
 // the list of a chat's dir: the next id's number, the last version
 // stamped (only up), the tasks; shown: the changes the last block
@@ -113,6 +122,11 @@ export const AGE  = 30 * DAY;
 export const LINES  = 30;
 export const RECENT = 7 * DAY;
 export const VIEW   = 50;
+
+// an id as tasks.json holds it, "P<n>", n up to MAXID (15 digits: a
+// safe integer, so an id made is always one read back)
+const ID         = /^P([1-9]\d{0,14})$/;
+export const MAXID = 999999999999999;
 
 const FILE    = "/tasks.json";
 const ARCHIVE = "/tasks-arquivo.jsonl";
@@ -168,7 +182,7 @@ export function task_read(x: unknown, now: number): Task | null {
     return null;
   }
   const o = x as Record<string, unknown>;
-  const m = /^P([1-9]\d{0,8})$/.exec(typeof o.id === "string" ? o.id.trim() : "");
+  const m = ID.exec(typeof o.id === "string" ? o.id.trim() : "");
   if (m === null) {
     return null;
   }
@@ -199,16 +213,32 @@ export function task_read(x: unknown, now: number): Task | null {
     rev     : count_read(o.rev),
     after   : after_raw(o.after, "P" + Number(m[1])),
     freed   : o.freed === true && o.told === false,
+    heard   : o.told === false ? heard_read(o.heard) : null,
   };
 }
 
-// an after list as tasks.json holds it: its ids "P<n>" (none twice, not
-// the task's own), at most AFTER; anything else left out
+// a Heard as read; null: none, or not one
+function heard_read(x: unknown): Heard | null {
+  if (typeof x !== "object" || x === null || Array.isArray(x)) {
+    return null;
+  }
+  const o = x as Record<string, unknown>;
+  if (!STATES.includes(o.state as State)) {
+    return null;
+  }
+  const answer = typeof o.answer === "string" ? text_line(o.answer, CHOICE) : "";
+  const note = typeof o.note === "string" ? text_body(o.note, NOTE) : "";
+  return { state: o.state as State, answer: answer === "" ? null : answer, note: note === "" ? null : note };
+}
+
+// an after list as tasks.json holds it: its ids "P<n>" (or n, as the
+// tools take them; none twice, not the task's own), at most AFTER;
+// anything else left out
 function after_raw(x: unknown, self: string): string[] {
   if (!Array.isArray(x)) {
     return [];
   }
-  const ids = x.filter((y) => typeof y === "string" && /^P[1-9]\d{0,8}$/.test(y.trim())).map((y) => (y as string).trim());
+  const ids = x.map((y) => (typeof y === "number" && Number.isSafeInteger(y) ? "P" + y : y)).filter((y) => typeof y === "string" && ID.test(y.trim())).map((y) => (y as string).trim());
   return [...new Set(ids)].filter((id) => id !== self).slice(0, Deps.AFTER);
 }
 
@@ -230,6 +260,19 @@ function after_sound(tasks: Task[], raw: Map<string, unknown>): number {
     }
   });
   return fixed;
+}
+
+// a task read as freed (its being freed untold) that still waits (a hand
+// edit) is no change to tell: it stays hidden, so its next turn would
+// say "the user sees it now" falsely; how many were so
+function freed_sound(tasks: Task[]): number {
+  const blocked = Deps.blocked_ids(tasks);
+  const wrong = tasks.filter((t) => t.freed && blocked.has(t.id));
+  wrong.forEach((t) => {
+    t.freed = false;
+    t.told = true;
+  });
+  return wrong.length;
 }
 
 // the list of a chat's dir, read once (none: empty). Read whole before
@@ -261,9 +304,9 @@ export function tasks_load(dir: string, now = Date.now()): Store {
           raw.set(t.id, (x as Record<string, unknown>).after ?? []);
         }
       }
-      const fixed = after_sound(tasks, raw);
+      const fixed = after_sound(tasks, raw) + freed_sound(tasks);
       if (fixed > 0) {
-        console.error("unii: " + file + ": " + fixed + " task(s) with an after list wrong (not a list of ids, an id of no task, the task itself, a cycle): those ids left out");
+        console.error("unii: " + file + ": " + fixed + " task(s) with an after list wrong (not a list of ids, an id of no task, the task itself, a cycle: those ids left out), or freed while still waiting (made unfreed)");
       }
       if (left > 0 || fixed > 0) {
         if (left > 0) {
@@ -391,11 +434,14 @@ export function task_new(s: Store, args: Edit, by: string, now: number): Task | 
   if (open.length >= OPEN) {
     return "The list has " + OPEN + " open tasks, the most it keeps: close some first.";
   }
+  if (s.next > MAXID) {
+    return "The list has no ids left (the last is P" + MAXID + ").";
+  }
   const at = new Date(now).toISOString();
   const ref = text_line(args.ref, REF);
   const task: Task = {
     id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", who, by, choices, answer: null, note: null,
-    ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0, after, freed: false,
+    ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
   };
   s.next += 1;
   s.tasks.push(task);
@@ -404,9 +450,11 @@ export function task_new(s: Store, args: Edit, by: string, now: number): Task | 
 }
 
 // a task changed by Unii (task_edit): any field, its state too. A new
-// state makes the task told (Unii did it); any other edit leaves told
-// and rev as they were, so a user's change Unii hasn't seen yet stays to
-// tell; else why not
+// state makes the task told (Unii did it), unless a change by the user
+// is still untold: then, as any other edit, told and rev stay as they
+// were, so that change (its Heard) is still told. Done can't be set while
+// it waits for open tasks (dropped can: it no longer applies); else why
+// not
 export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number): Task | string {
   const task = task_find(s, args.id);
   if (task === null) {
@@ -467,7 +515,12 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
     }
     next.answer = answer === "" ? null : answer;
   }
-  return task_put(s, task, next, now, next.state !== task.state ? true : null);
+  const waits = Deps.waits(s.tasks, next);
+  if (next.state === "done" && task.state === "open" && waits.length > 0) {
+    return task.id + " waits for " + waits.join(", ") + ", still open: it can't be done before them. Close those first, change its after, or drop it if it no longer applies.";
+  }
+  const untold = !task.told && !task.freed;
+  return task_put(s, task, next, now, next.state !== task.state && !untold ? true : null);
 }
 
 // a task resolved by the user: done (answer: one of its choices), dropped
@@ -518,6 +571,7 @@ function task_put(s: Store, task: Task, next: Task, now: number, told: boolean |
   next.closed = next.state === "open" ? null : closes ? at : (task.closed ?? at);
   next.told = told ?? task.told;
   next.freed = told === null ? task.freed : false;
+  next.heard = told === null ? task.heard : told ? null : { state: next.state, answer: next.answer, note: next.note };
   if (told === false) {
     s.rev += 1;
     next.rev = s.rev;
@@ -560,7 +614,10 @@ export function tasks_untold(s: Store): Task[] {
 // to tell); shown: rev by id, those the last block showed by default
 export function tasks_told(s: Store, shown: Map<string, number> = s.shown): number {
   const told = s.tasks.filter((t) => !t.told && shown.get(t.id) === t.rev);
-  told.forEach((t) => (t.told = true));
+  told.forEach((t) => {
+    t.told = true;
+    t.heard = null;
+  });
   if (told.length > 0) {
     tasks_save(s);
   }
@@ -667,10 +724,12 @@ export function tasks_block(s: Store, now: number): string {
     if (t.freed && t.state === "open") {
       return "- " + t.id + " freed: every task it waited for (" + t.after.join(", ") + ") is closed; the user sees it now: " + JSON.stringify(t.title);
     }
-    const what = t.state === "open" ? "reopened" : t.state;
-    const answer = t.answer === null ? "" : " — answer: " + t.answer;
-    const note = t.note === null ? "" : " — note: " + JSON.stringify(t.note);
-    return "- " + t.id + " " + what + " by user: " + JSON.stringify(t.title) + answer + note;
+    const h = t.heard ?? { state: t.state, answer: t.answer, note: t.note };
+    const what = h.state === "open" ? "reopened" : h.state;
+    const answer = h.answer === null ? "" : " — answer: " + h.answer;
+    const note = h.note === null ? "" : " — note: " + JSON.stringify(h.note);
+    const since = h.state === t.state ? "" : " — since then you made it " + t.state;
+    return "- " + t.id + " " + what + " by user: " + JSON.stringify(t.title) + answer + note + since;
   };
   const newest = tasks_sort([...open].sort((a, b) => b.made.localeCompare(a.made)).slice(0, LINES));
   const free = newest.filter((t) => !waiting.has(t.id));

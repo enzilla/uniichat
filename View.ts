@@ -509,6 +509,17 @@ export function task_frees_said(v: View, t: Task): string {
   return n === 0 ? "" : "libera " + n;
 }
 
+// the header's ✓ count: the open free to resolve; none, but some that
+// wait: "+2" (so never a bare 0 beside a list that isn't empty)
+export function tasks_count_said(open: number, waiting: number): string {
+  return open === 0 && waiting > 0 ? "+" + waiting : String(open);
+}
+
+// what the list says with none open free to resolve
+export function tasks_none_said(waiting: number): string {
+  return waiting === 0 ? "Nenhuma pendência aberta." : "Nenhuma pendência para resolver agora.";
+}
+
 // "+2 aguardando outras pendências"; "" for none
 export function tasks_waiting_said(n: number): string {
   return n === 0 ? "" : "+" + n + " aguardando outras pendências";
@@ -591,7 +602,7 @@ export function tasks_md(v: View, one: Task | null = null, waiting = false): str
   }
   const done = (t: Task) => "- " + t.id + " " + STATE[t.state] + ": " + t.title + (t.answer === null ? "" : " — resposta: " + t.answer);
   const parts = [
-    open.length === 0 ? "Nenhuma pendência aberta." : "**Pendências abertas (" + open.length + ")**\n\n" + open.map(line).join("\n"),
+    open.length === 0 ? tasks_none_said(wait.length) : "**Pendências abertas (" + open.length + ")**\n\n" + open.map(line).join("\n"),
     wait.length === 0 ? "" : "_" + tasks_waiting_said(wait.length) + "_ · `/p aguardando` mostra quais",
     closed.length === 0 ? "" : "**Resolvidas recentemente**\n\n" + closed.slice(0, 10).map(done).join("\n"),
     "`/p P7` detalha · `/ok P7 [opção] [comentário]` conclui · `/ok!` conclui e avisa o Unii · `/descartar P7` · `/reabrir P7` · `/avisar`",

@@ -379,9 +379,10 @@ function tasks_bar(): void {
   const untold = View.view_untold(v).length;
   document.body.classList.toggle("tasking", v.tasks.length > 0);
   $(".tasks").hidden = v.tasks.length === 0;
-  $(".tasks span").textContent = String(open.length);
+  $(".tasks span").textContent = View.tasks_count_said(open.length, waiting.length);
   $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
   $("#tasks .none").hidden = open.length > 0;
+  $("#tasks .none").textContent = View.tasks_none_said(waiting.length);
   markup($("#tasks ul.now"), open);
   markup($("#tasks .waiting ul"), waiting);
   $("#tasks .waiting").hidden = waiting.length === 0;

@@ -1191,6 +1191,12 @@ function view_act(v, act) {
 function task_waits_said(t, waits) {
   return "A pendência " + t.id + " aguarda " + waits.join(", ") + ": resolva " + (waits.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
 }
+function tasks_count_said(open, waiting) {
+  return open === 0 && waiting > 0 ? "+" + waiting : String(open);
+}
+function tasks_none_said(waiting) {
+  return waiting === 0 ? "Nenhuma pendência aberta." : "Nenhuma pendência para resolver agora.";
+}
 function tasks_waiting_said(n) {
   return n === 0 ? "" : "+" + n + " aguardando outras pendências";
 }
@@ -2151,9 +2157,10 @@ function tasks_bar() {
   const untold = view_untold(v).length;
   document.body.classList.toggle("tasking", v.tasks.length > 0);
   $(".tasks").hidden = v.tasks.length === 0;
-  $(".tasks span").textContent = String(open.length);
+  $(".tasks span").textContent = tasks_count_said(open.length, waiting.length);
   $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
   $("#tasks .none").hidden = open.length > 0;
+  $("#tasks .none").textContent = tasks_none_said(waiting.length);
   markup($("#tasks ul.now"), open);
   markup($("#tasks .waiting ul"), waiting);
   $("#tasks .waiting").hidden = waiting.length === 0;
