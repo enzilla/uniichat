@@ -43,10 +43,12 @@ export type { Live };
 // Types
 // =====
 
-// a device: its sign-in (a session's hash), its links by tab (none:
-// closed), jobs by id, and its skills as last looked at (Tools.look)
+// a device: its sign-in (a session's hash), the host it said it is
+// (its name may be host-2...), its links by tab (none: closed), jobs by
+// id, and its skills as last looked at (Tools.look)
 type Device = {
   who    : string;
+  host   : string;
   terms  : Map<string, Link>;
   jobs   : Map<string, Running>;
   skills : Skill[];
@@ -566,14 +568,23 @@ export namespace Tools {
   // Devices
   // -------
 
-  // a device's link joins its sign-in's device on host, and is sent its
-  // jobs; the device's name
-  export function attach(tools: Tools, term: string, host: string, who: string, link: Link): string {
-    let name = host;
-    for (let k = 2; (tools.devices.get(name)?.who ?? who) !== who; k++) {
+  // a device's link joins its sign-in's device on host, under the name it
+  // has (a reconnect is the same device, its jobs kept, even if a name
+  // before it was freed since), and is sent its jobs; the device's name.
+  // A new one takes host, else host-2, ...: a name is held by this
+  // sign-in's other devices, and by another sign-in's while that is kept
+  // (a link lost keeps it) or has a live link; else it is taken over
+  export function attach(tools: Tools, term: string, host: string, who: string, link: Link, kept: Set<string>): string {
+    const own = [...tools.devices].find(([, d]) => d.who === who && d.host === host)?.[0];
+    const held = (d: Device | undefined) => d !== undefined && (d.who === who || kept.has(d.who) || [...d.terms.values()].some((t) => t.live()));
+    let name = own ?? host;
+    for (let k = 2; own === undefined && held(tools.devices.get(name)); k++) {
       name = host + "-" + k;
     }
-    const d = tools.devices.get(name) ?? { who, terms: new Map(), jobs: new Map(), skills: [] };
+    if (own === undefined) {
+      Tools.forget(tools, name);
+    }
+    const d = tools.devices.get(name) ?? { who, host, terms: new Map(), jobs: new Map(), skills: [] };
     d.terms.set(term, link);
     tools.devices.set(name, d);
     Tools.sync(d, term, () => true);
@@ -598,6 +609,29 @@ export namespace Tools {
     for (const job of d.jobs.values()) {
       if (job.term === term) {
         job.end({ text: "The device " + device + " that ran this stopped.", fail: true });
+      }
+    }
+  }
+
+  // a device gone with its sign-in: its links and jobs end, its name is
+  // free
+  export function forget(tools: Tools, device: string): void {
+    const d = tools.devices.get(device);
+    if (d === undefined) {
+      return;
+    }
+    tools.devices.delete(device);
+    d.terms.clear();
+    for (const job of [...d.jobs.values()]) {
+      job.end({ text: "The device " + device + " that ran this was signed out.", fail: true });
+    }
+  }
+
+  // every device whose sign-in isn't kept forgotten
+  export function prune(tools: Tools, kept: Set<string>): void {
+    for (const [name, d] of [...tools.devices]) {
+      if (!kept.has(d.who)) {
+        Tools.forget(tools, name);
       }
     }
   }
@@ -719,13 +753,19 @@ export namespace Tools {
 
   // one not of this process is taken back from its log, idle
   export function agent(tools: Tools, name: string): Agent | null {
-    const log = tools.agents.has(name) ? null : Memory.agent(tools.mem, name);
+    const found = tools.agents.get(name) ?? Tools.logged(tools, name);
+    if (found !== null) {
+      tools.agents.set(name, found);
+    }
+    return found;
+  }
+
+  // an agent as its log has it, idle, not taken back (null: none)
+  export function logged(tools: Tools, name: string): Agent | null {
+    const log = Memory.agent(tools.mem, name);
     const note = log !== null && log.length > 0 && log[0].kind === "note" ? log[0].text : "";
     const sub = SUB_ROLE.exec(note);
-    if (sub !== null) {
-      tools.agents.set(name, { name, label: Tools.label_clean(sub[3] ?? ""), role: { effort: sub[2] ?? null, model: sub[1] ?? null }, call: null, live: [], calls: {}, stop: false, why: null, view: [], replies: [] });
-    }
-    return tools.agents.get(name) ?? null;
+    return sub === null ? null : { name, label: Tools.label_clean(sub[3] ?? ""), role: { effort: sub[2] ?? null, model: sub[1] ?? null }, call: null, live: [], calls: {}, stop: false, why: null, view: [], replies: [] };
   }
 
   // a label as given, on one line, at most LABEL graphemes (LABEL_POINTS
@@ -795,20 +835,32 @@ export namespace Tools {
     const own = Memory.file_text(PROMPTS.prompt.file);
     const system = own === "" ? SUB : SUB + "\n\n" + AGENT_PROMPT + "\n\n" + own;
     const blocks = [...agent.view, Tools.devices(tools), Tools.skills(tools), log];
-    const effort = agent.role.effort ?? run.effort;
-    return { ...run, effort, system, blocks, searches: SEARCHES, server, agent: true };
+    return { ...run, system, blocks, searches: SEARCHES, server, agent: true };
   }
 
   // what an agent runs on: config.AGENTS or else the chat's pick, with
-  // the model it was spawned with, if any; a throw if no longer offered
+  // the model and effort it was spawned with, if any; a throw if its
+  // model is no longer offered
   export function pick(tools: Tools, agent: Agent): Pick {
     const base = config.AGENTS ?? tools.hooks.pick();
-    const model = agent.role.model;
+    const { model, effort } = agent.role;
     const given = model === null ? base : Pick.to_model(base, model, config.OFFER.vendors, config.OFFER);
     if (given === null) {
       throw new Error(agent.name + "'s model " + model + " is no longer offered; spawn another subagent.");
     }
-    return given;
+    return { ...given, effort: effort ?? given.effort };
+  }
+
+  // what an agent's page shows it runs on (Tools.pick): a model it was
+  // spawned with by its name, not the profile it falls back along; null
+  // if no longer offered
+  export function shown(tools: Tools, agent: Agent): Pick | null {
+    try {
+      const { profile, ...pick } = Tools.pick(tools, agent);
+      return agent.role.model === null && profile !== undefined ? { ...pick, profile } : pick;
+    } catch {
+      return null;
+    }
   }
 
   // a string: why there is none (Memory.settle)

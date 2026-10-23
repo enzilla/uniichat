@@ -681,31 +681,31 @@ function block_parse(lines, i, d) {
     return [null, i + 1];
   }
   if (FENCE.test(line)) {
-    const end = runs((l) => !FENCE.test(l));
+    const end2 = runs((l) => !FENCE.test(l));
     const k = line.trim().slice(3).trim();
-    const x = lines.slice(i + 1, end).join(`
+    const x2 = lines.slice(i + 1, end2).join(`
 `);
-    return [{ $: "Code", k, x }, end + 1];
+    return [{ $: "Code", k, x: x2 }, end2 + 1];
   }
   if (head !== null) {
-    const x = span_parse(head[2]);
-    return [{ $: "Head", k: head[1].length, x }, i + 1];
+    const x2 = span_parse(head[2]);
+    return [{ $: "Head", k: head[1].length, x: x2 }, i + 1];
   }
   if (RULE.test(line)) {
     return [{ $: "Rule" }, i + 1];
   }
   if (QUOT.test(line)) {
-    const end = runs((l) => QUOT.test(l));
-    const body = lines.slice(i, end).map((l) => l.replace(QUOT, ""));
-    return [{ $: "Quot", x: blocks_parse(body, d + 1)[0] }, end];
+    const end2 = runs((l) => QUOT.test(l));
+    const body = lines.slice(i, end2).map((l) => l.replace(QUOT, ""));
+    return [{ $: "Quot", x: blocks_parse(body, d + 1)[0] }, end2];
   }
   if (list_kind(line) !== null && d < DEEP) {
     return list_parse(lines, i, d);
   }
   if (ROW.test(line) && BAR.test(lines[i + 1] ?? "")) {
-    const end = lines_run(lines, i + 1, (l) => ROW.test(l));
-    const rows = [line, ...lines.slice(i + 2, end)];
-    return [{ $: "Tabl", x: rows.map(row_cells) }, end];
+    const end2 = lines_run(lines, i + 1, (l) => ROW.test(l));
+    const rows = [line, ...lines.slice(i + 2, end2)];
+    return [{ $: "Tabl", x: rows.map(row_cells) }, end2];
   }
   const end = runs((l, j) => l.trim() !== "" && !block_starts(lines, j));
   const x = lines.slice(i, end).map(span_parse);
@@ -806,27 +806,27 @@ var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 var SPEEDS = ["slow", "fast", "ultrafast"];
 var LABELS = [...new Set(Object.values(MODELS).flat().map((m) => m.label))];
 var Pick;
-((Pick2) => {
-  function model(vendor, label) {
-    return MODELS[vendor].find((m) => m.label === label);
+((Pick) => {
+  function model(vendor, label2) {
+    return MODELS[vendor].find((m) => m.label === label2);
   }
-  Pick2.model = model;
-  function on(pick, vendor, model) {
+  Pick.model = model;
+  function on(pick, vendor, model2) {
     const below = SPEEDS.slice(0, SPEEDS.indexOf(pick.speed) + 1);
-    const speed = below.filter((s) => model.speeds.includes(s)).pop() ?? "slow";
-    return { ...pick, vendor, model: model.label, speed };
+    const speed = below.filter((s) => model2.speeds.includes(s)).pop() ?? "slow";
+    return { ...pick, vendor, model: model2.label, speed };
   }
-  Pick2.on = on;
+  Pick.on = on;
   function models(vendors, labels) {
     return vendors.flatMap((v) => MODELS[v].filter((m) => labels.includes(m.label)).map((m) => [v, m]));
   }
-  Pick2.models = models;
-  function options(pick, move, offer) {
+  Pick.models = models;
+  function options(pick, move2, offer) {
     const speeds = Pick.model(pick.vendor, pick.model)?.speeds ?? [];
     const { profile: _, ...plain } = pick;
     const all = Pick.models(offer.vendors, offer.models).map(([v, m]) => [m.label, Pick.on(plain, v, m)]);
     const profiles = Object.keys(offer.profiles ?? {}).map((name) => [name, Pick.profile(name, offer, pick.effort, pick.speed)]);
-    switch (move) {
+    switch (move2) {
       case "next":
       case "prev":
       case "model": {
@@ -842,13 +842,13 @@ var Pick;
       }
     }
   }
-  Pick2.options = options;
-  function move(pick, move, offer, to) {
-    const list = Pick.options(pick, move, offer);
+  Pick.options = options;
+  function move(pick, move2, offer, to) {
+    const list = Pick.options(pick, move2, offer);
     const n = list.length;
     const at = list.findIndex(([, p]) => Pick.label(p) === Pick.label(pick) && p.profile === pick.profile);
-    const d = move === "prev" || move === "down" ? -1 : 1;
-    const ends = move === "up" || move === "down";
+    const d = move2 === "prev" || move2 === "down" ? -1 : 1;
+    const ends = move2 === "up" || move2 === "down";
     const next = ends ? Math.max(0, Math.min(n - 1, at + d)) : (at + d + n) % n;
     const mine = ([, p]) => p.profile === undefined && p.vendor === pick.vendor;
     const same = list.filter(([part, p]) => part === to || p.profile === undefined && p.vendor + ":" + part === to);
@@ -857,64 +857,64 @@ var Pick;
     const hit = to === undefined ? list[next] : same.find(mine) ?? same[0] ?? one;
     return hit === undefined ? null : hit[1];
   }
-  Pick2.move = move;
-  function to_model(pick, label, vendors, { models }) {
-    const all = Pick.models(vendors, models).filter(([, m]) => m.label === label);
+  Pick.move = move;
+  function to_model(pick, label2, vendors, { models: models2 }) {
+    const all = Pick.models(vendors, models2).filter(([, m]) => m.label === label2);
     const hit = all.find(([v]) => v === pick.vendor) ?? all[0];
     return hit === undefined ? null : Pick.on(pick, hit[0], hit[1]);
   }
-  Pick2.to_model = to_model;
-  function twin(vendor, label, vendors) {
-    return vendors.some((v) => v !== vendor && Pick.model(v, label) !== undefined);
+  Pick.to_model = to_model;
+  function twin(vendor, label2, vendors) {
+    return vendors.some((v) => v !== vendor && Pick.model(v, label2) !== undefined);
   }
-  Pick2.twin = twin;
+  Pick.twin = twin;
   function label(pick) {
     return [pick.vendor, pick.model, pick.effort, pick.speed].join(":");
   }
-  Pick2.label = label;
+  Pick.label = label;
   function ask(pick) {
-    const model = Pick.model(pick.vendor, pick.model);
-    return { ...pick, model: model?.id ?? pick.model };
+    const model2 = Pick.model(pick.vendor, pick.model);
+    return { ...pick, model: model2?.id ?? pick.model };
   }
-  Pick2.ask = ask;
+  Pick.ask = ask;
   function named(run) {
-    const model = MODELS[run.vendor].find((m) => m.id === run.model);
-    return { ...run, model: model?.label ?? run.model };
+    const model2 = MODELS[run.vendor].find((m) => m.id === run.model);
+    return { ...run, model: model2?.label ?? run.model };
   }
-  Pick2.named = named;
-  function falls(run, falls) {
+  Pick.named = named;
+  function falls(run, falls2) {
     const own = { vendor: run.vendor, model: run.model, effort: run.effort, speed: run.speed };
-    const list = falls.map((f) => {
-      const on = Pick.on(own, f.vendor, f.model);
-      return Pick.ask({ ...on, effort: f.effort ?? on.effort, speed: f.speed ?? on.speed });
+    const list = falls2.map((f) => {
+      const on2 = Pick.on(own, f.vendor, f.model);
+      return Pick.ask({ ...on2, effort: f.effort ?? on2.effort, speed: f.speed ?? on2.speed });
     });
     return [own, ...list].filter((p, k, all) => all.findIndex((q) => q.vendor === p.vendor && q.model === p.model) === k);
   }
-  Pick2.falls = falls;
+  Pick.falls = falls;
   function profile(name, offer, effort, speed) {
     const first = Object.hasOwn(offer.profiles ?? {}, name) ? offer.profiles[name][0] : undefined;
     if (first === undefined) {
       return null;
     }
-    const on = Pick.on({ vendor: first.vendor, model: first.model.label, effort, speed }, first.vendor, first.model);
-    return { ...on, effort: first.effort ?? effort, speed: first.speed ?? on.speed, profile: name };
+    const on2 = Pick.on({ vendor: first.vendor, model: first.model.label, effort, speed }, first.vendor, first.model);
+    return { ...on2, effort: first.effort ?? effort, speed: first.speed ?? on2.speed, profile: name };
   }
-  Pick2.profile = profile;
+  Pick.profile = profile;
   function read(x, offer) {
     if (x.profile !== undefined) {
       return typeof x.profile === "string" && EFFORTS.includes(x.effort) ? Pick.profile(x.profile, offer, x.effort, String(x.speed)) : null;
     }
-    const model = offer.vendors.includes(x.vendor) && offer.models.includes(x.model) ? Pick.model(x.vendor, x.model) : undefined;
-    if (model === undefined || !EFFORTS.includes(x.effort) || !model.speeds.includes(x.speed)) {
+    const model2 = offer.vendors.includes(x.vendor) && offer.models.includes(x.model) ? Pick.model(x.vendor, x.model) : undefined;
+    if (model2 === undefined || !EFFORTS.includes(x.effort) || !model2.speeds.includes(x.speed)) {
       return null;
     }
     return { vendor: x.vendor, model: x.model, effort: x.effort, speed: x.speed };
   }
-  Pick2.read = read;
+  Pick.read = read;
   function load(saved, offer, def) {
     return Pick.read(saved ?? def, offer) ?? def;
   }
-  Pick2.load = load;
+  Pick.load = load;
 })(Pick ||= {});
 
 // TaskDeps.ts
@@ -981,6 +981,7 @@ function view_new() {
     busy: false,
     wait: "",
     agents: [],
+    runs: {},
     pick: null,
     vendors: [],
     models: LABELS,
@@ -1050,6 +1051,9 @@ function view_hear(v, msg) {
       Object.assign(v, state);
       AGENT_LABELS.clear();
       Object.entries(v.labels ?? {}).forEach(([name, label]) => AGENT_LABELS.set(name, label));
+      for (const page of v.pages.values()) {
+        page.pick = v.runs[page.name] ?? page.pick;
+      }
       return [];
     }
     case "agent": {
@@ -1059,6 +1063,7 @@ function view_hear(v, msg) {
       }
       if (msg.found) {
         page.log = [];
+        page.pick = msg.pick ?? page.pick;
         return [];
       }
       v.pages.delete(msg.name);
@@ -1148,7 +1153,7 @@ function view_act(v, act) {
         return [];
       }
       const known = v.pages.get(act.name);
-      v.page = known ?? { name: act.name, log: null, live: [] };
+      v.page = known ?? { name: act.name, log: null, live: [], pick: v.runs[act.name] ?? null };
       v.pages.set(act.name, v.page);
       return known === undefined ? [{ $: "agent", name: act.name }] : [];
     }
@@ -1188,8 +1193,8 @@ function view_act(v, act) {
     }
   }
 }
-function task_waits_said(t, waits) {
-  return "A pendência " + t.id + " aguarda " + waits.join(", ") + ": resolva " + (waits.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
+function task_waits_said(t, waits2) {
+  return "A pendência " + t.id + " aguarda " + waits2.join(", ") + ": resolva " + (waits2.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
 }
 function tasks_waiting_said(n) {
   return n === 0 ? "" : "+" + n + " aguardando outras pendências";
@@ -1272,16 +1277,23 @@ function view_typing(v) {
   return v.page === null;
 }
 function view_pick(v) {
-  if (v.pick === null) {
-    return [];
+  return v.pick === null ? [] : view_knobs(v, v.pick, true);
+}
+function view_shown(v) {
+  if (v.page === null) {
+    return view_pick(v);
   }
-  const { model, effort, speed, profile } = v.pick;
+  return v.page.pick === null ? [] : view_knobs(v, v.page.pick, false);
+}
+function view_knobs(v, pick, menus) {
+  const { model, effort, speed, profile } = pick;
   const ranks = (v.profiles?.[profile ?? ""] ?? []).map((f) => f.model.label).join(", ");
-  const whose = Pick.twin(v.pick.vendor, model, v.vendors) ? ", " + v.pick.vendor : "";
+  const whose = Pick.twin(pick.vendor, model, v.vendors) ? ", " + pick.vendor : "";
+  const choices = (move) => menus ? view_choices(pick, move, v) : [];
   return [
-    { text: profile ?? model, move: "model", hint: profile === undefined ? model + whose : profile + ": " + ranks, choices: view_choices(v.pick, "model", v) },
-    { text: effort, move: "effort", hint: effort + " effort", choices: view_choices(v.pick, "effort", v) },
-    { text: speed, move: "speed", hint: speed, choices: view_choices(v.pick, "speed", v) }
+    { text: profile ?? model, move: "model", hint: profile === undefined ? model + whose : profile + ": " + ranks, choices: choices("model") },
+    { text: effort, move: "effort", hint: effort + " effort", choices: choices("effort") },
+    { text: speed, move: "speed", hint: speed, choices: choices("speed") }
   ];
 }
 function view_choices(pick, move, v) {
@@ -1417,8 +1429,8 @@ function part_rows(v, id, n, t, talk) {
   }
   const text = n === 1 ? "fold" : GLYPH.open + " " + n + "x · fold";
   if (n > 1) {
-    const rows = [...part_rows(v, id, half, t, talk), ...part_rows(v, id + half, half, t, talk)];
-    return [{ $: "Box", id, n, text, rows }];
+    const rows2 = [...part_rows(v, id, half, t, talk), ...part_rows(v, id + half, half, t, talk)];
+    return [{ $: "Box", id, n, text, rows: rows2 }];
   }
   const rows = entry === undefined ? [] : whole_rows(id, entry);
   return [{ $: "Box", id, n, text, rows }];
@@ -1579,7 +1591,7 @@ function images_html(names) {
   return names.length === 0 ? "" : `<div class="pics">${pics.join("")}</div>`;
 }
 function pick_html(fold, on, knobs) {
-  const parts = knobs.map((k) => [
+  const parts = knobs.map((k) => k.choices.length === 0 ? [`<span class="knob" title="${esc(k.hint)}">${esc(k.text)}</span>`] : [
     `<button title="${esc(k.hint)}" data-knob="${k.move}" popovertarget="pick-${k.move}" aria-haspopup="menu">${esc(k.text)}</button>`,
     `<div id="pick-${k.move}" class="choices" popover role="menu" aria-label="${k.move[0].toUpperCase() + k.move.slice(1)}">${k.choices.map(choice_html).join("")}</div>`
   ]);
@@ -1617,7 +1629,7 @@ function tasks_html(tasks) {
   const head = (t) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
   const meta = (t, more) => `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more].join(" · ")}</p>`;
   const act = (t, state, text, cls, answer) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
-  const blocked = blocked_ids(tasks);
+  const blocked2 = blocked_ids(tasks);
   const open = (t) => {
     const n = frees(tasks, t);
     const who = [...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...t.who === "unii" ? ["com o Unii"] : []];
@@ -1638,7 +1650,7 @@ function tasks_html(tasks) {
     return `<li class="task waiting ${esc(t.who)}" data-task="${esc(t.id)}">${head(t)}${meta(t, more)}</li>`;
   };
   const opened = tasks.filter((t) => t.state === "open");
-  return { open: opened.filter((t) => !blocked.has(t.id)).map(open), waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
+  return { open: opened.filter((t) => !blocked2.has(t.id)).map(open), waiting: opened.filter((t) => blocked2.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
 }
 function account_html(prompts, notify = null) {
   const item = (what, note, act) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
@@ -1688,9 +1700,9 @@ var GROUPS = [
 ];
 function settings_html(page) {
   const rows = new Map(page.settings.filter((r) => r.web && r.from !== "env").map((r) => [r.key, r]));
-  const group = ([title, keys]) => {
-    const shown = keys.flatMap((k) => rows.get(k) ?? []);
-    return shown.length === 0 ? "" : section_html(title, shown.map(setting_html).join(""));
+  const group = ([title, keys2]) => {
+    const shown2 = keys2.flatMap((k) => rows.get(k) ?? []);
+    return shown2.length === 0 ? "" : section_html(title, shown2.map(setting_html).join(""));
   };
   const shown = page.keys.filter((k) => k.from !== "env");
   const keys = shown.length === 0 ? "" : section_html("Keys", `<p class="sub">Kept in keys.json in the server's folder, readable by the server's user only, and never shown again, only their last characters.</p>` + shown.map(key_html).join(""));
@@ -1703,14 +1715,14 @@ function settings_html(page) {
 function offered(vendors, models) {
   return Pick.models(VENDORS.filter((v) => vendors.includes(v)), models).map(([v, m]) => v + ":" + m.label);
 }
-function profiles_html(profiles, offered) {
+function profiles_html(profiles, offered2) {
   const model = (m, i, j) => {
     const [vendor = "", label = m, ...rest] = m.split(":");
     const more = rest.length === 0 ? "" : ` <small>${esc(rest.join(" · "))}</small>`;
     return `<li data-j="${j}"><button type="button" class="grip" data-i="${i}" data-j="${j}" aria-label="Move ${esc(label)}">⠿</button><span>${esc(label)}${more} <small>${esc(vendor)}</small></span><button type="button" class="out" data-i="${i}" data-j="${j}" aria-label="Remove ${esc(label)}">×</button></li>`;
   };
   const add = (list, i) => {
-    const left = offered.filter((m) => !list.some((x) => x.split(":").slice(0, 2).join(":") === m));
+    const left = offered2.filter((m) => !list.some((x) => x.split(":").slice(0, 2).join(":") === m));
     const groups = [...new Set(left.map((m) => m.split(":")[0]))].map((v) => `<optgroup label="${esc(v)}">${left.filter((m) => m.startsWith(v + ":")).map((m) => `<option value="${esc(m)}">${esc(m.split(":")[1])}</option>`).join("")}</optgroup>`);
     return left.length === 0 ? "" : `<select class="add" data-i="${i}" aria-label="Add model"><option value="">Add model</option>${groups.join("")}</select>`;
   };
@@ -1771,7 +1783,7 @@ function key_html(k) {
 function picks_html(key, vendors, models, value, none, profiles = []) {
   const [vendor = "", model = "", effort = "", speed = ""] = value === "" ? [] : value.split(":");
   const known = VENDORS.includes(vendor);
-  const offered = VENDORS.filter((v) => vendors.includes(v));
+  const offered2 = VENDORS.filter((v) => vendors.includes(v));
   const labels = known ? Pick.models([vendor], models).map(([, m]) => m.label) : [];
   const speeds = known ? Pick.model(vendor, model)?.speeds ?? [] : [];
   const select = (part, name, all, on, first) => {
@@ -1779,7 +1791,7 @@ function picks_html(key, vendors, models, value, none, profiles = []) {
     const items = opts.map(([v, text]) => `<option value="${esc(v)}"${v === on ? " selected" : ""}>${esc(text)}</option>`).join("");
     return `<select id="set-${key}-${part}" name="${key}.${part}" aria-label="${name}">${items}</select>`;
   };
-  const head = select("vendor", "Vendor", [...offered, ...profiles], vendor, none);
+  const head = select("vendor", "Vendor", [...offered2, ...profiles], vendor, none);
   return vendor === "" || profiles.includes(vendor) ? head : head + select("model", "Model", labels, model, null) + select("effort", "Effort", EFFORTS, effort, null) + select("speed", "Speed", speeds, speed, null);
 }
 function pick_mend(parts, models, profiles = []) {
@@ -1992,7 +2004,9 @@ function chat() {
   document.ondragover = (ev) => ev.preventDefault();
   document.ondrop = (ev) => {
     ev.preventDefault();
-    attach([...ev.dataTransfer?.files ?? []]);
+    if (view_typing(v)) {
+      attach([...ev.dataTransfer?.files ?? []]);
+    }
   };
   document.onclick = click;
   visualViewport.onresize = () => {
@@ -2229,8 +2243,8 @@ function meter(stream, rec) {
   requestAnimationFrame(frame);
 }
 function words(audio) {
-  const act = { $: "voice", type: audio.type, body: () => audio };
-  link_send(v, act, heard);
+  const act2 = { $: "voice", type: audio.type, body: () => audio };
+  link_send(v, act2, heard);
   draw(false);
 }
 function heard(out) {
@@ -2421,8 +2435,8 @@ function import_draw(status) {
   const sessions = reads.flatMap((read) => read.sessions);
   const plan = import_plan2();
   const msgs = plan.msgs;
-  const left = reads.reduce((n, read) => n + read.moved, 0);
-  const moved = left === 0 ? "" : " (" + left + (left === 1 ? " file" : " files") + " changed while read: choose the folder again to add them)";
+  const left2 = reads.reduce((n, read) => n + read.moved, 0);
+  const moved = left2 === 0 ? "" : " (" + left2 + (left2 === 1 ? " file" : " files") + " changed while read: choose the folder again to add them)";
   const found = sessions.length === 0 ? "" : plan.first === "" ? OLD : import_count(msgs, "new ");
   const day = (at) => new Date(at).getUTCDate() + " " + new Date(at).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
   BACK.min = String(Math.floor(Date.parse(plan.first || new Date().toISOString()) / 86400000));
@@ -2434,10 +2448,10 @@ function import_draw(status) {
   $("#import .tools").hidden = !sessions.some((s) => s.heads.some((m) => m.kind === "tool" || m.kind === "echo"));
   $("#import .found").textContent = found + moved;
   for (const src of import_srcs()) {
-    const list = src.querySelector(".sessions");
+    const list2 = src.querySelector(".sessions");
     const shown = plan.sessions.filter((s) => s.app === src.dataset.app);
-    markup(list, shown.map((s) => `<label title="${esc(s.where + ", " + import_count(s.heads.length, ""))}"><input type="checkbox" name="session" value="${esc(import_id(s))}">${import_cells(s).map((c) => `<span>${esc(c)}</span>`).join("")}</label>`));
-    list.querySelectorAll("input").forEach((box) => box.checked = !P.off.has(box.value));
+    markup(list2, shown.map((s) => `<label title="${esc(s.where + ", " + import_count(s.heads.length, ""))}"><input type="checkbox" name="session" value="${esc(import_id(s))}">${import_cells(s).map((c) => `<span>${esc(c)}</span>`).join("")}</label>`));
+    list2.querySelectorAll("input").forEach((box) => box.checked = !P.off.has(box.value));
     const on = shown.filter((s) => !P.off.has(import_id(s))).length;
     src.querySelector(".pick").hidden = shown.length === 0;
     src.querySelector(".pick summary").textContent = (on < shown.length ? on + " of " : shown.length > 1 ? "All " : "") + shown.length + (shown.length === 1 ? " session" : " sessions") + " picked · choose";
@@ -2472,8 +2486,8 @@ function markup(el, htmls) {
     had.set(html, same);
   }
   const kids = htmls.map((html) => had.get(html)?.shift() ?? html_parse(html));
-  for (const left of had.values()) {
-    left.forEach((child) => child.remove());
+  for (const left2 of had.values()) {
+    left2.forEach((child) => child.remove());
   }
   let at = el.firstElementChild;
   for (const kid of kids) {
@@ -2558,15 +2572,13 @@ function bars() {
   }
   tasks_bar();
   send.classList.toggle("stop", stop);
-  send.disabled = !on;
-  BOX.disabled = !on;
-  $(".attach").disabled = !on;
-  $(".mic").disabled = !on || v.out.some((p) => p.msg.$ === "voice");
+  $(".composer").hidden = !on;
+  $("#pics").hidden = !on;
+  $(".mic").disabled = v.out.some((p) => p.msg.$ === "voice");
   $(".mic").classList.toggle("rec", P.rec !== null);
-  $(".composer").classList.toggle("off", !on);
   $(".composer").classList.toggle("rec", P.rec !== null);
   const knob = document.activeElement?.dataset?.knob;
-  markup($("#pick"), pick_html(view_fold(v), v.fold === null, view_pick(v)));
+  markup($("#pick"), pick_html(view_fold(v), v.fold === null, view_shown(v)));
   if (knob !== undefined) {
     $("#pick [data-knob=" + knob + "]").focus();
   }
@@ -2751,7 +2763,7 @@ function settings_draw(page) {
   };
   const picks = () => {
     const vendors = listed("vendors");
-    form.querySelectorAll(".opt[data-vendor]:not([data-vendor=''])").forEach((o) => o.hidden = !o.dataset.vendor.split(" ").some((v) => vendors.includes(v)));
+    form.querySelectorAll(".opt[data-vendor]:not([data-vendor=''])").forEach((o) => o.hidden = !o.dataset.vendor.split(" ").some((v2) => vendors.includes(v2)));
     for (const key of PICKS) {
       const value = form.querySelector(`input[name="${key}"]`);
       const four = value?.parentElement.querySelector(".four");
@@ -2761,8 +2773,8 @@ function settings_draw(page) {
         four.querySelector(`select[name="${focus}"]`)?.focus();
       }
     }
-    const keyless = vendors.filter((v) => {
-      const name = VENDOR_KEY[v];
+    const keyless = vendors.filter((v2) => {
+      const name = VENDOR_KEY[v2];
       const key = page.keys.find((k) => k.name === name);
       const typed = form.querySelector(`[name="key.${name}"]`)?.value.trim() ?? "";
       return key !== undefined && (key.from === "default" || unset.has("key." + name)) && typed === "";
@@ -2866,9 +2878,9 @@ function settings_draw(page) {
     ev.preventDefault();
     const [i, j] = [Number(grip.dataset.i), Number(grip.dataset.j)];
     const k = j + (ev.key === "ArrowUp" ? -1 : 1);
-    const list = profs[i][1];
-    if (k >= 0 && k < list.length) {
-      [list[j], list[k]] = [list[k], list[j]];
+    const list2 = profs[i][1];
+    if (k >= 0 && k < list2.length) {
+      [list2[j], list2[k]] = [list2[k], list2[j]];
       profs_changed(`.grip[data-i="${i}"][data-j="${k}"]`);
     }
   });
@@ -2893,8 +2905,8 @@ function settings_draw(page) {
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       const to = [...ol.children].indexOf(li);
-      const list = profs[i][1];
-      list.splice(to, 0, ...list.splice(from, 1));
+      const list2 = profs[i][1];
+      list2.splice(to, 0, ...list2.splice(from, 1));
       profs_changed(`.grip[data-i="${i}"][data-j="${to}"]`);
     };
     window.addEventListener("pointermove", move);
@@ -2931,9 +2943,9 @@ async function settings_save(form, page, unset, listed, profs) {
   form.querySelectorAll(".err").forEach((e) => e.textContent = "");
   let profiles;
   if (page.profiles != null) {
-    const now = profs.map(([name, list]) => [name.trim(), list]);
+    const now = profs.map(([name, list2]) => [name.trim(), list2]);
     const all = now.map(([name]) => name);
-    const bad = all.includes("") ? "Name each profile." : all.some((name, k) => all.indexOf(name) !== k) ? "Two profiles have the same name." : now.some(([, list]) => list.length === 0) ? "Add a model to each profile." : null;
+    const bad = all.includes("") ? "Name each profile." : all.some((name, k) => all.indexOf(name) !== k) ? "Two profiles have the same name." : now.some(([, list2]) => list2.length === 0) ? "Add a model to each profile." : null;
     if (bad !== null) {
       const at = form.querySelector(".profiles");
       at.querySelector(".err").textContent = bad;
@@ -2947,11 +2959,11 @@ async function settings_save(form, page, unset, listed, profs) {
     why.textContent = "Nothing changed.";
     return;
   }
-  const go = form.querySelector(".go");
-  go.disabled = true;
+  const go2 = form.querySelector(".go");
+  go2.disabled = true;
   why.textContent = "";
   const out = await post("/api/settings", { version: page.version, set, keys, ...profiles === undefined ? {} : { profiles } });
-  go.disabled = false;
+  go2.disabled = false;
   if (!out.ok) {
     const at = out.key === undefined ? null : form.querySelector(`.set[data-key="${out.key}"]`);
     (at?.querySelector(".err") ?? why).textContent = out.error ?? "Could not save.";

@@ -7,11 +7,13 @@
 // device`, Device.ts) and the terminal chat (`unii [url]`, Term.ts),
 // these two with their files in ~/.config/unii (Client.ts). `unii
 // update` runs the newest release's installer, which replaces this
-// executable.
+// executable. All three run on Linux, macOS and Windows alike.
 //
 // Usage: USAGE (`unii help` prints it).
 
 import * as child from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import * as Update from "./Update.ts";
 
 const ARGS = process.argv.slice(2);
@@ -41,34 +43,59 @@ const USAGE = `Usage: unii [url]           the chat in this terminal (url: $UNII
                             sign one of them out (its open sockets close),
                             or all
        unii update          replace this unii with the fork's newest
-                            release (curl | sh, shown first)
-       unii update <url>    run that server's installer instead
+                            release (its installer, shown first)
        unii version         this unii's version
        unii help            this
 The terminal and the device keep their server and sign-in in
-~/.config/unii (tui.json, device.json). Once a day the terminal asks
-GitHub which release of arteeh/uniichat is the newest (one plain GET);
-UNII_NO_UPDATE_CHECK=1 turns that off. In the chat, /help lists every
-command and key.`;
+~/.config/unii (tui.json, device.json). unii never checks for updates by
+itself: run unii update. In the chat, /help lists every command and key.`;
 
 function fail(why: string): never {
   console.error("unii: " + why);
   process.exit(1);
 }
 
+const WIN  = process.platform === "win32";
+const BUN  = /^bun(\.exe)?$/i.test(path.basename(process.execPath));
+
 // runs an installer: the one way unii changes. It replaces this
 // executable, wherever and however named; from source (bun) there is
-// none to replace. The command prints first, so one can run it alone.
-function update(url: string | undefined): void {
-  if (process.platform === "win32") {
-    fail("on Windows, build unii.exe again from the source (README).");
-  }
-  if (/^bun(\.exe)?$/.test(process.execPath.split("/").pop() ?? "")) {
+// none to replace. The command prints first, so one can run it alone:
+// on Windows a PowerShell one, its exit code the installer's (install.ps1
+// ends setting $LASTEXITCODE, as an `exit` would close the window of one
+// who runs it by hand; 1 until it does, so one that never got that far
+// failed). The installer is told this process's pid (UNII_UPDATER): on
+// Windows it refuses while a device or server runs, but not for this
+function update(): void {
+  if (BUN) {
     fail("this unii runs from source (bun): update it with git.");
   }
-  const cmd = Update.update_cmd(url, process.execPath);
+  const cmd = Update.update_cmd(process.execPath, WIN);
   console.error(cmd);
-  process.exitCode = child.spawnSync("sh", ["-c", cmd], { stdio: "inherit" }).status ?? 1;
+  const run = WIN ? [Bun.which("pwsh") ?? "powershell.exe", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $global:LASTEXITCODE = 1; " + cmd + "; exit $LASTEXITCODE"] : ["sh", "-c", cmd];
+  const env = { ...process.env, UNII_UPDATER: String(process.pid) };
+  process.exitCode = child.spawnSync(run[0], run.slice(1), { stdio: "inherit", env }).status ?? 1;
+}
+
+// on Windows a running unii.exe can't be replaced, only renamed: the
+// installer leaves the one it replaced as unii.exe.old (or .old-<n>),
+// removed here once it no longer runs (one still running stays till a
+// later start). Only those names: any other file beside it is the user's
+if (WIN && !BUN) {
+  const dir = path.dirname(process.execPath);
+  const leaf = path.basename(process.execPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const old = new RegExp("^" + leaf + "\\.old(-[0-9]+)?$", "i");
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(dir).filter((f) => old.test(f));
+  } catch {}
+  for (const f of files) {
+    try {
+      if (fs.lstatSync(path.join(dir, f)).isFile()) {
+        fs.rmSync(path.join(dir, f));
+      }
+    } catch {}
+  }
 }
 
 const [cmd, sub, more] = REST;
@@ -80,8 +107,8 @@ if (cmd === undefined) {
   console.log(USAGE);
 } else if (cmd === "version" && !odd([cmd])) {
   console.log("unii " + Update.VERSION);
-} else if (cmd === "update" && !odd([cmd])) {
-  update(URL_);
+} else if (cmd === "update" && !odd([cmd]) && URL_ === undefined) {
+  update();
 } else if (cmd === "device" && !odd([cmd])) {
   await (await import("./Device.ts")).run(URL_);
 } else if (cmd === "serve" && sub === "chatgpt" && [undefined, "logout", "status"].includes(more) && !odd([cmd, sub, ...(more ? [more] : [])])) {

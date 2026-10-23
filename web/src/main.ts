@@ -178,9 +178,12 @@ function chat(): void {
   onpopstate = route;
   importer();
   document.ondragover = (ev) => ev.preventDefault();
+  // on an agent's page (no box) a drop is let go: it would wait unseen
   document.ondrop = (ev) => {
     ev.preventDefault();
-    attach([...(ev.dataTransfer?.files ?? [])]);
+    if (View.view_typing(v)) {
+      attach([...(ev.dataTransfer?.files ?? [])]);
+    }
   };
   document.onclick = click;
   // a phone's keyboard up or down: the box's last line stays in sight, if
@@ -875,16 +878,15 @@ function bars(): void {
   }
   tasks_bar();
   send.classList.toggle("stop", stop);
-  send.disabled = !on;
-  BOX.disabled = !on;
-  $<HTMLButtonElement>(".attach").disabled = !on;
-  $<HTMLButtonElement>(".mic").disabled = !on || v.out.some((p) => p.msg.$ === "voice");
+  // an agent's page has no box: messages go to UniiChat
+  $(".composer").hidden = !on;
+  $("#pics").hidden = !on;
+  $<HTMLButtonElement>(".mic").disabled = v.out.some((p) => p.msg.$ === "voice");
   $(".mic").classList.toggle("rec", P.rec !== null);
-  $(".composer").classList.toggle("off", !on);
   $(".composer").classList.toggle("rec", P.rec !== null);
   // a knob focused (its menu just closed) stays so as its value changes
   const knob = (document.activeElement as HTMLElement | null)?.dataset?.knob;
-  markup($("#pick"), Html.pick_html(View.view_fold(v), v.fold === null, View.view_pick(v)));
+  markup($("#pick"), Html.pick_html(View.view_fold(v), v.fold === null, View.view_shown(v)));
   if (knob !== undefined) {
     $("#pick [data-knob=" + knob + "]").focus();
   }

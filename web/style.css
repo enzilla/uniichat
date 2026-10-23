@@ -61,7 +61,10 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html { color-scheme: light dark; -webkit-text-size-adjust: 100%; scrollbar-gutter: stable; overflow-anchor: none; }
-body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+/* a column at least the screen's height (the visible part, on a phone),
+   the chat taking what is left: the footer stays at the bottom, also on a
+   subagent's page, which has no message box */
+body { margin: 0; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; background: var(--paper); color: var(--ink); font: 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 ::selection { background: var(--ink); color: var(--paper); }
@@ -100,7 +103,7 @@ body.account footer { position: fixed; inset: auto 0 0; background: none; pointe
 body.account footer > :not(#toast) { display: none; }
 #pick { width: min(var(--col), 100%); margin: 0 auto 6px; display: flex; align-items: center; gap: 6px; font: 12.5px/20px var(--sans); color: var(--mid); }
 #pick .rule { flex: 1; height: 1px; background: var(--hair); margin-right: 4px; }
-#pick > button { padding: 0 6px; border-radius: 6px; }
+#pick > :is(button, .knob) { padding: 0 6px; border-radius: 6px; }
 #pick > button:hover, #pick > button:has(+ :popover-open) { background: var(--block); color: var(--ink); }
 #pick .dot { color: var(--soft); }
 /* a knob's menu (main.ts places it over its knob): a row per value, the
@@ -140,10 +143,6 @@ body.account footer > :not(#toast) { display: none; }
    screen's pixel ratio isn't whole, until it pushes the buttons off */
 .voice canvas { flex: 1; width: 0; height: 28px; }
 .voice span { font: 14px var(--mono); color: var(--mid); font-variant-numeric: tabular-nums; }
-.composer.off { border-color: var(--hair); }
-.composer.off textarea { color: var(--soft); }
-.composer.off .send { background: var(--hair); cursor: default; }
-.composer.off :is(.attach, .mic) { visibility: hidden; }
 /* up to the user's message (main.ts mine): the ☰ button's look, smaller,
    under the header at the column's right edge; down to the bottom (main.ts
    down) the same, above the pick bar's right end */
@@ -245,7 +244,7 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 @media (max-width: 420px) { #import .two { grid-template-columns: 1fr; } }
 
 /* The chat */
-#log { width: min(var(--col), 100% - 40px); margin: 0 auto; padding: 24px 0 40px; min-height: calc(100vh - 180px); }
+#log { width: min(var(--col), 100% - 40px); margin: 0 auto; padding: 24px 0 40px; flex: 1 0 auto; }
 #log > * > * { margin-block: 14px; }
 .cap { font: italic 14.5px var(--serif); color: var(--mid); }
 

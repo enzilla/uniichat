@@ -6,8 +6,6 @@
 // the site is a command here (COMMANDS, /help). From a pipe, each line is
 // a message. Its file is tui.json (Client.ts): the server it opens by
 // default (the last one signed in to) and its sign-in to each, by host.
-// Once a day it asks GitHub for the newest release (update_check) and
-// notes a newer one.
 
 import * as child from "node:child_process";
 import * as fs from "node:fs";
@@ -18,7 +16,6 @@ import * as Import from "./Import.ts";
 import * as Paint from "./Paint.ts";
 import { type Move, Pick } from "./Pick.ts";
 import * as Screen from "./Screen.ts";
-import * as Update from "./Update.ts";
 import * as View from "./View.ts";
 
 // Types
@@ -55,10 +52,6 @@ type Cmd = [use: string, keys: string, text: string, run: (t: Term, arg: string)
 // Constants
 // =========
 
-// the daily version check's cache (Client.DIR)
-const CHECKED = Client.DIR + "/check.json";
-const DAY     = 86400000;
-
 // paths on Windows take \\, not /
 const WIN = process.platform === "win32";
 
@@ -87,8 +80,10 @@ const SINCE  = /\bsince +(\d{4}-\d\d-\d\d)\b/;
 const EXPORT = /\.(zip|json)$/i;
 const HOW = "Pick with /import [claude] [chatgpt] [since 2026-06-01] [tools] [sessions] [-#n] [<export>.zip] [go] (-#n: not session n; go: import); /import pause or resume: the import running. Exports, on each website: " + Object.entries(Import.EXPORTS).map(([app, how]) => app + ": " + how).join("; ") + "; it emails you a zip.";
 
-// the input's hint on an agent's page
-const OFF = "Commands only: /help";
+// the keys on an agent's page, which has no input: a tab back, quit,
+// suspend and Esc (UniiChat's turn interrupted; agents go on); none that
+// types, sends or moves the pick
+const PAGE_KEYS = ["Tab", "Ctrl+D", "Ctrl+Z", "Esc"];
 
 // the pick's moves by Shift and an arrow
 const ARROWS: Record<string, Move> = { "Shift+Left": "prev", "Shift+Right": "next", "Shift+Up": "up", "Shift+Down": "down" };
@@ -218,8 +213,7 @@ function term_send(t: Term, msg: View.Client, sent?: View.Sent): void {
   }, said);
 }
 
-// a message of the server: to the view, then to the jobs and the page;
-// the update note comes under the first view, where it is seen
+// a message of the server: to the view, then to the jobs and the page
 function term_hear(t: Term, msg: View.Server): void {
   const first = msg.$ === "view" && t.v.parts.length === 0;
   const was   = t.v.page;
@@ -230,7 +224,6 @@ function term_hear(t: Term, msg: View.Server): void {
   term_print(t, msg);
   if (first) {
     term_history(t);
-    update_check(t);
   }
   term_draw(t);
   if (msg.$ === "state") {
@@ -263,8 +256,10 @@ function term_back(t: Term, sent: View.Sent): void {
 }
 
 // the page shown was `was`: another prints below, after its name (a
-// wipe and whole print took seconds on a long page)
+// wipe and whole print took seconds on a long page); an agent's has no
+// input (a pipe's lines still go on)
 function term_went(t: Term, was: View.Page | null): void {
+  t.scr.off = t.scr.tty && !View.view_typing(t.v);
   if (t.v.page !== was) {
     term_rows(t, t.v.page === null ? [View.Cap(View.MAIN)] : [], false);
     term_show(t);
@@ -288,10 +283,11 @@ function term_idle(t: Term): void {
 // Keys
 // ----
 
-// a key ("": text typed): its line of COMMANDS
+// a key ("": text typed): its line of COMMANDS (an agent's page: of
+// PAGE_KEYS)
 function term_press(t: Term, key: string): void {
   const cmd = term_commands(t.v).find((c) => c[1] !== "" && c[1].split(", ").includes(key));
-  if (cmd !== undefined) {
+  if (cmd !== undefined && (!t.scr.off || PAGE_KEYS.includes(key))) {
     cmd[3](t, cmd[0] === "" ? key : "");
   }
   term_draw(t);
@@ -314,9 +310,10 @@ function term_enter(t: Term): void {
 }
 
 // Ctrl+C or Ctrl+D: clears the input; on an empty one, Ctrl+C interrupts
-// UniiChat's turn (never quits), Ctrl+D quits
+// UniiChat's turn (never quits), Ctrl+D quits, as it does on an agent's
+// page (its input's text kept)
 function term_clear(t: Term, key: string): void {
-  if (t.scr.ed.text !== "") {
+  if (t.scr.ed.text !== "" && !t.scr.off) {
     Screen.ed_take(t.scr.ed);
   } else if (key === "Ctrl+D") {
     term_quit(t);
@@ -872,52 +869,20 @@ function term_paint(t: Term): void {
   const w     = Screen.screen_width();
   const iw    = term_inner();
   const room  = (process.stdout.rows || 24) - 1;
-  const off   = !View.view_typing(t.v);
-  const input = Screen.screen_input(t.scr, iw, room - 3, off ? OFF : View.HINT + " · /help", off);
-  const under = Paint.rule_text(t.v.up ? "" : "offline", iw);
-  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, ...term_tasks_line(t.v, iw), Paint.tabs_line(t.v, iw)]);
+  const off   = t.scr.off;
+  const input = off ? null : Screen.screen_input(t.scr, iw, room - 3, View.HINT + " · /help");
+  // with no input, the rule under it only to say offline
+  const under = off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", iw)];
+  const own   = term_inset([Paint.rule_line(t.v, iw), ...(input?.lines ?? []), ...under, ...term_tasks_line(t.v, iw), Paint.tabs_line(t.v, iw)]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];
   const tail  = term_lines([...held, ...View.view_tail(t.v, rest)]).flatMap((l) => Paint.runs_wrap(l, w, true));
   const above = tail.slice(Math.max(0, tail.length - room + own.length));
-  const at    = { row: above.length + 1 + input.at.row, col: input.at.col + MARGIN };
+  const at    = input === null ? null : { row: above.length + 1 + input.at.row, col: input.at.col + MARGIN };
   Screen.screen_paint(t.scr, t.out, t.wipe, [...above, ...own], at);
   t.out  = [];
   t.wipe = false;
   t.due  = false;
-}
-
-// Update
-// ======
-
-// update_check: once a day, a GET of Update.LATEST, not followed: the
-// version its redirect names is cached in CHECKED (stamped before the
-// request: one a day); a cached ver newer than this one is a note. It
-// never delays nor fails the chat
-async function update_check(t: Term): Promise<void> {
-  // UNII_NO_TELEMETRY: its name before arteeh.17
-  if (process.env.UNII_NO_UPDATE_CHECK || process.env.UNII_NO_TELEMETRY) {
-    return;
-  }
-  let last = { t: 0, ver: Update.VERSION, notice: "" };
-  try {
-    last = { ...last, ...JSON.parse(fs.readFileSync(CHECKED, "utf8")) };
-  } catch {}
-  try {
-    if (Date.now() - last.t > DAY) {
-      last.t = Date.now();
-      fs.mkdirSync(Client.DIR, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(CHECKED, JSON.stringify(last) + "\n");
-      const res = await fetch(Update.LATEST, { redirect: "manual", signal: AbortSignal.timeout(3000) });
-      last.ver = Update.update_tag(res.headers.get("location")) ?? Update.VERSION;
-      last.notice = "";
-      fs.writeFileSync(CHECKED, JSON.stringify(last) + "\n");
-    }
-  } catch {}
-  if (Update.update_newer(last.ver, Update.VERSION)) {
-    const notice = last.notice.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 200);
-    term_note(t, "unii " + last.ver + " is available: run unii update" + (notice === "" ? "" : ". " + notice));
-  }
 }
 
 // Main
