@@ -31,8 +31,9 @@ export type Job = { name: string; input: any; cwd: string };
 // JSON Schema
 export type Spec = { name: string; info: string; schema: object };
 
-// a skill on a device: its name, what it is for, its folder
-export type Skill = { name: string; description: string; dir: string };
+// a skill on a device: its name, what it is for, its folder, and its
+// file when it isn't the folder's SKILL.md (a Claude Code command)
+export type Skill = { name: string; description: string; dir: string; file?: string };
 
 // a line of a diff: kept in both texts (" "), only in the old ("-"), only
 // in the new ("+")
@@ -75,6 +76,11 @@ export const INT = { type: "integer" };
 
 // the most frames a video sheet takes
 const SHEET = 100;
+
+// a skill's name: a plugin's has its plugin's before a colon, as Claude
+// Code names them ("ponytail:ponytail"); a command's may have dots
+// ("speckit.plan")
+const SKILL_NAME = /^([a-z0-9][a-z0-9._-]{0,63}:)?[a-z0-9][a-z0-9._-]{0,63}$/;
 
 // a video sheet's gap between frames, and around them, in px
 const GAP = 4;
@@ -538,26 +544,43 @@ export namespace Machine {
   // ------
 
   // Agent Skills (<name>/SKILL.md) in ~/.agents/skills, then in
-  // <dir>/.agents/skills: a name found twice keeps the user's; one that
+  // <dir>/.agents/skills; then Claude Code's: its skills (~/.claude/skills,
+  // <dir>/.claude/skills, named by the folder when the file names none),
+  // its commands (~/.claude/commands/<name>.md: described by the file, or
+  // its first line), and those of the plugins its settings enable (each
+  // named "<plugin>:<name>"). A name found twice keeps the first; one that
   // can't be read or lacks a valid name and description is left out
   export function skills(home: string, dir: string): Skill[] {
     const found = new Map<string, Skill>();
-    for (const root of [home + "/.agents/skills", dir + "/.agents/skills"]) {
-      let names: string[] = [];
-      try {
-        names = fs.readdirSync(root).sort();
-      } catch {}
-      for (const name of names) {
-        const file = path.join(root, name, "SKILL.md");
-        let head: any = null;
-        try {
-          head = skill_head(file);
-        } catch {}
-        const ok = typeof head?.name === "string" && /^[a-z0-9-]{1,64}$/.test(head.name) && typeof head.description === "string" && head.description.trim() !== "";
-        if (ok && !found.has(head.name)) {
-          found.set(head.name, { name: head.name, description: head.description.trim().slice(0, 1024), dir: path.dirname(file) });
-        }
+    const add = (file: string, name: unknown, description: unknown, command: boolean) => {
+      const said = typeof description === "string" ? description.trim() : "";
+      if (typeof name === "string" && SKILL_NAME.test(name) && said !== "" && !found.has(name)) {
+        found.set(name, { name, description: said.slice(0, 1024), dir: path.dirname(file), ...(command ? { file } : {}) });
       }
+    };
+    const folders = (root: string, prefix: string, named: boolean) => {
+      for (const name of dir_names(root)) {
+        const file = path.join(root, name, "SKILL.md");
+        const head = skill_read(file)?.head;
+        const own  = named ? head?.name : head?.name ?? name;
+        add(file, typeof own === "string" ? prefix + own : null, head?.description, false);
+      }
+    };
+    const commands = (root: string, prefix: string) => {
+      for (const name of dir_names(root).filter((n) => n.endsWith(".md"))) {
+        const file = path.join(root, name);
+        const read = skill_read(file);
+        add(file, prefix + name.slice(0, -3), read?.head?.description ?? read?.body.split("\n").find((l) => l.trim() !== ""), true);
+      }
+    };
+    folders(home + "/.agents/skills", "", true);
+    folders(dir + "/.agents/skills", "", true);
+    folders(home + "/.claude/skills", "", false);
+    folders(dir + "/.claude/skills", "", false);
+    commands(home + "/.claude/commands", "");
+    for (const [plugin, at] of claude_plugins(home)) {
+      folders(at + "/skills", plugin + ":", false);
+      commands(at + "/commands", plugin + ":");
     }
     return [...found.values()];
   }
@@ -567,7 +590,7 @@ export namespace Machine {
     if (skill === undefined) {
       return { text: "No skill " + name + " here.", fail: true };
     }
-    const text = fs.readFileSync(skill.dir + "/SKILL.md", "utf8");
+    const text = fs.readFileSync(skill.file ?? skill.dir + "/SKILL.md", "utf8");
     return { text: "Skill " + name + ", in " + skill.dir + " (its other files are there):\n\n" + text, fail: false };
   }
 
@@ -591,19 +614,51 @@ export namespace Machine {
 // Frontmatter
 // ===========
 
-// a SKILL.md's YAML frontmatter, from its first 64 KB; a regular file only,
-// so a FIFO or device can't hang the device
-function skill_head(file: string): any {
-  if (!fs.statSync(file).isFile()) {
+// a skill's file, from its first 64 KB: its YAML frontmatter (null: none)
+// and the text after it; null if it can't be read, or isn't a regular
+// file (a FIFO or device can't hang the device)
+function skill_read(file: string): { head: any; body: string } | null {
+  try {
+    if (!fs.statSync(file).isFile()) {
+      return null;
+    }
+    const buf = Buffer.alloc(65536);
+    const fd = fs.openSync(file, "r");
+    const size = fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+    const text = buf.toString("utf8", 0, size).replace(/^\uFEFF/, "");
+    const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?(\n|$)/);
+    return { head: m === null ? null : Bun.YAML.parse(m[1]), body: m === null ? text : text.slice(m[0].length) };
+  } catch {
     return null;
   }
-  const buf = Buffer.alloc(65536);
-  const fd = fs.openSync(file, "r");
-  const size = fs.readSync(fd, buf, 0, buf.length, 0);
-  fs.closeSync(fd);
-  const text = buf.toString("utf8", 0, size).replace(/^\uFEFF/, "");
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?(\n|$)/);
-  return m === null ? null : Bun.YAML.parse(m[1]);
+}
+
+// a folder's entries, sorted (none if it can't be read)
+function dir_names(root: string): string[] {
+  try {
+    return fs.readdirSync(root).sort();
+  } catch {
+    return [];
+  }
+}
+
+// the plugins Claude Code's user settings enable, installed for the user:
+// each one's name (its key's before "@") and folder
+function claude_plugins(home: string): [string, string][] {
+  const json = (file: string) => {
+    try {
+      return JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch {
+      return null;
+    }
+  };
+  const on = json(home + "/.claude/settings.json")?.enabledPlugins ?? {};
+  const all = json(home + "/.claude/plugins/installed_plugins.json")?.plugins ?? {};
+  return Object.keys(on).filter((key) => on[key] === true).flatMap((key): [string, string][] => {
+    const at = [all[key]].flat().find((e: any) => e?.scope === "user" && typeof e.installPath === "string")?.installPath;
+    return at === undefined ? [] : [[key.split("@")[0], at]];
+  });
 }
 
 // Diff

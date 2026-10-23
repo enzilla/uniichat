@@ -987,7 +987,8 @@ export namespace Chat {
     const mcp = config.MCP.map(({ name }) => ({ name, on: !chat.mem.off.includes(name) }));
     const labels = Object.fromEntries(chat.tools.labels);
     const tasks = Tasks.tasks_view(Tasks.tasks_load(chat.mem.dir), Date.now());
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks };
+    const skills = Tools.opened(chat.tools).flatMap(([device, d]) => d.skills.map((s) => ({ name: s.name, description: s.description, device })));
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, skills };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1042,11 +1043,12 @@ export namespace Chat {
   }
 
   // a socket closed; a device goes only if it quit (a link lost is no
-  // quit)
+  // quit), and its skills leave the state
   export function leave(chat: Chat, sock: Sock, quit: boolean): void {
     chat.socks.delete(sock);
     if (quit && sock.data.device !== null) {
       Tools.detach(chat.tools, sock.data.tab, sock.data.device);
+      Chat.change(chat);
     }
   }
 

@@ -73,10 +73,14 @@ export type State = {
   timers    : Timer[];
   mcp       : Plug[];
   tasks     : Task[]; // the pending list: open, then closed lately (Tasks.tasks_view)
+  skills    : Skilled[]; // the skills on the devices open now (Machine.skills), for the terminal to complete
 };
 
 // an MCP server of the server's config (Mcp.ts), on or off in this chat
 export type Plug = { name: string; on: boolean };
+
+// a skill on a device open now, as the state lists it (Server.ts)
+export type Skilled = { name: string; description: string; device: string };
 
 // fold: the tops shown (null: not folded); nodes and whole: the summaries
 // ("id+n") and messages known; open: the blocks opened (true) or shut by
@@ -280,6 +284,7 @@ export function view_new(): View {
     timers    : [],
     mcp       : [],
     tasks     : [],
+    skills    : [],
     parts     : [],
     turn      : Infinity,
     fold      : null,
