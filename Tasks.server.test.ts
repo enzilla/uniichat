@@ -88,7 +88,7 @@ test("done without go: a note, no turn; told by the next turn that ends well", a
   await idle();
   expect(ASKED.length).toBe(before);
   expect(last().kind).toBe("note");
-  expect(last().text).toBe('Pendência P1 concluída pelo usuário: "Reiniciar o serve". Comentário: "reiniciei".');
+  expect(last().text).toBe('Pendência P1 concluída pelo usuário: “Reiniciar o serve”. Comentário: “reiniciei”.');
   // the same act again (a lost answer): nothing new
   const count = chat.mem.count;
   expect(await act({ $: "task", task: "P1", state: "done", note: "reiniciei" })).toEqual({});
@@ -113,7 +113,7 @@ test("done with go: a [Pendências] message starts a turn; told at once", async 
   await idle();
   expect(ASKED.length).toBe(before + 1);
   const turn = ASKED.at(-1)!.blocks.at(-1)!.text;
-  expect(turn).toContain('[Pendências] Pendência P2 concluída pelo usuário: "Abrir o PR?". Resposta: sim.');
+  expect(turn).toContain('[Pendências] Pendência P2 concluída pelo usuário: “Abrir o PR?”. Resposta: sim.');
   expect(Tasks.tasks_untold(s)).toEqual([]);
   // done again with go: nothing (told already)
   expect(await act({ $: "task", task: "P2", state: "done", answer: "sim", go: true })).toEqual({});
@@ -141,7 +141,7 @@ test("done, then go on its own: told now; tell with none: refused", async () => 
   expect(await act({ $: "tasks_tell" })).toEqual({ error: "Não há pendências resolvidas para avisar." });
   // reopened: a note, as any resolution
   await act({ $: "task", task: "P4", state: "open" });
-  expect(last().text).toBe('Pendência P4 reaberta pelo usuário: "Ler o relatório".');
+  expect(last().text).toBe('Pendência P4 reaberta pelo usuário: “Ler o relatório”.');
 });
 
 test("views: an act of the person makes the act to send", () => {

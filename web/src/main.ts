@@ -300,7 +300,7 @@ function click(ev: MouseEvent): void {
     go(path ?? "/");
   }
   if (a !== undefined) {
-    act(JSON.parse(a));
+    act(task_act(el, JSON.parse(a)));
   }
   if (text !== undefined) {
     navigator.clipboard.writeText(text).then(() => copied(el), () => toast("Could not copy."));
@@ -351,6 +351,42 @@ function left(ev: FocusEvent): void {
   const to = ev.relatedTarget as Node | null;
   if (menu !== null && to !== null && !menu.contains(to) && to !== menu.previousElementSibling) {
     menu.hidePopover();
+  }
+}
+
+// a task's Concluir, Descartar or choice (Html.tasks_html) takes its
+// item's comment and "Avisar o Unii agora"
+function task_act(el: HTMLElement, a: View.Act): View.Act {
+  const item = el.closest("li[data-task]");
+  if (a.$ !== "Task" || a.state === "open" || item === null) {
+    return a;
+  }
+  const note = item.querySelector<HTMLInputElement>("input.note")?.value ?? "";
+  const go = item.querySelector<HTMLInputElement>(".go input")?.checked ?? false;
+  return { ...a, note, go };
+}
+
+// the pending list: the header's ✓ (on a wide screen, an aside instead:
+// style.css), its items made again only as the list changes (a state)
+let TASKS: { of: unknown; html: { open: string[]; closed: string[] } } = { of: null, html: { open: [], closed: [] } };
+function tasks_bar(): void {
+  if (TASKS.of !== v.tasks) {
+    TASKS = { of: v.tasks, html: Html.tasks_html(v.tasks) };
+  }
+  const { open, closed } = TASKS.html;
+  const untold = View.view_untold(v).length;
+  document.body.classList.toggle("tasking", v.tasks.length > 0);
+  $(".tasks").hidden = v.tasks.length === 0;
+  $(".tasks span").textContent = String(open.length);
+  $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
+  $("#tasks .none").hidden = open.length > 0;
+  markup($("#tasks ul.now"), open);
+  markup($("#tasks .closed ul"), closed);
+  $("#tasks .closed").hidden = closed.length === 0;
+  $("#tasks .tell").hidden = untold === 0;
+  $("#tasks .tell span").textContent = String(untold);
+  if (v.tasks.length === 0 && $("#tasks").matches(":popover-open")) {
+    $("#tasks").hidePopover();
   }
 }
 
@@ -832,6 +868,7 @@ function bars(): void {
   if (v.timers.length === 0 && $("#timers").matches(":popover-open")) {
     $("#timers").hidePopover();
   }
+  tasks_bar();
   send.classList.toggle("stop", stop);
   send.disabled = !on;
   BOX.disabled = !on;

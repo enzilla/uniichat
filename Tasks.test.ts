@@ -106,7 +106,7 @@ test("resolve by the user: done with an answer and a comment, untold till told",
   expect(T.task_resolve(s, "P1", "done", "talvez", null, NOW)).toContain("não tem a opção");
   const r = T.task_resolve(s, "P1", "done", "sim", "pode mesclar", NOW + H) as T.Task;
   expect([r.state, r.answer, r.note, r.told]).toEqual(["done", "sim", "pode mesclar", false]);
-  expect(T.task_said(r)).toBe('Pendência P1 concluída pelo usuário: "Abrir PR?". Resposta: sim. Comentário: "pode mesclar".');
+  expect(T.task_said(r)).toBe('Pendência P1 concluída pelo usuário: “Abrir PR?”. Resposta: sim. Comentário: “pode mesclar”.');
   // done again: no change, no second note
   expect(T.task_resolve(s, "P1", "done", "sim", "pode mesclar", NOW + 2 * H)).toBeNull();
   expect(T.task_resolve(s, "P1", "done", "sim", null, NOW + 2 * H)).toBeNull();
@@ -118,10 +118,10 @@ test("drop and reopen by the user", () => {
   const s = T.tasks_load(dir);
   add(s, { title: "Testar clique" });
   const d = T.task_resolve(s, "P1", "dropped", null, "já testei", NOW) as T.Task;
-  expect(T.task_said(d)).toBe('Pendência P1 descartada pelo usuário: "Testar clique". Comentário: "já testei".');
+  expect(T.task_said(d)).toBe('Pendência P1 descartada pelo usuário: “Testar clique”. Comentário: “já testei”.');
   const o = T.task_resolve(s, "P1", "open", null, null, NOW + H) as T.Task;
   expect([o.state, o.answer, o.note, o.closed, o.told]).toEqual(["open", null, null, null, false]);
-  expect(T.task_said(o)).toBe('Pendência P1 reaberta pelo usuário: "Testar clique".');
+  expect(T.task_said(o)).toBe('Pendência P1 reaberta pelo usuário: “Testar clique”.');
   expect(T.task_resolve(s, "P1", "open", null, null, NOW + H)).toBeNull();
 });
 

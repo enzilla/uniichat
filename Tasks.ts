@@ -384,11 +384,11 @@ export function ago(iso: string, now: number): string {
 }
 
 // a resolution as the chat reads it: "Pendência P7 concluída pelo
-// usuário: "título". Resposta: sim. Comentário: "pode"."
+// usuário: “título”. Resposta: sim. Comentário: “pode”."
 export function task_said(t: Task): string {
   const answer = t.answer === null ? "" : " Resposta: " + t.answer + ".";
-  const note = t.note === null ? "" : " Comentário: " + JSON.stringify(t.note) + ".";
-  return "Pendência " + t.id + " " + SAID[t.state] + " pelo usuário: " + JSON.stringify(t.title) + "." + answer + note;
+  const note = t.note === null ? "" : " Comentário: “" + t.note + "”.";
+  return "Pendência " + t.id + " " + SAID[t.state] + " pelo usuário: “" + t.title + "”." + answer + note;
 }
 
 // a task as a line of the tasks tool or the block
