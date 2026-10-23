@@ -309,7 +309,8 @@ export namespace Tools {
   }
 
   // each open device's skills, asked as a job; one that fails (a unii
-  // from before skills) has none
+  // from before skills) has none. A change is the chat's (its state lists
+  // them: the terminal completes their names)
   export async function look(tools: Tools, only: string | null = null): Promise<void> {
     const live = Tools.opened(tools).filter(([name, d]) => (only === null || name === only) && [...d.terms.values()].some((t) => t.live()));
     await Promise.all(live.map(async ([name, d]) => {
@@ -325,10 +326,14 @@ export namespace Tools {
       const out = await run.out;
       clearTimeout(timer);
       if (!late) {
+        const was = JSON.stringify(d.skills);
         try {
           d.skills = out.fail ? [] : JSON.parse(out.text);
         } catch {
           d.skills = [];
+        }
+        if (JSON.stringify(d.skills) !== was) {
+          tools.hooks.change();
         }
       }
     }));
