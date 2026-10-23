@@ -195,11 +195,9 @@ while its device runs, and leaves the list when it stops: a task that needs
 one not listed can't be done now, so tell the user it isn't available.`;
 const DEVICES_NONE = "(None is open now.)";
 
-const SKILLS = "Skills on the devices open now: every one's name, by device; then those that fit this turn best, with what each is for. When a task matches one, load it with the skill tool first, then follow it; skills_search finds the others by words.";
+const SKILLS = "Skills on the devices open now, by device: when a task matches one's description, load it with the skill tool first, then follow it (skills_search finds them by words).";
 
-// the skills shown with what each is for (those that fit the turn best),
-// those skills_search answers with
-const FIT   = 8;
+// the most skills skills_search answers with
 const FOUND = 10;
 
 // how long a device may take to list its skills, in ms: one that takes
@@ -310,17 +308,14 @@ export namespace Tools {
 
   // after the devices, so a change hits a call's tail, not its cached
   // prefix
-  // the skills block: every skill's name, by device, then the FIT that
-  // the turn's text fits best (Rank.ts), with what each is for
-  export function skills(tools: Tools, text: string): Block {
-    const opened = Tools.opened(tools).filter(([, d]) => d.skills.length > 0);
-    if (opened.length === 0) {
-      return { text: "", mark: false };
-    }
-    const names = opened.map(([name, d]) => "- " + name + ": " + d.skills.map((s) => s.name).join(", "));
-    const fit   = Tools.skills_fit(tools, text, FIT);
-    const best  = fit.length === 0 ? "" : "\n\nBest fits for this turn:\n" + fit.join("\n");
-    return { text: SKILLS + "\n" + names.join("\n") + best + "\n\n", mark: false };
+  // the skills block: each skill, by device (in their names' order), with
+  // what it is for. A call puts it before the memory's view, where it
+  // stays the same from turn to turn, so the vendor's cache keeps it: it
+  // changes only as a device opens or closes or its skills do
+  export function skills(tools: Tools): Block {
+    const opened = Tools.opened(tools).sort(([a], [b]) => a.localeCompare(b));
+    const lines = opened.flatMap(([name, d]) => d.skills.map((s) => "- " + name + ": " + s.name + ": " + s.description.replace(/\s+/g, " ")));
+    return { text: lines.length === 0 ? "" : SKILLS + "\n" + lines.join("\n") + "\n\n", mark: false };
   }
 
   // the skills that fit a text best, at most n, each a line: its device,
@@ -865,7 +860,7 @@ export namespace Tools {
     const run = Pick.ask(Tools.pick(tools, agent));
     const own = Memory.file_text(PROMPTS.prompt.file);
     const system = own === "" ? SUB : SUB + "\n\n" + AGENT_PROMPT + "\n\n" + own;
-    const blocks = [...agent.view, Tools.devices(tools), Tools.skills(tools, log.text.slice(-4000)), log];
+    const blocks = [Tools.skills(tools), ...agent.view, Tools.devices(tools), log];
     return { ...run, system, blocks, searches: SEARCHES, server, agent: true };
   }
 

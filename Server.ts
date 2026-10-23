@@ -420,7 +420,8 @@ export namespace Chat {
     chat.socks.forEach((sock) => Chat.show(chat, sock));
     const tasks = { text: Tasks.tasks_block(Tasks.tasks_load(mem.dir), Date.now()), mark: false };
     const asked = await Chat.invoked(chat, text, halt.signal);
-    const blocks = [...view, Tools.devices(chat.tools), Tools.skills(chat.tools, text), Tools.at_work(chat.tools), tasks, ...asked, { text: HEAD + text, mark: true }];
+    // the skills first: they stay the same from turn to turn (Tools.skills)
+    const blocks = [Tools.skills(chat.tools), ...view, Tools.devices(chat.tools), Tools.at_work(chat.tools), tasks, ...asked, { text: HEAD + text, mark: true }];
     const ask = { ...Chat.share(chat, Tools.prompt("prompt")), searches: SEARCHES, server, blocks, imgs };
     chat.model = chat.pick.model;
     chat.asked = true;

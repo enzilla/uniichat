@@ -5,8 +5,7 @@
 // skill's "revisar-diff" or "plugin:nome" counts by its parts), words of
 // one letter and the most common ones of Portuguese and English (STOP)
 // left out: in a long description they outweigh what it is about. Local
-// and cheap: the skills a turn shows with what each is for
-// (Tools.skills), and the skills_search tool. Words only: a query in one
+// and cheap: the skills_search tool (Tools.skills_fit). Words only: a query in one
 // language misses a description in another (the names, listed whole,
 // and skills_search make up for it).
 

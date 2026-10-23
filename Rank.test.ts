@@ -2,7 +2,7 @@
 // =========
 // `UNII_DIR=$(mktemp -d /tmp/unii-t.XXXX) bun test Rank.test.ts`: texts
 // ranked by a query (Rank.ts), and the skills block a turn gets
-// (Tools.skills): every name, the best fits with what each is for; and
+// (Tools.skills): each skill with what it is for, in a steady order; and
 // a skill a message invokes by /name, loaded for its turn (Chat.invoked).
 
 import { expect, test } from "bun:test";
@@ -34,12 +34,11 @@ test("rank: those that share words with the query, best first; none for none", (
   expect(Rank.rank(texts, "bom dia", 3)).toEqual([]);
 });
 
-test("the block names every skill and gives only the best fits what each is for", () => {
-  const block = Tools.skills(tools({ notebook: SKILLS }), "revisa o diff do PR").text;
-  expect(block).toContain("- notebook: revisar-diff, executar-hotfix, erp:criar-issue-linear, dataviz");
-  expect(block).toContain("- notebook: revisar-diff: Revisa o diff atual antes de abrir o PR.");
-  expect(block).not.toContain("Cria issues no Linear");
-  expect(Tools.skills(tools({ notebook: [] }), "x").text).toBe("");
+test("the block gives every skill what it is for, the devices in their names' order, whatever order they opened in", () => {
+  const block = Tools.skills(tools({ pi: SKILLS.slice(2), notebook: SKILLS.slice(0, 2) })).text;
+  expect(block).toContain("- notebook: revisar-diff: Revisa o diff atual antes de abrir o PR.\n- notebook: executar-hotfix: Fluxo de hotfix e release de um módulo.\n- pi: erp:criar-issue-linear: Cria issues no Linear com labels padronizadas.");
+  expect(block).toBe(Tools.skills(tools({ notebook: SKILLS.slice(0, 2), pi: SKILLS.slice(2) })).text);
+  expect(Tools.skills(tools({ notebook: [] })).text).toBe("");
 });
 
 test("skills_fit searches every open device", () => {
