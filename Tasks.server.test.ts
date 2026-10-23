@@ -272,3 +272,24 @@ test("fields: a draft is no turn and no note; done refused till the required are
   await idle();
   expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain("[Pendências] Pendência " + t.id + " concluída pelo usuário: “Reiniciar o serve?”. Respostas: Quando: à noite; Obs: “sem pressa”.");
 });
+
+test("a talk's turn reads the task whole: its detail, the draft not sent yet and its thread so far; a quiet one keeps its line", async () => {
+  const t = Tasks.task_new(s, { title: "Janela de deploy", detail: "Depois do PR 644, com o time avisado.", fields: [{ id: "amb", label: "Ambiente", kind: "choice", choices: ["hom", "prod"] }] }, "main", Date.now()) as Tasks.Task;
+  const quiet = Tasks.task_new(s, { title: "Outra coisa", detail: "Um detalhe que não vem." }, "main", Date.now()) as Tasks.Task;
+  Tasks.task_draft(s, t.id, { amb: "prod" });
+  DOING = () => Chat.push(chat, null, "unii", "Prefiro hom primeiro.");
+  await act({ $: "task_say", task: t.id, text: "Qual janela?" });
+  await idle();
+  DOING = null;
+  await act({ $: "task_say", task: t.id, text: "E se for prod?" });
+  await idle();
+  const block = ASKED.at(-1)!.blocks.map((b) => b.text).join("");
+  expect(block).toContain("The user is talking with you about these");
+  expect(block).toContain("Depois do PR 644, com o time avisado.");
+  expect(block).toContain("draft (not sent yet): Ambiente: prod");
+  expect(block).toContain("user: Qual janela?\n  you: Prefiro hom primeiro.\n  user: E se for prod?");
+  expect(block).toContain("- " + quiet.id + " [user] Outra coisa");
+  expect(block).not.toContain("Um detalhe que não vem.");
+  await act({ $: "task", task: t.id, state: "dropped" });
+  await act({ $: "task", task: quiet.id, state: "dropped" });
+});

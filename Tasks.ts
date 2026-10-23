@@ -1192,7 +1192,8 @@ export function tasks_list(s: Store, args: { all?: unknown; ref?: unknown; id?: 
 }
 
 // a turn's block: what the user changed since the last turn, then the
-// open ones (the newest LINES), each a line; "" if neither. What it shows
+// open ones (the newest LINES), each a line, those the user is talking
+// about whole; "" if neither. What it shows
 // is kept, to be told once the call ends well (Tasks.told)
 export function tasks_block(s: Store, now: number): string {
   const changed = tasks_untold(s);
@@ -1219,12 +1220,16 @@ export function tasks_block(s: Store, now: number): string {
   const free = newest.filter((t) => !waiting.has(t.id));
   const wait = newest.filter((t) => waiting.has(t.id));
   const line = (t: Task) => task_line(t, now, false, s.tasks);
+  // the tasks whose thread waits for Unii: whole, so a message about one
+  // is read with all it has (not only its title, as the message's mark)
+  const talking = open.filter((t) => t.talk === "unii");
   const lines = [
     "Tasks (your pending list; the user sees it beside the chat and resolves items there):",
     ...(changed.length === 0 ? [] : ["Changed since your last turn (by the user, or freed):", ...changed.map(did)]),
     ...(open.length === 0 ? ["Open: none."] : ["Open (" + (open.length - waiting.size) + "; those that free others first, then the user's):", ...free.map(line)]),
     ...(wait.length === 0 ? [] : ["Waiting for other tasks (" + waiting.size + "; hidden from the user until freed):", ...wait.map(line)]),
     ...(open.length > LINES ? ["+" + (open.length - LINES) + " older (the tasks tool lists them)"] : []),
+    ...(talking.length === 0 ? [] : ["The user is talking with you about these (each whole: its detail, the draft, its thread; reply in it with task_reply):", ...talking.map((t) => task_line(t, now, true, s.tasks))]),
   ];
   return lines.join("\n") + "\n\n";
 }
