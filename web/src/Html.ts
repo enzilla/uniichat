@@ -253,7 +253,8 @@ function task_item(tasks: Task[], t: Task, whole: boolean): string {
   const who = [...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(mine ? [] : [esc(View.assignee_said(t))])];
   const md = `<div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div>`;
   const detail = t.detail === "" ? "" : whole ? md : `<details><summary>Detalhes</summary>${md}</details>`;
-  const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act("done", c, "opt", c)).join("")}</div>`;
+  const opt = (c: string, k: number) => `<button class="opt"${act_html({ $: "Task", task: t.id, state: "done", answer: c })}>${esc(c)}${t.descriptions?.[k] ? `<small>${esc(t.descriptions[k])}</small>` : ""}</button>`;
+  const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map(opt).join("")}</div>`;
   const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário ou justificativa (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
   const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
   const acts = `<div class="acts">${go}${act("done", "Concluir", mine ? "done" : "done quiet")}${act("dropped", "Descartar", "drop")}</div>`;
@@ -281,7 +282,8 @@ function fields_html(t: Task): string {
     }
     const type = f.kind === "multi" ? "checkbox" : "radio";
     const on = (c: string) => (Array.isArray(v) ? v.includes(c) : v === c);
-    const boxes = f.choices.map((c) => `<label><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> ${esc(c)}</label>`).join("");
+    const means = (k: number) => (f.descriptions?.[k] ? `<small>${esc(f.descriptions[k])}</small>` : "");
+    const boxes = f.choices.map((c, k) => `<label><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> <span>${esc(c)}${means(k)}</span></label>`).join("");
     return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}">${legend}<div class="picks">${boxes}</div></fieldset>`;
   };
   return `<div class="fields">${fields.map(one).join("")}</div>`;

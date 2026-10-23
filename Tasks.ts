@@ -89,6 +89,7 @@ export type Task = {
   origin_url : string | null;
   by      : string;
   choices : string[];
+  descriptions : string[];
   answer  : string | null;
   note    : string | null;
   ref     : string | null;
@@ -113,9 +114,10 @@ export type Heard = { state: State; answer: string | null; note: string | null; 
 
 // a question of a task: its id (letters, digits, - and _), its label,
 // its kind (one choice, many, a text, yes or no), its choices (yes or
-// no: sim, não), whether it must be answered to conclude
+// no: sim, não) and what picking each means (descriptions, by place;
+// none: []), whether it must be answered to conclude
 export type Kind  = "choice" | "multi" | "text" | "yesno";
-export type Field = { id: string; label: string; kind: Kind; choices: string[]; required: boolean };
+export type Field = { id: string; label: string; kind: Kind; choices: string[]; descriptions: string[]; required: boolean };
 
 // answers by field id: a choice or a text, or the choices picked
 export type Value  = string | string[];
@@ -149,11 +151,13 @@ export type Edit = {
 // Constants
 // =========
 
-// the longest title, detail, comment, choice, ref; the most choices
+// the longest title, detail, comment, choice, what a choice means, ref;
+// the most choices
 export const TITLE   = 200;
 export const DETAIL  = 2000;
 export const NOTE    = 1000;
 export const CHOICE  = 80;
+export const MEANS   = 300;
 export const CHOICES = 9;
 export const REF     = 100;
 
@@ -258,7 +262,8 @@ export function task_read(x: unknown, now: number): Task | null {
     return null;
   }
   const state = STATES.includes(o.state as State) ? (o.state as State) : "open";
-  const choices = Array.isArray(o.choices) ? [...new Set(o.choices.filter((c) => typeof c === "string").map((c) => text_line(c, CHOICE)).filter((c) => c !== ""))].slice(0, CHOICES) : [];
+  const said = choices_read(Array.isArray(o.choices) ? o.choices.filter((c) => typeof c === "string").slice(0, CHOICES).map((c, k) => ({ label: c, description: Array.isArray(o.descriptions) ? o.descriptions[k] : "" })) : []);
+  const { choices, descriptions } = typeof said === "string" ? { choices: [], descriptions: [] } : said;
   const answer = typeof o.answer === "string" ? text_line(o.answer, CHOICE) : "";
   const text = (y: unknown, n: number, f: (y: unknown, n: number) => string) => (typeof y === "string" ? f(y, n) : "");
   const note = text(o.note, NOTE, text_body);
@@ -277,6 +282,7 @@ export function task_read(x: unknown, now: number): Task | null {
     origin_url : origin_read(o.origin) === null ? null : url_read(o.origin_url),
     by      : text(o.by, 40, text_line) || "main",
     choices,
+    descriptions,
     answer  : state === "done" && choices.includes(answer) ? answer : null,
     note    : note === "" ? null : note,
     ref     : ref === "" ? null : ref,
@@ -541,16 +547,37 @@ export function task_find(s: Store, id: unknown): Task | null {
 // Changes
 // =======
 
-// a choices list as given: strings, each a line, none empty or twice
-function choices_read(x: unknown): string[] | string {
+// choices as Unii reads them: each label, what it means after it ("hom
+// (ensaio, sem risco) | prod")
+export function choices_said(x: { choices: string[]; descriptions: string[] }): string {
+  return x.choices.map((c, k) => c + (x.descriptions[k] ? " (" + x.descriptions[k] + ")" : "")).join(" | ");
+}
+
+// a choices list as given: each a label, or { label, description } (what
+// picking it means); each a line, none empty or twice (the first kept).
+// The labels, and the descriptions by place ([] if none has one, so a
+// tasks.json without them reads as it was written)
+function choices_read(x: unknown): { choices: string[]; descriptions: string[] } | string {
   if (x === undefined || x === null) {
-    return [];
+    return { choices: [], descriptions: [] };
   }
   if (!Array.isArray(x)) {
-    return "choices is a list of strings.";
+    return "choices is a list of labels, or of { label, description }.";
   }
-  const all = [...new Set(x.map((c) => text_line(c, CHOICE)).filter((c) => c !== ""))];
-  return all.length > CHOICES ? "At most " + CHOICES + " choices." : all;
+  const choices: string[] = [];
+  const descriptions: string[] = [];
+  for (const c of x) {
+    const o = typeof c === "object" && c !== null && !Array.isArray(c) ? (c as Record<string, unknown>) : null;
+    const label = text_line(o === null ? c : o.label, CHOICE);
+    if (label !== "" && !choices.includes(label)) {
+      choices.push(label);
+      descriptions.push(o === null ? "" : text_line(o.description, MEANS));
+    }
+  }
+  if (choices.length > CHOICES) {
+    return "At most " + CHOICES + " choices.";
+  }
+  return { choices, descriptions: descriptions.some((d) => d !== "") ? descriptions : [] };
 }
 
 // Fields
@@ -595,17 +622,19 @@ export function fields_read(x: unknown): { fields: Field[]; why: string | null }
       return no("Field " + id + ": required is true or false.");
     }
     let choices: string[] = kind === "yesno" ? [...YESNO] : [];
+    let descriptions: string[] = [];
     if (kind === "choice" || kind === "multi") {
-      const got = choices_read(o.choices);
+      const listed = Array.isArray(o.choices) && Array.isArray(o.descriptions) ? o.choices.map((c, j) => (typeof c === "string" ? { label: c, description: (o.descriptions as unknown[])[j] } : c)) : o.choices;
+      const got = choices_read(listed);
       if (typeof got === "string") {
         return no("Field " + id + ": " + got);
       }
-      if (got.length < 2) {
+      if (got.choices.length < 2) {
         return no("Field " + id + " (" + kind + ") needs at least 2 choices.");
       }
-      choices = got;
+      [choices, descriptions] = [got.choices, got.descriptions];
     }
-    fields.push({ id, label, kind, choices, required: o.required !== false });
+    fields.push({ id, label, kind, choices, descriptions, required: o.required !== false });
   });
   if (fields.length > FIELDS) {
     no("At most " + FIELDS + " fields.");
@@ -778,7 +807,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   const at = new Date(now).toISOString();
   const ref = text_line(args.ref, REF);
   const task: Task = {
-    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, by, choices, answer: null, note: null,
+    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, by, ...choices, answer: null, note: null,
     ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
     fields: fields.fields, draft: {}, answers: null, thread: [], talk: null,
   };
@@ -822,7 +851,7 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
     if (typeof choices === "string") {
       return choices;
     }
-    next.choices = choices;
+    [next.choices, next.descriptions] = [choices.choices, choices.descriptions];
   }
   if (args.ref !== undefined) {
     const ref = text_line(args.ref, REF);
@@ -1122,10 +1151,10 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const waits = all === null ? [] : Deps.waits(all, t);
   const frees = all === null ? [] : Deps.frees_direct(all, t);
   const deps = (waits.length === 0 ? "" : " waits for " + waits.join(", ")) + (frees.length === 0 ? "" : " frees " + frees.join(", ")) + (all === null && t.after.length > 0 ? " after " + t.after.join(", ") : "");
-  const kind = (f: Field) => f.kind + (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.join(" | ") : "");
+  const kind = (f: Field) => f.kind + (f.kind === "choice" || f.kind === "multi" ? ": " + choices_said(f) : "");
   const fields = t.fields.length === 0 ? "" : " fields: " + t.fields.map((f) => f.id + (f.required ? "*" : "") + " " + JSON.stringify(f.label) + " (" + kind(f) + ")").join("; ");
   const talk = t.talk === "unii" ? " [the user wrote in its thread: reply with task_reply]" : "";
-  const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ")) + fields + deps + talk;
+  const opts = (t.choices.length === 0 ? "" : " options: " + choices_said(t)) + fields + deps + talk;
   const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), ago(t.made, now)].filter((x) => x !== "").join(", ");
   const how   = [t.state, t.answer === null ? "" : "answer: " + t.answer, t.note === null ? "" : "note: " + JSON.stringify(t.note)].filter((x) => x !== "");
   const state = t.state === "open" ? "" : " (" + how.join(", ") + ")";

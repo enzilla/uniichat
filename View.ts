@@ -749,7 +749,7 @@ export function tasks_by_assignee(open: Task[]): [string, Task[]][] {
 export function tasks_md(v: View, one: Task | null = null, waiting = false): string {
   const STATE = { open: "aberta", done: "concluída", dropped: "descartada" };
   const tag = (t: Task) => (t.ref === null ? "" : " · " + t.ref) + (origin_said(t) === "" ? "" : " · origem: " + origin_said(t));
-  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c).join("  "));
+  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c + (t.descriptions?.[k] ? " (" + t.descriptions[k] + ")" : "")).join("  "));
   if (one !== null) {
     const said = [one.answer === null ? "" : "Resposta: " + one.answer + ".", one.note === null ? "" : "Comentário: " + one.note].filter((x) => x !== "").join(" ");
     const waits = Deps.waits(v.tasks, one);
@@ -793,7 +793,7 @@ function fields_md(t: Task): string {
     const v = Object.hasOwn(values, f.id) ? values[f.id] : undefined;
     return v === undefined || v.length === 0 ? "_sem resposta_" : Array.isArray(v) ? v.join(", ") : v;
   };
-  const opts = (f: Field) => (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.map((c, k) => k + 1 + ") " + c).join("  ") : "");
+  const opts = (f: Field) => (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.map((c, k) => k + 1 + ") " + c + (f.descriptions?.[k] ? " (" + f.descriptions[k] + ")" : "")).join("  ") : "");
   const head = t.state === "done" ? "**Respostas**" : "**Campos** (respostas salvas como rascunho até concluir)";
   return head + "\n\n" + fields.map((f, k) => k + 1 + ". " + f.label + " `" + f.id + "` (" + KIND[f.kind] + opts(f) + (f.required ? ", obrigatório" : "") + ") — " + said(f)).join("\n");
 }

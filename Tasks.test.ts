@@ -56,7 +56,7 @@ test("create refuses: no title, a twin open, a bad who, too many choices, the op
   add(s, { title: "Uma" });
   expect(T.task_new(s, { title: "uma" }, "main", NOW)).toContain("P1 is open");
   expect(T.task_new(s, { title: "x", who: "boss" }, "main", NOW)).toBe("assignee is one of: user, unii.");
-  expect(T.task_new(s, { title: "x", choices: "sim" }, "main", NOW)).toBe("choices is a list of strings.");
+  expect(T.task_new(s, { title: "x", choices: "sim" }, "main", NOW)).toBe("choices is a list of labels, or of { label, description }.");
   expect(T.task_new(s, { title: "x", choices: Array.from({ length: 10 }, (_, k) => "c" + k) }, "main", NOW)).toContain("At most 9");
   for (let k = 1; k < T.OPEN; k++) {
     add(s, { title: "t" + k });

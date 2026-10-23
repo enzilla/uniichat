@@ -153,7 +153,7 @@ test("fields: read as given, aliases, defaults; each error said, nothing made", 
   expect(why([{ id: "a", label: "x", kind: "constructor" }])).toBe("Field a: kind is one of choice, multi, text, yesno.");
   expect(why([{ id: "a", label: " ", kind: "text" }])).toBe("Field a needs a label.");
   expect(why([{ id: "a", label: "x", kind: "choice", choices: ["só"] }])).toBe("Field a (choice) needs at least 2 choices.");
-  expect(why([{ id: "a", label: "x", kind: "multi", choices: "a,b" }])).toBe("Field a: choices is a list of strings.");
+  expect(why([{ id: "a", label: "x", kind: "multi", choices: "a,b" }])).toBe("Field a: choices is a list of labels, or of { label, description }.");
   expect(why([{ id: "a", label: "x", kind: "text", required: "sim" }])).toBe("Field a: required is true or false.");
   expect(why(Array.from({ length: 13 }, (_, k) => ({ id: "f" + k, label: "x", kind: "text" })))).toBe("At most 12 fields.");
   const s = T.tasks_load(dir);

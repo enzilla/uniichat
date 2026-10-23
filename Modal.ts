@@ -271,7 +271,7 @@ export function modal_lines(m: Modal, v: View.View, w: number): Paint.Line[] {
 // numbered (the one picked or the answer marked)
 function choices_lines(m: Modal, t: Task, here: boolean, w: number): Paint.Line[] {
   const head = [Paint.Run((here ? "▸ " : "") + (t.state === "open" ? "Opções" : "Opções oferecidas"), BOLD)];
-  return [[], head, ...t.choices.map((c, k) => option_line(k, c, m.pick?.answer === c || t.answer === c, w))];
+  return [[], head, ...t.choices.flatMap((c, k) => option_lines(k, c, t.descriptions[k] ?? "", m.pick?.answer === c || t.answer === c, w))];
 }
 
 // a field: its label, kind and whether required, its answer in the draft
@@ -282,11 +282,14 @@ function field_lines(t: Task, f: Field, here: boolean, w: number): Paint.Line[] 
   const head = Paint.runs_wrap([Paint.Run((here ? "▸ " : "") + Paint.text_clean(f.label), BOLD), Paint.Run((f.required ? " *" : "") + " · " + KIND[f.kind], f.required ? { ...Paint.INK, c: Theme.ANSI.off } : Paint.DIM)], w, false);
   const options = f.kind === "yesno" ? ["sim", "não"] : f.choices;
   const text = f.kind !== "text" ? [] : [[Paint.Run("     " + (typeof value === "string" && value !== "" ? "“" + Paint.text_clean(value) + "”" : "(sem resposta: Enter escreve)"), typeof value === "string" && value !== "" ? { ...Paint.INK, c: Theme.ANSI.done } : Paint.DIM)]];
-  return [[], ...head, ...options.map((o, k) => option_line(k, o, given(o), w, f.kind === "multi")), ...text];
+  return [[], ...head, ...options.flatMap((o, k) => option_lines(k, o, f.descriptions[k] ?? "", given(o), w, f.kind === "multi")), ...text];
 }
 
-// an option's line: its number and label, bold and marked if given
-function option_line(k: number, label: string, given: boolean, w: number, many = false): Paint.Line {
+// an option's lines: its number and label, bold and marked if given;
+// what picking it means under it, dimmed and wrapped
+function option_lines(k: number, label: string, means: string, given: boolean, w: number, many = false): Paint.Line[] {
   const mark = Paint.Run((many ? (given ? "  [x] " : "  [ ] ") : given ? "▸ " : "  ") + (k + 1) + "  ", { ...BOLD, c: Theme.ANSI.cmd });
-  return Paint.runs_wrap([mark, Paint.Run(Paint.text_clean(label), given ? { ...BOLD, c: Theme.ANSI.done } : BOLD)], w, true)[0];
+  const pad = Paint.Run(" ".repeat(many ? 9 : 5));
+  const under = means === "" ? [] : Paint.runs_wrap([Paint.Run(Paint.text_clean(means), Paint.DIM)], Math.max(4, w - pad.x.length), false).map((l) => [pad, ...l]);
+  return [Paint.runs_wrap([mark, Paint.Run(Paint.text_clean(label), given ? { ...BOLD, c: Theme.ANSI.done } : BOLD)], w, true)[0], ...under];
 }

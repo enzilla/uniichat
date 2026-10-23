@@ -230,11 +230,15 @@ const OWN: Spec[] = [
   spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. With an agent's name as id, give that agent's whole chat. A long text comes in pages from character at, saying where to go on.", { id: { type: ["integer", "string"] }, n: INT, at: INT }, ["id"]),
   spec("date", "The date and time of message id.", { id: INT }, ["id"]),
 ];
+// a choice offered: its label, and what picking it means (Tasks.ts
+// choices_read; a bare label is read too)
+const CHOICE = { type: "object", properties: { label: STR, description: STR }, required: ["label"] };
+
 // a task's fields (Tasks.ts fields_read)
 const FIELDS_SPEC = {
   type: "array",
-  description: "Questions asked at once, each answered apart (at most 12): id (letters, digits, - or _), label (the question, in the user's language), kind: choice (one of choices), multi (any of choices), text, yesno (sim or não); choices for choice and multi (2 to 9); required (true by default: the user can't conclude without it).",
-  items: { type: "object", properties: { id: STR, label: STR, kind: { type: "string", enum: ["choice", "multi", "text", "yesno"] }, choices: { type: "array", items: STR }, required: { type: "boolean" } }, required: ["id", "label", "kind"] },
+  description: "Questions asked at once, each answered apart (at most 12): id (letters, digits, - or _), label (the question, in the user's language), kind: choice (one of choices), multi (any of choices), text, yesno (sim or não); choices for choice and multi (2 to 9), each a label and a description of what picking it means; required (true by default: the user can't conclude without it).",
+  items: { type: "object", properties: { id: STR, label: STR, kind: { type: "string", enum: ["choice", "multi", "text", "yesno"] }, choices: { type: "array", items: CHOICE }, required: { type: "boolean" } }, required: ["id", "label", "kind"] },
 };
 
 // where a task came from, and its source's link (Tasks.ts)
@@ -260,7 +264,7 @@ const BOSS: Spec[] = [
     assignee   : { type: "string", enum: ["user", "unii"], description: "Who is responsible, who must act; by default the user. (who: its older name, still read.)" },
     origin     : ORIGIN_SPEC,
     origin_url : ORIGIN_URL_SPEC,
-    choices : { type: "array", items: STR, description: "Answers the user picks with one click (\"sim\", \"não\"), at most 9." },
+    choices : { type: "array", items: CHOICE, description: "Answers the user picks with one click, at most 9: each a short label (\"sim\", \"hom\") and a description of what picking it means or brings about, so the user decides without asking." },
     ref     : { type: "string", description: "What it belongs to: a project, an agent, a PR." },
     after   : { type: "array", items: STR, description: "Ids of the tasks this one waits for (\"P3\"), the user's or yours: while any is open it's hidden from the user and can't be resolved; once all are closed it shows, and your next turn is told it was freed." },
     fields  : FIELDS_SPEC,
@@ -272,7 +276,7 @@ const BOSS: Spec[] = [
     assignee   : { type: "string", enum: ["user", "unii"], description: "Who is responsible. (who: its older name, still read.)" },
     origin     : { type: "string", description: "Where it came from: chat, timer, agent:<name>, slack or github." },
     origin_url : { ...ORIGIN_URL_SPEC, description: "A link to its source; \"\" for none." },
-    choices : { type: "array", items: STR },
+    choices : { type: "array", items: CHOICE },
     ref     : STR,
     state   : { type: "string", enum: ["open", "done", "dropped"] },
     answer  : STR,
