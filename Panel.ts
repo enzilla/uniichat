@@ -107,6 +107,14 @@ function panel_pick(p: Panel, v: View.View): Task | null {
   return panel_items(v).find((t) => t.id === p.sel) ?? null;
 }
 
+// the questions Unii asked since seen: the open tasks of the user's with
+// choices that none waits on and seen hasn't, added to it
+export function panel_asks(v: View.View, seen: Set<string>): Task[] {
+  const fresh = View.view_tasks(v).open.filter((t) => t.who === "user" && t.choices.length > 0 && !seen.has(t.id));
+  fresh.forEach((t) => seen.add(t.id));
+  return fresh;
+}
+
 // Keys
 // ----
 

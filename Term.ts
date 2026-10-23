@@ -53,6 +53,7 @@ type Term = {
   panel   : Panel.Panel | null;
   menu    : Menu;
   chooser : Chooser | null;
+  asked   : Set<string> | null;
 };
 
 // a choice of a list (a command without its value: /model, /mcp): its
@@ -200,6 +201,7 @@ function term_new(url: string, token: string): Term {
     panel   : null,
     menu    : { sel: 0, text: "", shut: false },
     chooser : null,
+    asked   : null,
   };
   t.scr.first = (key) => term_menu_key(t, key);
   process.stdin.on("end", () => {
@@ -270,7 +272,26 @@ function term_hear(t: Term, msg: View.Server): void {
   }
   term_draw(t);
   if (msg.$ === "state") {
+    term_asks(t);
     term_idle(t);
+  }
+}
+
+// a question Unii asked (a task of the user's with choices, Panel.panel_asks)
+// opens the chooser with them, unless another is open or something is
+// being typed: then a note says so, the task waits in the list. Those
+// listed at the first state aren't new
+function term_asks(t: Term): void {
+  if (t.asked === null) {
+    t.asked = new Set(t.v.tasks.map((task) => task.id));
+    return;
+  }
+  for (const task of Panel.panel_asks(t.v, t.asked)) {
+    if (t.chooser !== null || t.scr.ed.text !== "" || !t.scr.tty) {
+      term_note(t, "O Unii perguntou (" + task.id + "): " + task.title + " — responda na coluna (Ctrl+P) ou com /ok " + task.id + " <opção>.");
+      continue;
+    }
+    term_choose(t, task.id + " · " + task.title, task.choices.map((choice): Choice => ({ text: choice, note: "", now: false, run: () => term_act(t, { $: "Task", task: task.id, state: "done", answer: choice }) })));
   }
 }
 

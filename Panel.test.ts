@@ -144,3 +144,10 @@ test("the agents at work under the tasks: the keys reach them after the tasks, E
   const [row] = [...p.hits].find(([, h]) => h.id === "@ana")!;
   expect(Panel.panel_mouse(p, v, "Mouse:0:100:" + row + ":M")).toEqual({ $: "act", act: { $: "Goto", name: "ana" } });
 });
+
+test("Unii's questions: the user's open tasks with choices, each once; not one that waits, nor Unii's own", () => {
+  const v = view();
+  const seen = new Set<string>();
+  expect(Panel.panel_asks(v, seen).map((t) => t.id)).toEqual(["P3"]);
+  expect(Panel.panel_asks(v, seen)).toEqual([]);
+});
