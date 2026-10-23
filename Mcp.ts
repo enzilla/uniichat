@@ -107,8 +107,17 @@ const HERE = new Map<string, { link: Link; changed: boolean }>();
 export namespace Mcp {
 
   export function servers(note: (text: string) => void, confs: config.McpServer[], run: Run, open: (device: string) => boolean): Servers {
-    const server = (conf: config.McpServer): Server => ({ conf, up: null, fail: null, link: null, names: new Map(), stale: false, said: null, shown: false, heard: new Map(), left: "", calls: 0, gone: false });
-    return { all: new Map(confs.map((conf) => [conf.name, server(conf)])), note, run, open };
+    const servers: Servers = { all: new Map(), note, run, open };
+    confs.forEach((conf) => Mcp.add(servers, conf));
+    return servers;
+  }
+
+  // a server more (a device's Claude Code's, found as it opens); none if
+  // its name is taken
+  export function add(servers: Servers, conf: config.McpServer): void {
+    if (!servers.all.has(conf.name)) {
+      servers.all.set(conf.name, { conf, up: null, fail: null, link: null, names: new Map(), stale: false, said: null, shown: false, heard: new Map(), left: "", calls: 0, gone: false });
+    }
   }
 
   // the tools of the servers not `off`, each started if it isn't
@@ -551,10 +560,11 @@ export namespace Mcp {
   }
 
   // on a device, a message of a chat's server (Mcp.device) to the program
-  // it runs here: initialize starts it (Mcp.stdio, its `cwd` read here);
+  // it runs here: initialize starts it (Mcp.stdio, its `cwd` read here; a
+  // Claude Code one's command, args and env read here, by its name);
   // close ends it. Answered as JSON: its result or error, why it is dead,
   // whether its tools changed
-  export async function here(input: any, signal: AbortSignal): Promise<Out> {
+  export async function here(input: any, signal: AbortSignal, home = os.homedir()): Promise<Out> {
     const { key, method, params } = input;
     const answer = (got: object): Out => {
       const s = HERE.get(key);
@@ -572,9 +582,16 @@ export namespace Mcp {
     }
     if (method === "initialize") {
       s?.link.close();
-      const cwd = String(input.conf.cwd ?? "").replace(/^~(?=\/|$)/, os.homedir());
+      const name = input.conf.claude;
+      const own = name === undefined ? {} : Machine.claude_mcps(home).find((m) => m.name === name)?.conf;
+      if (own === undefined) {
+        HERE.delete(key);
+        return answer({ dead: "isn't in Claude Code's config there any more" });
+      }
+      const conf = { ...input.conf, ...own };
+      const cwd = String(conf.cwd ?? "").replace(/^~(?=\/|$)/, home);
       const run = { link: null as unknown as Link, changed: false };
-      run.link = Mcp.stdio({ ...input.conf, cwd }, () => (run.changed = true), () => {});
+      run.link = Mcp.stdio({ ...conf, cwd }, () => (run.changed = true), () => {});
       HERE.set(key, (s = run));
     }
     if (s === undefined) {

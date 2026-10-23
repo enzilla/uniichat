@@ -166,6 +166,9 @@ export namespace Machine {
         case "skill": {
           return Machine.skill(os.homedir(), cwd, String(input.name));
         }
+        case "claude_mcps": {
+          return { text: JSON.stringify(Machine.claude_mcps(os.homedir()).map((m) => m.name)), fail: false };
+        }
         case "halt": {
           const left = await Machine.halt(String(input.agent));
           return { text: left === null ? "Its shells' trees killed; Windows can't find a process that left one." : left + " left", fail: (left ?? 0) > 0 };
@@ -594,6 +597,31 @@ export namespace Machine {
     return { text: "Skill " + name + ", in " + skill.dir + " (its other files are there):\n\n" + text, fail: false };
   }
 
+  // the stdio MCP servers of Claude Code here: the user's (~/.claude.json
+  // mcpServers), then those of the plugins its settings enable (their
+  // .mcp.json, named "<plugin>:<name>", ${CLAUDE_PLUGIN_ROOT} their
+  // folder); ${VAR} and ${VAR:-default} read here. A URL one is left out:
+  // unii reaches URLs from the server, and its headers may hold a secret
+  // that must not leave this computer
+  export function claude_mcps(home: string): { name: string; conf: { command: string; args: string[]; env: Record<string, string>; cwd: string } }[] {
+    const found: { name: string; conf: { command: string; args: string[]; env: Record<string, string>; cwd: string } }[] = [];
+    const take = (all: any, prefix: string, root: string) => {
+      const vars = (x: unknown) => String(x).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_, v, or) => (v === "CLAUDE_PLUGIN_ROOT" ? root : process.env[v] ?? or ?? ""));
+      for (const [name, s] of Object.entries(all?.mcpServers ?? all ?? {}) as [string, any][]) {
+        const stdio = typeof s?.command === "string" && (s.type === undefined || s.type === "stdio");
+        if (stdio && !found.some((m) => m.name === prefix + name)) {
+          const env = typeof s.env === "object" && s.env !== null ? Object.fromEntries(Object.entries(s.env).map(([k, v]) => [k, vars(v)])) : {};
+          found.push({ name: prefix + name, conf: { command: vars(s.command), args: Array.isArray(s.args) ? s.args.map(vars) : [], env, cwd: typeof s.cwd === "string" ? vars(s.cwd) : root } });
+        }
+      }
+    };
+    take(json_file(home + "/.claude.json"), "", "");
+    for (const [plugin, at] of claude_plugins(home)) {
+      take(json_file(at + "/.mcp.json"), plugin + ":", at);
+    }
+    return found;
+  }
+
   // ms, or till the signal aborts: none, if it already did (an abort
   // event comes once); its listener gone either way (a call at a usage
   // limit naps without end on one signal)
@@ -643,16 +671,19 @@ function dir_names(root: string): string[] {
   }
 }
 
+// a JSON file's value (null: none, or not JSON)
+function json_file(file: string): any {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 // the plugins Claude Code's user settings enable, installed for the user:
 // each one's name (its key's before "@") and folder
 function claude_plugins(home: string): [string, string][] {
-  const json = (file: string) => {
-    try {
-      return JSON.parse(fs.readFileSync(file, "utf8"));
-    } catch {
-      return null;
-    }
-  };
+  const json = json_file;
   const on = json(home + "/.claude/settings.json")?.enabledPlugins ?? {};
   const all = json(home + "/.claude/plugins/installed_plugins.json")?.plugins ?? {};
   return Object.keys(on).filter((key) => on[key] === true).flatMap((key): [string, string][] => {
