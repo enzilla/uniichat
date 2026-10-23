@@ -990,6 +990,8 @@ function view_new() {
     timers: [],
     mcp: [],
     tasks: [],
+    skills: [],
+    threads: {},
     parts: [],
     turn: Infinity,
     fold: null,
@@ -1112,7 +1114,13 @@ function view_act(v, act) {
         v.notes.push(word + " is no command; nothing was sent. The terminal's /help lists its commands; the site's are in its ☰ menu.");
         return [];
       }
-      const blob = new Blob([...images, text]);
+      const about = act.task === undefined ? undefined : v.tasks.find((t) => t.id === act.task);
+      if (act.task !== undefined && about === undefined) {
+        v.notes.push("Pendência " + act.task + " não encontrada; nada foi enviado.");
+        return [];
+      }
+      const blob = new Blob([...images, about === undefined ? text : task_mark(about) + `
+` + text]);
       const say = { $: "say", sizes: images.map((b) => b.size), body: () => blob };
       v.fold = null;
       return goal === null ? [say] : [{ $: "goal", text: goal }, say];
@@ -1196,11 +1204,29 @@ function view_act(v, act) {
 function task_waits_said(t, waits2) {
   return "A pendência " + t.id + " aguarda " + waits2.join(", ") + ": resolva " + (waits2.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
 }
+function task_frees_said(v, t) {
+  const n = frees(v.tasks, t);
+  return n === 0 ? "" : "libera " + n;
+}
 function tasks_waiting_said(n) {
   return n === 0 ? "" : "+" + n + " aguardando outras pendências";
 }
 function view_untold(v) {
   return v.tasks.filter((t) => !t.told && !t.freed);
+}
+var MARK = /^\[Sobre a pendência (P\d+)( · [^\]\n]*)?\]\n?/;
+function task_mark(t) {
+  return "[Sobre a pendência " + t.id + " · " + t.title.replace(/[\]\n]/g, " ") + "]";
+}
+function task_marked(text) {
+  return MARK.exec(text)?.[1] ?? null;
+}
+function task_unmark(text) {
+  return text.replace(MARK, "");
+}
+function task_thread(v, id) {
+  const answers = new Set(v.threads[id] ?? []);
+  return [...v.whole].filter(([k, e]) => answers.has(k) || e.kind === "user" && task_marked(e.text) === id).sort((a, b) => a[0] - b[0]).map(([k, e]) => ({ ...e, id: k }));
 }
 function view_body(v) {
   if (v.page !== null) {
@@ -1626,7 +1652,7 @@ function timers_html(timers) {
 }
 function tasks_html(tasks) {
   const when = (iso) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-  const head = (t) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
+  const head = (t) => `<p class="head"><span class="id">${esc(t.id)}</span><button type="button" class="title" data-open="${esc(t.id)}" title="Abrir a pendência">${esc(t.title)}</button></p>`;
   const meta = (t, more) => `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more].join(" · ")}</p>`;
   const act = (t, state, text, cls, answer) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
   const blocked2 = blocked_ids(tasks);
@@ -1634,7 +1660,7 @@ function tasks_html(tasks) {
     const n = frees(tasks, t);
     const who = [...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...t.who === "unii" ? ["com o Unii"] : []];
     const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${md_parse(t.detail).map(block_html).join("")}</div></details>`;
-    const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
+    const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c, k) => opt_html(t, k)).join("")}</div>`;
     const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}">`;
     const go = `<label class="go"><input type="checkbox"> Avisar o Unii agora</label>`;
     const acts = `<div class="acts">${go}${act(t, "done", "Concluir", "done")}${act(t, "dropped", "Descartar", "drop")}</div>`;
@@ -1651,6 +1677,28 @@ function tasks_html(tasks) {
   };
   const opened = tasks.filter((t) => t.state === "open");
   return { open: opened.filter((t) => !blocked2.has(t.id)).map(open), waiting: opened.filter((t) => blocked2.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
+}
+function opt_html(t, k) {
+  const a = act_html({ $: "Task", task: t.id, state: "done", answer: t.choices[k] });
+  const hint = t.hints?.[k] ? `<small>${esc(t.hints[k])}</small>` : "";
+  return `<button class="opt"${a}><b>${esc(t.choices[k])}</b>${hint}</button>`;
+}
+function task_html(v, t) {
+  const STATE = { open: "Aberta", done: "Concluída", dropped: "Descartada" };
+  const waits2 = waits(v.tasks, t);
+  const frees2 = task_frees_said(v, t);
+  const meta = [STATE[t.state], t.who === "user" ? "com você" : "com o Unii", ...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...t.state === "open" && waits2.length > 0 ? ["aguarda " + esc(waits2.join(", "))] : [], ...frees2 === "" ? [] : [`<span class="frees">${esc(frees2)}</span>`]];
+  const said = [...t.answer === null ? [] : ["Resposta: <b>" + esc(t.answer) + "</b>"], ...t.note === null ? [] : ["Comentário: “" + esc(t.note) + "”"]];
+  const open = t.state === "open";
+  const head = `<div class="top"><p class="head"><span class="id">${esc(t.id)}</span><span class="title" id="task-title">${esc(t.title)}</span></p><button type="button" class="x" data-close aria-label="Fechar">✕</button><p class="meta">${meta.join(" · ")}</p>${said.length === 0 ? "" : `<p class="said">${said.join(" · ")}</p>`}</div>`;
+  const detail = t.detail === "" ? [] : [`<div class="md">${md_parse(t.detail).map(block_html).join("")}</div>`];
+  const choices = !open || t.choices.length === 0 ? [] : [`<div class="opts" role="group" aria-label="Opções">${t.choices.map((c, k) => opt_html(t, k)).join("")}</div>`];
+  const act = (state, text, cls) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state })}>${esc(text)}</button>`;
+  const resolve = open ? `<div class="resolve"><label for="task-note">Comentário ou justificativa (opcional)</label><textarea id="task-note" class="note" rows="2" maxlength="1000"></textarea><div class="acts"><label class="go"><input type="checkbox"> Avisar o Unii agora</label>${t.choices.length === 0 ? act("done", "Concluir", "done") : ""}${act("dropped", "Descartar", "drop")}</div></div>` : `<div class="acts">${act("open", "Reabrir", "reopen")}</div>`;
+  const thread = task_thread(v, t.id);
+  const talk = thread.length === 0 ? [`<p class="none">Nenhuma mensagem sobre esta pendência ainda. O Unii responde aqui e no chat.</p>`] : thread.map((e) => `<div class="msgs">${entry_rows(e.id, e.kind, task_unmark(e.text), e.images).map(row_html).join("")}</div>`);
+  const form = `<form class="talk"><label for="task-say" class="sub">Mensagem sobre a pendência</label><textarea id="task-say" rows="2" placeholder="Pergunte ou comente; vai ao chat marcada com ${esc(t.id)}."></textarea><button type="submit">Enviar</button></form>`;
+  return [head, ...detail, ...choices, resolve, `<h3>Conversa${thread.length === 0 ? "" : " (" + thread.length + ")"}</h3>`, ...talk, form];
 }
 function account_html(prompts, notify = null) {
   const item = (what, note, act) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
@@ -2009,6 +2057,15 @@ function chat() {
     }
   };
   document.onclick = click;
+  $("#task").onsubmit = task_say;
+  $("#task").onkeydown = (ev) => {
+    const say = ev.target.closest("#task-say");
+    if (say !== null && ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+      ev.preventDefault();
+      say.closest("form")?.requestSubmit();
+    }
+  };
+  $("#task").addEventListener("close", () => TASK = null);
   visualViewport.onresize = () => {
     if (document.activeElement === BOX && BOX.selectionStart === BOX.value.length) {
       BOX.scrollTop = BOX.scrollHeight;
@@ -2086,7 +2143,7 @@ function act(a) {
   draw(a.$ === "Send");
 }
 function click(ev) {
-  const el = ev.target.closest("[data-act], [data-copy], [data-go], [data-knob], .choices > button");
+  const el = ev.target.closest("[data-act], [data-copy], [data-go], [data-knob], [data-open], [data-close], .choices > button");
   const sel = getSelection();
   if (el === null || sel !== null && !sel.isCollapsed && el.contains(sel.focusNode)) {
     return;
@@ -2094,6 +2151,12 @@ function click(ev) {
   if (el.dataset.knob !== undefined) {
     place(el);
     return;
+  }
+  if (el.dataset.open !== undefined) {
+    return task_open(el.dataset.open);
+  }
+  if (el.dataset.close !== undefined) {
+    return $("#task").close();
   }
   el.closest(".choices")?.hidePopover();
   const { act: a, copy: text, go: path } = el.dataset;
@@ -2148,11 +2211,11 @@ function left(ev) {
   }
 }
 function task_act(el, a) {
-  const item = el.closest("li[data-task]");
+  const item = el.closest("[data-task]");
   if (a.$ !== "Task" || a.state === "open" || item === null) {
     return a;
   }
-  const note = item.querySelector("input.note")?.value ?? "";
+  const note = item.querySelector(".note")?.value ?? "";
   const go = item.querySelector(".go input")?.checked ?? false;
   return { ...a, note, go };
 }
@@ -2179,6 +2242,35 @@ function tasks_bar() {
   if (v.tasks.length === 0 && $("#tasks").matches(":popover-open")) {
     $("#tasks").hidePopover();
   }
+}
+var TASK = null;
+function task_open(id) {
+  TASK = id;
+  task_render();
+  const box = $("#task");
+  if (!box.open) {
+    box.showModal();
+  }
+  (box.querySelector("#task-say") ?? box.querySelector(".x"))?.focus();
+}
+function task_render() {
+  if (TASK === null) {
+    return;
+  }
+  const t = v.tasks.find((x) => x.id === TASK);
+  const box = $("#task");
+  box.dataset.task = TASK;
+  markup(box.querySelector(".body"), t === undefined ? [`<p class="none">A pendência ${esc(TASK)} não está mais na lista.</p><button type="button" class="x" data-close aria-label="Fechar">✕</button>`] : task_html(v, t));
+}
+function task_say(ev) {
+  ev.preventDefault();
+  const say = ev.target.querySelector("#task-say");
+  const text = say?.value.trim() ?? "";
+  if (say === null || text === "" || TASK === null) {
+    return;
+  }
+  act({ $: "Send", text, task: TASK });
+  say.value = "";
 }
 function copied(button) {
   button.innerHTML = CHECK;
@@ -2571,6 +2663,7 @@ function bars() {
     $("#timers").hidePopover();
   }
   tasks_bar();
+  task_render();
   send.classList.toggle("stop", stop);
   $(".composer").hidden = !on;
   $("#pics").hidden = !on;
