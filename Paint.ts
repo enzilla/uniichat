@@ -252,9 +252,9 @@ function call_lines(c: Call.Call, w: number): Line[] {
   return [[...top, gap, ...where], ...heads, ...c.blocks.flatMap((b) => code_lines(b.k, b.x, w, DIM, false))];
 }
 
-// a call's emoji and name, bold
+// a call's emoji and name, bold, in the tool's color
 function verb_runs(c: Call.Call): Line {
-  const ink = { ...INK, b: true };
+  const ink = { ...INK, b: true, c: Theme.ANSI.tool };
   return [Run(Theme.tool_glyph(c.name) + " ", ink), ...(c.name === "" ? [] : [Run(c.name + " ", ink)])];
 }
 
@@ -408,21 +408,28 @@ function span_run(s: Md.Span, ink: Ink): Run[] {
 // ====
 
 // the rule over the input, the pick at its right end (an agent's page:
-// what that agent runs on)
+// what that agent runs on), each knob in its color (Theme.ANSI)
 export function rule_line(v: View.View, w: number): Line {
-  return rule_text(View.view_shown(v).map((knob) => knob.text).join(" · "), w);
+  const color: Record<string, string> = { model: Theme.ANSI.model, effort: Theme.ANSI.effort, speed: Theme.ANSI.speed };
+  const knobs = View.view_shown(v).flatMap((knob, k) => [...(k === 0 ? [] : [Run(" · ", DIM)]), Run(knob.text, { ...INK, c: color[knob.move] ?? "" })]);
+  return rule_runs(knobs, w);
 }
 
-// a rule, a text at its right end ("": none)
-export function rule_text(text: string, w: number): Line {
-  const tag = text === "" ? "" : " " + text + " ";
-  return [Run("─".repeat(Math.max(0, w - text_width(tag) - 1)) + tag + "─", DIM)];
+// a rule, a text at its right end ("": none), dimmed or in an ink
+export function rule_text(text: string, w: number, ink: Ink = DIM): Line {
+  return rule_runs(text === "" ? [] : [Run(text, ink)], w);
+}
+
+function rule_runs(tag: Line, w: number): Line {
+  const n = tag.length === 0 ? 0 : line_width(tag) + 2;
+  const bar = Run("─".repeat(Math.max(0, w - n - 1)) + (n === 0 ? "" : " "), DIM);
+  return n === 0 ? [Run("─".repeat(Math.max(0, w)), DIM)] : [bar, ...tag, Run(" ─", DIM)];
 }
 
 // the last line, w wide: a tab for UniiChat and each agent at work, the
 // shown bold; with agents, the key that moves along them, if it fits
 export function tabs_line(v: View.View, w: number): Line {
-  const tabs = View.view_tabs(v).map((tab) => [Run(text_clean(tab.text), tab.here ? { ...INK, b: true } : DIM), ...(tab.sub === undefined ? [] : [Run(" " + tab.sub, DIM)])]);
+  const tabs = View.view_tabs(v).map((tab) => [Run(text_clean(tab.text), tab.here ? { ...INK, b: true, c: Theme.ANSI.here } : DIM), ...(tab.sub === undefined ? [] : [Run(" " + tab.sub, DIM)])]);
   const line = tabs.flatMap((r, k) => (k === 0 ? r : [Run("  "), ...r]));
   const hint = [Run("  · Tab to cycle", DIM)];
   return tabs.length > 1 && line_width([...line, ...hint]) <= w ? [...line, ...hint] : line;

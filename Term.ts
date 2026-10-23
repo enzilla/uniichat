@@ -19,6 +19,7 @@ import * as Paint from "./Paint.ts";
 import * as Panel from "./Panel.ts";
 import { type Move, Pick } from "./Pick.ts";
 import * as Screen from "./Screen.ts";
+import * as Theme from "./Theme.ts";
 import * as View from "./View.ts";
 
 // Types
@@ -30,7 +31,8 @@ import * as View from "./View.ts";
 // due: a paint; settle: the page's print at a new size; imgs: for the
 // next message; flow: how much of each message streaming is printed
 // (Infinity: logged); logs: of each agent's page, the messages printed;
-// panel: the full screen's (null: the classic scrollback, or a pipe)
+// panel: the full screen's (null: the classic scrollback, or a pipe);
+// menu: the commands' menu over the input (Menu)
 type Term = {
   v       : View.View;
   scr     : Screen.Screen;
@@ -48,7 +50,16 @@ type Term = {
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
   panel   : Panel.Panel | null;
+  menu    : Menu;
 };
+
+// the commands' menu: the item picked, the input it was for, whether Esc
+// shut it for that input
+type Menu = { sel: number; text: string; shut: boolean };
+
+// a command the menu offers: as typed, what it does, where (a skill's
+// device; "": the terminal's own)
+type Item = { name: string; text: string; where: string };
 
 // a line of /help: how it is typed ("": keys only), its keys, what it
 // does; it runs on its argument, or by a key on "" (or the key's name)
@@ -94,6 +105,9 @@ const PAGE_KEYS = ["Tab", "Ctrl+D", "Ctrl+Z", "Esc"];
 // share of the width then
 let FULL = false;
 
+// offline's ink, on the rule under the input
+const OFFLINE = { ...Paint.INK, b: true, c: Theme.ANSI.off };
+
 // the pick's moves by Shift and an arrow
 const ARROWS: Record<string, Move> = { "Shift+Left": "prev", "Shift+Right": "next", "Shift+Up": "up", "Shift+Down": "down" };
 
@@ -120,7 +134,8 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ["Pick", [
       ["",                  "Shift+Left, Shift+Right", "the model before, the next",                     (t, k) => term_move(t, ARROWS[k])],
       ["",                  "Shift+Up, Shift+Down",    "more effort, less",                              (t, k) => term_move(t, ARROWS[k])],
-      ["",                  "Shift+Tab",               "fast on, off (the next speed), typing or not",   (t) => term_move(t, "speed")],
+      ["",                  "Shift+Tab",               "the next effort, around (low after max), typing or not", (t) => term_round(t, "effort")],
+      ["",                  "Alt+M",                   "the next speed, around (slow, fast, ultrafast)", (t) => term_round(t, "speed")],
       ["/model [name]",     "",                        "the models to pick from; with a name, that one", (t, a) => term_pick(t, "model", a)],
       ["/effort [level]",   "",                        "the efforts; with one, that one",                (t, a) => term_pick(t, "effort", a)],
       ["/speed [speed]",    "",                        "the speeds; with one, that one",                 (t, a) => term_pick(t, "speed", a)],
@@ -172,7 +187,9 @@ function term_new(url: string, token: string): Term {
     flow    : new Map(),
     logs    : new Map(),
     panel   : null,
+    menu    : { sel: 0, text: "", shut: false },
   };
+  t.scr.first = (key) => term_menu_key(t, key);
   process.stdin.on("end", () => {
     if (t.scr.ed.text.trim() !== "") {
       term_enter(t);
@@ -393,6 +410,96 @@ function term_page_key(t: Term, key: string): void {
   }
 }
 
+// Menu
+// ----
+
+// the most items the menu shows at once
+const MENU = 8;
+
+// a device's skill, as the server's state lists them (Machine.skills)
+type Skill = { name: string; description: string; device: string };
+
+function term_skills(v: View.View): Skill[] {
+  return (v as View.View & { skills?: Skill[] }).skills ?? [];
+}
+
+// the commands that fit a /word being typed (none once a space follows
+// it, or Esc shut it): this terminal's, then the devices' skills; those
+// that start with it first, then those that hold it
+function term_menu(t: Term): Item[] {
+  const text = t.scr.ed.text;
+  const m = t.menu;
+  if (m.text !== text) {
+    [m.sel, m.text, m.shut] = [0, text, false];
+  }
+  if (m.shut || t.scr.off || t.panel?.focus || !/^\/\S*$/.test(text)) {
+    return [];
+  }
+  const own    = term_commands(t.v).filter((c) => c[0] !== "").map((c): Item => ({ name: c[0].split(" ")[0], text: c[2], where: "" }));
+  const skills = term_skills(t.v).map((s): Item => ({ name: "/" + s.name, text: s.description, where: s.device }));
+  const all    = [...own, ...skills].filter((x, k, xs) => xs.findIndex((y) => y.name === x.name) === k);
+  const typed  = text.toLowerCase();
+  const starts = all.filter((x) => x.name.toLowerCase().startsWith(typed));
+  const holds  = all.filter((x) => !starts.includes(x) && x.name.toLowerCase().includes(typed.slice(1)));
+  const found  = [...starts, ...holds];
+  m.sel = Math.min(m.sel, Math.max(0, found.length - 1));
+  return found.length === 1 && found[0].name === text ? [] : found;
+}
+
+// a key while the menu shows: the arrows pick, Tab puts the item picked in
+// the input, Enter too (once it is there, Enter runs it), Esc shuts it;
+// true if taken
+function term_menu_key(t: Term, key: string): boolean {
+  const items = term_menu(t);
+  const n = items.length;
+  if (n === 0) {
+    return false;
+  }
+  const item = items[t.menu.sel];
+  switch (key) {
+    case "Up":
+    case "Down": {
+      t.menu.sel = (t.menu.sel + (key === "Up" ? n - 1 : 1)) % n;
+      return true;
+    }
+    case "Tab":
+    case "Enter": {
+      if (key === "Enter" && item.name === t.scr.ed.text.trim()) {
+        return false;
+      }
+      Screen.ed_take(t.scr.ed);
+      Screen.ed_type(t.scr.ed, item.name + " ");
+      return true;
+    }
+    case "Esc": {
+      t.menu.shut = true;
+      return true;
+    }
+  }
+  return false;
+}
+
+// the menu's lines, w wide: the items around the one picked, each its
+// name (bold, picked) in the command's color, what it does dimmed, a
+// skill's device; then its keys
+function term_menu_lines(t: Term, w: number): Paint.Line[] {
+  const items = term_menu(t);
+  if (items.length === 0) {
+    return [];
+  }
+  const from = Math.max(0, Math.min(t.menu.sel - MENU + 1, items.length - MENU));
+  const seen = items.slice(Math.max(0, from), Math.max(0, from) + MENU);
+  const room = Math.min(28, Math.max(...seen.map((x) => Paint.text_width(x.name)))) + 2;
+  const line = (x: Item): Paint.Line => {
+    const here = x === items[t.menu.sel];
+    const name = Paint.Run((here ? "▸ " : "  ") + x.name.padEnd(room), { ...Paint.INK, b: here, c: Theme.ANSI.cmd });
+    const what = Paint.Run(Paint.text_clean(x.text) + (x.where === "" ? "" : " · " + x.where), Paint.DIM);
+    return Paint.runs_wrap([name, what], w, true)[0];
+  };
+  const more = items.length > MENU ? " · " + items.length + " comandos" : "";
+  return [...seen.map(line), [Paint.Run("  Tab completa · ↑↓ escolhe · Esc fecha" + more, Paint.DIM)]];
+}
+
 // Commands
 // --------
 
@@ -539,6 +646,23 @@ function term_tab(t: Term, arg: string): void {
 // moves the pick one step (a key)
 function term_move(t: Term, move: Move): void {
   term_act(t, { $: "Move", move });
+}
+
+// the pick's effort or speed: the next value its model offers, the
+// first after the last
+function term_round(t: Term, move: "effort" | "speed"): void {
+  const pick = t.v.pick;
+  if (pick === null) {
+    return;
+  }
+  const values = [...new Set(Pick.options(pick, move, t.v).map(([value]) => value))];
+  if (values.length < 2) {
+    return term_note(t, pick.model + " só tem " + (move === "speed" ? "a velocidade " : "o esforço ") + pick[move] + ".");
+  }
+  const next   = values[(values.indexOf(pick[move]) + 1) % values.length];
+  if (next !== undefined && next !== pick[move]) {
+    term_act(t, { $: "Move", move, to: next });
+  }
 }
 
 // a part of the pick: to the value given, or, none, the values it may
@@ -944,13 +1068,14 @@ function term_paint(t: Term): void {
   const off   = t.scr.off;
   const input = off ? null : Screen.screen_input(t.scr, iw, room - 3, View.HINT + " · /help");
   // with no input, the rule under it only to say offline
-  const under = off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", iw)];
-  const own   = term_inset([Paint.rule_line(t.v, iw), ...(input?.lines ?? []), ...under, ...term_tasks_line(t.v, iw), Paint.tabs_line(t.v, iw)]);
+  const under = off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", iw, OFFLINE)];
+  const menu  = term_menu_lines(t, iw);
+  const own   = term_inset([...menu, Paint.rule_line(t.v, iw), ...(input?.lines ?? []), ...under, ...term_tasks_line(t.v, iw), Paint.tabs_line(t.v, iw)]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];
   const tail  = term_lines([...held, ...View.view_tail(t.v, rest)]).flatMap((l) => Paint.runs_wrap(l, w, true));
   const above = tail.slice(Math.max(0, tail.length - room + own.length));
-  const at    = input === null ? null : { row: above.length + 1 + input.at.row, col: input.at.col + MARGIN };
+  const at    = input === null ? null : { row: above.length + menu.length + 1 + input.at.row, col: input.at.col + MARGIN };
   Screen.screen_paint(t.scr, t.out, t.wipe, [...above, ...own], at);
   t.out  = [];
   t.wipe = false;
@@ -968,15 +1093,16 @@ function term_frame(t: Term, p: Panel.Panel): void {
   const h     = process.stdout.rows || 24;
   const off   = t.scr.off || p.focus;
   const input = t.scr.off ? null : Screen.screen_input(t.scr, fw, Math.max(1, Math.floor(h / 3)), p.focus ? "Ctrl+P ou Esc volta à mensagem" : View.HINT + " · /help");
-  const under = t.scr.off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", fw)];
+  const under = t.scr.off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", fw, OFFLINE)];
   const tasks = Panel.panel_width(w) === 0 ? term_tasks_line(t.v, fw) : [];
-  const foot  = term_inset([Paint.rule_line(t.v, fw), ...(input?.lines ?? []), ...under, ...tasks, Paint.tabs_line(t.v, fw)]);
+  const menu  = term_menu_lines(t, fw);
+  const foot  = term_inset([...menu, Paint.rule_line(t.v, fw), ...(input?.lines ?? []), ...under, ...tasks, Paint.tabs_line(t.v, fw)]);
   // ponytail: the whole chat laid out at each paint (a frame apart while
   // it streams); bounded by the memory's view, cache by its parts if a
   // long one lags
   const body  = term_lines([...View.view_body(t.v), ...View.view_tail(t.v)]);
   const lines = Panel.panel_frame(p, t.v, body, foot, w, h);
-  const at    = input === null || off ? null : { row: h - foot.length + 1 + input.at.row, col: input.at.col + MARGIN };
+  const at    = input === null || off ? null : { row: h - foot.length + menu.length + 1 + input.at.row, col: input.at.col + MARGIN };
   Screen.screen_frame(t.scr, lines, at);
   t.out = [];
   t.wipe = false;

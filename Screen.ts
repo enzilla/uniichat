@@ -42,7 +42,9 @@ type Place = Spot & { pos: number };
 // above the cursor (its blank rows too), the rows from the footer's top
 // to the screen's bottom, where keys go; off: the input is not shown;
 // full: the whole screen is drawn (screen_frame), the mouse read; grab:
-// every key and character goes to Term.ts, none edits the input
+// every key and character goes to Term.ts, none edits the input; first:
+// a key Term.ts takes before the input does (true: taken), as a menu
+// over the input does its arrows
 export type Screen = {
   tty    : boolean;
   kitty  : boolean;
@@ -50,6 +52,7 @@ export type Screen = {
   off    : boolean;
   full   : boolean;
   grab   : boolean;
+  first  : (key: string) => boolean;
   rest   : string;
   up     : number;
   rows   : number;
@@ -135,7 +138,7 @@ const MODS: [number, string][] = [[4, "Ctrl+"], [2, "Alt+"], [1, "Shift+"]];
 export function screen_new(on: (key: string) => void): Screen {
   const tty = process.stdin.isTTY === true && process.stdout.isTTY === true;
   const ed  = { text: "", pos: 0, hist: [], at: 0, draft: "", moved: false, w: 80, tall: 1 };
-  const scr = { tty, kitty: false, ed, off: false, full: false, grab: false, rest: "", up: 0, rows: 0, on };
+  const scr = { tty, kitty: false, ed, off: false, full: false, grab: false, first: () => false, rest: "", up: 0, rows: 0, on };
   if (tty) {
     process.stdin.setRawMode(true);
     process.stdout.write(MODES_ON);
@@ -264,6 +267,10 @@ function screen_key(scr: Screen, data: string): number {
 
 // a key: an editing key edits the input, if on; any other goes to Term.ts
 function screen_press(scr: Screen, key: string): void {
+  if (scr.first(key)) {
+    scr.on("");
+    return;
+  }
   if (scr.grab || scr.off || !ed_key(scr.ed, key)) {
     scr.on(key);
   }

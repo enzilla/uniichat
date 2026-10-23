@@ -30,8 +30,15 @@ type Look = { dim: boolean; it: boolean };
 
 // the terminal's fill and the text on it ("7": its light gray, "0": its
 // black), a diff's lines ("2": its green, "1": its red), as ANSI
-// palette colors, so they follow the terminal's theme
-export const ANSI = { block: "7", ink: "0", add: "2", del: "1", you: "4" };
+// palette colors, so they follow the terminal's theme; the terminal's
+// marks: a tool's name, the pick's model, effort and speed, the tab
+// shown, offline, a command (Term.ts's list), a task's id, how many it
+// frees, a task done (Panel.ts)
+export const ANSI = {
+  block : "7", ink: "0", add: "2", del: "1", you: "4",
+  tool  : "6", model: "6", effort: "3", speed: "5", here: "2", off: "1",
+  cmd   : "6", id: "3", frees: "5", done: "2",
+};
 
 // what a message is, named on its top (a report's frame edge, a note's
 // first line; a result names itself on its frame's edge; a report: its agent's name, else this; a
