@@ -11,6 +11,7 @@ import * as Md from "../../Md.ts";
 import { EFFORTS, LABELS, Pick, VENDORS } from "../../Pick.ts";
 import type { Key, Page, Row } from "../../Settings.ts";
 import type { Task } from "../../Tasks.ts";
+import * as Deps from "../../TaskDeps.ts";
 import * as Theme from "../../Theme.ts";
 import * as Timer from "../../Timer.ts";
 import * as View from "../../View.ts";
@@ -177,14 +178,18 @@ export function timers_html(timers: Timer.Timer[]): string[] {
 // choices (each concludes with it), a comment, Concluir and Descartar (main.ts adds the comment
 // and "avisar" to the act); each closed lately, how, and Reabrir. No
 // time ago in it: an item's markup changes only as the task does, so
-// a comment being typed stays (main.ts markup)
-export function tasks_html(tasks: Task[]): { open: string[]; closed: string[] } {
+// a comment being typed stays (main.ts markup). Those that wait for
+// others (TaskDeps.ts) apart, without acts, each with what it waits for;
+// those that free others marked "libera N"
+export function tasks_html(tasks: Task[]): { open: string[]; waiting: string[]; closed: string[] } {
   const when = (iso: string) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   const head = (t: Task) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
   const meta = (t: Task, more: string[]) => `<p class="meta">${[...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...more].join(" · ")}</p>`;
   const act = (t: Task, state: Task["state"], text: string, cls: string, answer?: string) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...(answer === undefined ? {} : { answer }) })}>${esc(text)}</button>`;
+  const blocked = Deps.blocked_ids(tasks);
   const open = (t: Task) => {
-    const who = t.who === "unii" ? ["com o Unii"] : [];
+    const n = Deps.frees(tasks, t);
+    const who = [...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(t.who === "unii" ? ["com o Unii"] : [])];
     const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div></details>`;
     const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
     const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}">`;
@@ -196,7 +201,13 @@ export function tasks_html(tasks: Task[]): { open: string[]; closed: string[] } 
     const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii ainda não viu"])];
     return `<li class="task closed" data-task="${esc(t.id)}">${head(t)}${meta(t, how)}<div class="acts">${act(t, "open", "Reabrir", "reopen")}</div></li>`;
   };
-  return { open: tasks.filter((t) => t.state === "open").map(open), closed: tasks.filter((t) => t.state !== "open").map(closed) };
+  const whose = (id: string) => (tasks.find((u) => u.id === id)?.who === "unii" ? id + " (com o Unii)" : id);
+  const waiting = (t: Task) => {
+    const more = [`aguarda ${esc(Deps.waits(tasks, t).map(whose).join(", "))}`, ...(t.who === "unii" ? ["com o Unii"] : [])];
+    return `<li class="task waiting ${esc(t.who)}" data-task="${esc(t.id)}">${head(t)}${meta(t, more)}</li>`;
+  };
+  const opened = tasks.filter((t) => t.state === "open");
+  return { open: opened.filter((t) => !blocked.has(t.id)).map(open), waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
 }
 
 // Settings page

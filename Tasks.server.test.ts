@@ -190,3 +190,15 @@ test("terminal footer: ids if they fit, else the count", () => {
   expect(View.tasks_footer(v, 5)).toBe("");
   expect(View.tasks_footer(View.view_new(), 200)).toBe("");
 });
+
+test("a resolution that frees another: the freeing is in the next turn's block, told once it ends well", async () => {
+  const a = Tasks.task_new(s, { title: "Habilitar o app" }, "main", Date.now()) as Tasks.Task;
+  const b = Tasks.task_new(s, { title: "Testar a conexão", who: "unii", after: [a.id] }, "main", Date.now()) as Tasks.Task;
+  const v = View.view_new();
+  v.tasks = Tasks.tasks_view(s, Date.now());
+  expect(View.view_act(v, { $: "Task", task: b.id, state: "done" })).toEqual([]);
+  expect(await act({ $: "task", task: b.id, state: "done" })).toEqual({ error: "A pendência " + b.id + " aguarda " + a.id + ": resolva essa pendência antes. Nada foi alterado." });
+  await act({ $: "task", task: a.id, state: "done" });
+  const block = Tasks.tasks_block(s, Date.now());
+  expect(block).toContain("- " + b.id + " freed: every task it waited for (" + a.id + ") is closed");
+});

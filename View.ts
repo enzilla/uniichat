@@ -16,6 +16,7 @@ import { LABELS, type Fall, type Move, Pick } from "./Pick.ts";
 import { GLYPH, WHO } from "./Theme.ts";
 import type { Timer } from "./Timer.ts";
 import type { Task } from "./Tasks.ts";
+import * as Deps from "./TaskDeps.ts";
 
 // Types
 // =====
@@ -470,6 +471,11 @@ export function view_act(v: View, act: Act): Client[] {
         v.notes.push("A pendência " + t.id + " não tem a opção “" + act.answer + "”.");
         return [];
       }
+      const waits = Deps.waits(v.tasks, t);
+      if (act.state !== "open" && t.state === "open" && waits.length > 0) {
+        v.notes.push(task_waits_said(t, waits));
+        return [];
+      }
       const note = act.note?.trim() ?? "";
       return [{ $: "task", task: t.id, state: act.state, ...(act.answer === undefined ? {} : { answer: act.answer }), ...(note === "" ? {} : { note }), ...(act.go ? { go: true } : {}) }];
     }
@@ -482,15 +488,36 @@ export function view_act(v: View, act: Act): Client[] {
 // Pending list
 // ============
 
-// the open tasks, the user's first, and those closed lately, as the
-// server sent them (Tasks.tasks_view)
-export function view_tasks(v: View): { open: Task[]; closed: Task[] } {
-  return { open: v.tasks.filter((t) => t.state === "open"), closed: v.tasks.filter((t) => t.state !== "open") };
+// the open tasks the user can resolve now (those that free others
+// first, then the user's), those that wait for others (TaskDeps.ts),
+// and those closed lately, as the server sent them (Tasks.tasks_view)
+export function view_tasks(v: View): { open: Task[]; waiting: Task[]; closed: Task[] } {
+  const blocked = Deps.blocked_ids(v.tasks);
+  const open = v.tasks.filter((t) => t.state === "open");
+  return { open: open.filter((t) => !blocked.has(t.id)), waiting: open.filter((t) => blocked.has(t.id)), closed: v.tasks.filter((t) => t.state !== "open") };
+}
+
+// why a task that waits can't be resolved yet
+export function task_waits_said(t: Task, waits: string[]): string {
+  return "A pendência " + t.id + " aguarda " + waits.join(", ") + ": resolva " + (waits.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
+}
+
+// "libera 3": how many open tasks wait for t (through others too); ""
+// for none
+export function task_frees_said(v: View, t: Task): string {
+  const n = Deps.frees(v.tasks, t);
+  return n === 0 ? "" : "libera " + n;
+}
+
+// "+2 aguardando outras pendências"; "" for none
+export function tasks_waiting_said(n: number): string {
+  return n === 0 ? "" : "+" + n + " aguardando outras pendências";
 }
 
 // the resolutions Unii hasn't seen yet
+// (a task freed isn't one: Unii learns of it in its next turn)
 export function view_untold(v: View): Task[] {
-  return v.tasks.filter((t) => !t.told);
+  return v.tasks.filter((t) => !t.told && !t.freed);
 }
 
 // a command's words ("P7 sim pode mesclar", "7 2", "p7"): its task, the
@@ -526,32 +553,46 @@ export function task_args(v: View, arg: string, choose: boolean): { task: Task; 
 
 // the footer's line of the pending list ("" with none open): ids that
 // fit in w, else the count alone
+// (those that wait for others: only how many, "+2 aguardando")
 export function tasks_footer(v: View, w: number): string {
-  const { open } = view_tasks(v);
-  if (open.length === 0) {
+  const { open, waiting } = view_tasks(v);
+  if (open.length === 0 && waiting.length === 0) {
     return "";
   }
+  const wait = waiting.length === 0 ? "" : " · +" + waiting.length + " aguardando";
   const n = open.length + (open.length === 1 ? " aberta" : " abertas");
-  const long = "Pendências: " + n + " (" + open.map((t) => t.id).join(", ") + ") · /p";
+  const long = "Pendências: " + n + (open.length === 0 ? "" : " (" + open.map((t) => t.id).join(", ") + ")") + wait + " · /p";
+  const mid = "Pendências: " + open.length + wait + " · /p";
   const short = "Pendências: " + open.length + " · /p";
-  return long.length <= w ? long : short.length <= w ? short : "";
+  return [long, mid, short].find((x) => x.length <= w) ?? "";
 }
 
-// the pending list as Markdown, for the terminal's /p (one: its whole)
-export function tasks_md(v: View, one: Task | null = null): string {
+// the pending list as Markdown, for the terminal's /p (one: its whole;
+// waiting: those that wait for others, listed, the rest left out)
+export function tasks_md(v: View, one: Task | null = null, waiting = false): string {
   const STATE = { open: "aberta", done: "concluída", dropped: "descartada" };
   const tag = (t: Task) => (t.ref === null ? "" : " · " + t.ref);
   const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c).join("  "));
   if (one !== null) {
     const said = [one.answer === null ? "" : "Resposta: " + one.answer + ".", one.note === null ? "" : "Comentário: " + one.note].filter((x) => x !== "").join(" ");
-    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + (one.who === "user" ? "com você" : "com o Unii") + tag(one) + opts(one);
+    const waits = Deps.waits(v.tasks, one);
+    const frees = task_frees_said(v, one);
+    const deps = (one.state === "open" && waits.length > 0 ? " · aguarda " + waits.join(", ") : "") + (frees === "" ? "" : " · " + frees);
+    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + (one.who === "user" ? "com você" : "com o Unii") + tag(one) + deps + opts(one);
     return [head, said, one.detail].filter((x) => x !== "").join("\n\n");
   }
-  const { open, closed } = view_tasks(v);
-  const line = (t: Task) => "- **" + t.id + "** " + t.title + (t.who === "unii" ? " (com o Unii)" : "") + tag(t) + opts(t);
+  const { open, waiting: wait, closed } = view_tasks(v);
+  const frees = (t: Task) => (task_frees_said(v, t) === "" ? "" : " · **" + task_frees_said(v, t) + "**");
+  const line = (t: Task) => "- **" + t.id + "** " + t.title + (t.who === "unii" ? " (com o Unii)" : "") + frees(t) + tag(t) + opts(t);
+  const who = (id: string) => (v.tasks.find((t) => t.id === id)?.who === "unii" ? id + " (com o Unii)" : id);
+  const waits = (t: Task) => "- " + t.id + " " + t.title + (t.who === "unii" ? " (com o Unii)" : "") + " — aguarda " + Deps.waits(v.tasks, t).map(who).join(", ");
+  if (waiting) {
+    return wait.length === 0 ? "Nenhuma pendência aguardando outras." : "**Aguardando outras pendências (" + wait.length + ")**\n\n" + wait.map(waits).join("\n");
+  }
   const done = (t: Task) => "- " + t.id + " " + STATE[t.state] + ": " + t.title + (t.answer === null ? "" : " — resposta: " + t.answer);
   const parts = [
     open.length === 0 ? "Nenhuma pendência aberta." : "**Pendências abertas (" + open.length + ")**\n\n" + open.map(line).join("\n"),
+    wait.length === 0 ? "" : "_" + tasks_waiting_said(wait.length) + "_ · `/p aguardando` mostra quais",
     closed.length === 0 ? "" : "**Resolvidas recentemente**\n\n" + closed.slice(0, 10).map(done).join("\n"),
     "`/p P7` detalha · `/ok P7 [opção] [comentário]` conclui · `/ok!` conclui e avisa o Unii · `/descartar P7` · `/reabrir P7` · `/avisar`",
   ];
