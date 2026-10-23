@@ -1,25 +1,28 @@
 // Choices.test
 // ============
-// `bun test Choices.test.ts`: a task's answers offered with what each
-// means (Tasks.ts): given as { label, description } or as bare labels,
-// kept as choices and hints by place, read back from tasks.json (an older
-// one, without hints, too), and shown to Unii in its lines and block.
+// `bun test Choices.test.ts`: what each answer offered means (Tasks.ts
+// descriptions, by place): given as { label, description } or a bare
+// label, for a task's choices and its fields' alike; kept apart from the
+// labels, so a tasks.json without them reads as before; said in Unii's
+// block, the terminal's window and the web's.
 
-import { afterAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import * as Modal from "./Modal.ts";
 import * as T from "./Tasks.ts";
+import * as View from "./View.ts";
+import * as Html from "./web/src/Html.ts";
 
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-choices-");
 const NOW  = Date.parse("2026-10-23T12:00:00Z");
-let dir    = "";
-
-beforeEach(() => {
-  T.tasks_forget();
-  dir = fs.mkdtempSync(ROOT + "/chat-");
-});
 
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
+
+function store(): T.Store {
+  T.tasks_forget();
+  return T.tasks_load(fs.mkdtempSync(ROOT + "/chat-"));
+}
 
 function add(s: T.Store, args: T.Edit): T.Task {
   const t = T.task_new(s, args, "main", NOW);
@@ -29,36 +32,42 @@ function add(s: T.Store, args: T.Edit): T.Task {
   return t;
 }
 
-test("choices with descriptions and bare labels, alike: kept as answers and hints by place; a label twice keeps the first", () => {
-  const s = T.tasks_load(dir);
-  const t = add(s, { title: "Qual ambiente?", choices: [{ label: "hom", description: "Ensaio, sem risco." }, "prod", { label: "hom", description: "outra" }] });
-  expect(t.choices).toEqual(["hom", "prod"]);
-  expect(t.hints).toEqual(["Ensaio, sem risco.", ""]);
-  expect(add(s, { title: "Sim ou não?", choices: ["sim", "não"] }).hints).toEqual(["", ""]);
-  expect(T.task_new(s, { title: "x", choices: "sim" }, "main", NOW)).toContain("label, description");
+test("choices and a field's choices take { label, description } or a bare label; the labels stay the answers", () => {
+  const s = store();
+  const t = add(s, { title: "Ambiente", choices: [{ label: "hom", description: "Ensaio, sem risco." }, "prod"], fields: [
+    { id: "times", label: "Times", kind: "multi", choices: [{ label: "infra", description: "Quem reinicia." }, { label: "suporte" }], required: false },
+  ] });
+  expect([t.choices, t.descriptions]).toEqual([["hom", "prod"], ["Ensaio, sem risco.", ""]]);
+  expect([t.fields[0].choices, t.fields[0].descriptions]).toEqual([["infra", "suporte"], ["Quem reinicia.", ""]]);
+  expect(add(s, { title: "Sem", choices: ["sim", "não"] }).descriptions).toEqual([]);
+  expect(T.task_resolve(s, t.id, "done", "hom", null, NOW)).toMatchObject({ answer: "hom" });
 });
 
-test("an edit's choices replace both; the answer is still a label", () => {
-  const s = T.tasks_load(dir);
-  const t = add(s, { title: "Qual ambiente?", choices: ["hom"] });
-  const e = T.task_edit(s, { id: t.id, choices: [{ label: "local", description: "No notebook." }] }, NOW) as T.Task;
-  expect([e.choices, e.hints]).toEqual([["local"], ["No notebook."]]);
-  expect(T.task_resolve(s, t.id, "done", "local", "pode", NOW)).not.toBeTypeOf("string");
-});
-
-test("tasks.json keeps the hints; an older one, without them, reads with none", () => {
-  const s = T.tasks_load(dir);
-  add(s, { title: "Qual ambiente?", choices: [{ label: "hom", description: "Ensaio." }, "prod"] });
-  T.tasks_save(s);
+test("kept in tasks.json and read again; a tasks.json without descriptions reads with none", () => {
+  const s = store();
+  add(s, { title: "Ambiente", choices: [{ label: "hom", description: "Ensaio." }, { label: "prod", description: "Real." }] });
   T.tasks_forget();
-  expect(T.tasks_load(dir).tasks[0].hints).toEqual(["Ensaio.", ""]);
-  const old = { id: "P1", title: "Antiga", state: "open", choices: ["sim", "não"] };
-  expect(T.task_read(old, NOW)?.hints).toEqual(["", ""]);
+  expect(T.tasks_load(s.dir).tasks[0].descriptions).toEqual(["Ensaio.", "Real."]);
+  const dir = fs.mkdtempSync(ROOT + "/old-");
+  fs.writeFileSync(dir + "/tasks.json", JSON.stringify({ next: 2, rev: 0, tasks: [{ id: "P1", title: "Antiga", state: "open", choices: ["a", "b"], fields: [{ id: "x", label: "X", kind: "choice", choices: ["c", "d"] }] }] }));
+  T.tasks_forget();
+  const old = T.tasks_load(dir).tasks[0];
+  expect([old.choices, old.descriptions, old.fields[0].descriptions]).toEqual([["a", "b"], [], []]);
 });
 
-test("Unii reads each choice with what it means, in a task's line and in the turn's block", () => {
-  const s = T.tasks_load(dir);
-  const t = add(s, { title: "Qual ambiente?", choices: [{ label: "hom", description: "Ensaio." }, "prod"] });
-  expect(T.task_line(t, NOW)).toContain("options: hom (Ensaio.) | prod");
-  expect(T.tasks_block(s, NOW)).toContain("hom (Ensaio.)");
+test("Unii reads them in the block; the terminal's window and the web's show them under each label", () => {
+  const s = store();
+  add(s, { title: "Ambiente", choices: [{ label: "hom", description: "Ensaio, sem risco." }, "prod"], fields: [
+    { id: "amb", label: "Onde", kind: "choice", choices: [{ label: "a", description: "Primeiro." }, "b"] },
+  ] });
+  expect(T.tasks_block(s, NOW)).toContain("options: hom (Ensaio, sem risco.) | prod");
+  expect(T.tasks_block(s, NOW)).toContain("choice: a (Primeiro.) | b");
+  const v = View.view_new();
+  v.tasks = T.tasks_view(s, NOW);
+  const shown = Modal.modal_lines(Modal.modal_new("P1"), v, 80).map((l) => l.map((r) => r.x).join("")).join("\n");
+  expect(shown).toContain("Ensaio, sem risco.");
+  expect(shown).toContain("Primeiro.");
+  const html = Html.task_window_html(v.tasks, "P1");
+  expect(html).toContain("<small>Ensaio, sem risco.</small>");
+  expect(html).toContain("<small>Primeiro.</small>");
 });

@@ -10,7 +10,7 @@ import * as Call from "../../Call.ts";
 import * as Md from "../../Md.ts";
 import { EFFORTS, LABELS, Pick, VENDORS } from "../../Pick.ts";
 import type { Key, Page, Row } from "../../Settings.ts";
-import type { Task } from "../../Tasks.ts";
+import type { Field, Task } from "../../Tasks.ts";
 import * as Deps from "../../TaskDeps.ts";
 import * as Theme from "../../Theme.ts";
 import * as Timer from "../../Timer.ts";
@@ -125,17 +125,35 @@ function images_html(names: string[]): string {
   return names.length === 0 ? "" : `<div class="pics">${pics.join("")}</div>`;
 }
 
-// the line over the message box: fold/unfold (none on an agent's page),
-// a rule, then the pick's knobs, each opening its menu (the browser's
-// popover, placed by main.ts); one without choices (an agent's page)
-// shown only
-export function pick_html(fold: string | null, on: boolean, knobs: View.Knob[]): string[] {
+// the memory modes' switch (on the chat's page) and its tooltips
+export const MODES: Array<[string, string]> = [
+  ["standard", "Each message is summarized for Unii's memory. Cheapest, good for long working sessions."],
+  ["conversation", "Messages stay word-for-word in Unii's view until you switch back. Use it for discussions. It costs more per turn."],
+];
+
+// the line over the message box: fold/unfold and the memory mode (none
+// on an agent's page: talk undefined), a rule, then the pick's knobs,
+// each opening its menu (the browser's popover, placed by main.ts); one
+// without choices (an agent's page) shown only. In conversation mode the
+// rule is its meter: filled as far as its space is, from grey to orange
+export function pick_html(fold: string | null, on: boolean, knobs: View.Knob[], talk?: View.Talk | null): string[] {
   const parts = knobs.map((k) => k.choices.length === 0 ? [`<span class="knob" title="${esc(k.hint)}">${esc(k.text)}</span>`] : [
     `<button title="${esc(k.hint)}" data-knob="${k.move}" popovertarget="pick-${k.move}" aria-haspopup="menu">${esc(k.text)}</button>`,
     `<div id="pick-${k.move}" class="choices" popover role="menu" aria-label="${k.move[0].toUpperCase() + k.move.slice(1)}">${k.choices.map(choice_html).join("")}</div>`,
   ]);
   const all = fold === null ? [] : [`<button class="all"${act_html({ $: "Fold", on })}>${esc(fold)}</button>`];
-  return [...all, `<span class="rule"></span>`, ...parts.flatMap((part, i) => (i === 0 ? part : [`<span class="dot">·</span>`, ...part]))];
+  // each picks its mode; a narrow screen shows instead the mode on, as
+  // one button that switches to the other (style.css)
+  const mode = ([name, hint]: [string, string], k: number) => {
+    const here = (talk != null) === (k === 1);
+    return `<button title="${esc(hint)}" aria-pressed="${here}"${act_html({ $: "Talk", on: k === 1 })}>${name}</button>`;
+  };
+  const [now, about] = MODES[talk == null ? 0 : 1];
+  const flip = `<button class="flip" title="${esc(about)} Tap for ${MODES[talk == null ? 1 : 0][0]}."${act_html({ $: "Talk", on: talk == null })}>${now}</button>`;
+  const modes = talk === undefined ? [] : [`<span class="modes" role="group" aria-label="Memory mode">${MODES.map(mode).join("")}</span>`, flip];
+  const used = talk == null ? 0 : Math.round(talk.used * 100);
+  const rule = talk == null ? `<span class="rule"></span>` : `<span class="rule meter" style="--used:${used}%" title="Conversation: ${used}% of space used" role="meter" aria-valuenow="${used}" aria-valuemin="0" aria-valuemax="100" aria-label="Conversation space used"></span>`;
+  return [...all, ...modes, rule, ...parts.flatMap((part, i) => (i === 0 ? part : [`<span class="dot">·</span>`, ...part]))];
 }
 
 // a menu's row: a model's vendor over its first; the pick's marked and
@@ -181,71 +199,111 @@ export function timers_html(timers: Timer.Timer[]): string[] {
 // time ago in it: an item's markup changes only as the task does, so
 // a comment being typed stays (main.ts markup). Those that wait for
 // others (TaskDeps.ts) apart, without acts, each with what it waits for;
-// those that free others marked "libera N"
-export function tasks_html(tasks: Task[]): { open: string[]; waiting: string[]; closed: string[] } {
-  const when = (iso: string) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-  // the title opens the task's window (task_html), where it is whole and
-  // talked about
-  const head = (t: Task) => `<p class="head"><span class="id">${esc(t.id)}</span><button type="button" class="title" data-open="${esc(t.id)}" title="Abrir a pendência">${esc(t.title)}</button></p>`;
-  const meta = (t: Task, more: string[]) => `<p class="meta">${[...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...more].join(" · ")}</p>`;
-  const act = (t: Task, state: Task["state"], text: string, cls: string, answer?: string) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...(answer === undefined ? {} : { answer }) })}>${esc(text)}</button>`;
+// those that free others marked "libera N". Its fields (each answered
+// apart, a draft: main.ts sends each change) and its thread (a message
+// there starts a turn, not a conclusion), with whose turn it is. What
+// is typed and not sent (data-keep) survives the item made again
+// (main.ts keep). The open ones by assignee (View.tasks_by_assignee): the
+// user's first, then each other's under its heading (now: the items and
+// headings, as the list shows them; open: the items alone, counted); a
+// task not the user's has no Concluir in relief. Where it came from
+// (origin), a quiet badge, a link to its source if it has one
+export function tasks_html(tasks: Task[]): { open: string[]; now: string[]; waiting: string[]; closed: string[] } {
   const blocked = Deps.blocked_ids(tasks);
-  const open = (t: Task) => {
-    const n = Deps.frees(tasks, t);
-    const who = [...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(t.who === "unii" ? ["com o Unii"] : [])];
-    const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div></details>`;
-    const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c, k) => opt_html(t, k)).join("")}</div>`;
-    const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}">`;
-    const go = `<label class="go"><input type="checkbox"> Avisar o Unii agora</label>`;
-    const acts = `<div class="acts">${go}${act(t, "done", "Concluir", "done")}${act(t, "dropped", "Descartar", "drop")}</div>`;
-    return `<li class="task ${esc(t.who)}" data-task="${esc(t.id)}">${head(t)}${meta(t, [...who, `<time>${esc(when(t.made))}</time>`])}${detail}${opts}${note}${acts}</li>`;
-  };
-  const closed = (t: Task) => {
-    const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii ainda não viu"])];
-    return `<li class="task closed" data-task="${esc(t.id)}">${head(t)}${meta(t, how)}<div class="acts">${act(t, "open", "Reabrir", "reopen")}</div></li>`;
-  };
-  const whose = (id: string) => (tasks.find((u) => u.id === id)?.who === "unii" ? id + " (com o Unii)" : id);
-  const waiting = (t: Task) => {
-    const more = [`aguarda ${esc(Deps.waits(tasks, t).map(whose).join(", "))}`, ...(t.who === "unii" ? ["com o Unii"] : [])];
-    return `<li class="task waiting ${esc(t.who)}" data-task="${esc(t.id)}">${head(t)}${meta(t, more)}</li>`;
-  };
   const opened = tasks.filter((t) => t.state === "open");
-  return { open: opened.filter((t) => !blocked.has(t.id)).map(open), waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
+  const groups = View.tasks_by_assignee(opened.filter((t) => !blocked.has(t.id)));
+  const heading = (a: string, ts: Task[]) => `<li class="group" data-assignee="${esc(a)}">${esc(View.assignee_said(ts[0]).replace(/^c/, "C"))} <span class="n">(${ts.length})</span></li>`;
+  const titled = groups.length > 1 || (groups.length === 1 && groups[0][0] !== "user");
+  const item = (t: Task) => task_item(tasks, t, false);
+  const now = groups.flatMap(([a, ts]) => [...(titled ? [heading(a, ts)] : []), ...ts.map(item)]);
+  return { open: groups.flatMap(([, ts]) => ts.map(item)), now, waiting: opened.filter((t) => blocked.has(t.id)).map(item), closed: tasks.filter((t) => t.state !== "open").map(item) };
 }
 
-// a choice's button: its label, and what picking it means under it
-function opt_html(t: Task, k: number): string {
-  const a = act_html({ $: "Task", task: t.id, state: "done", answer: t.choices[k] });
-  const hint = t.hints?.[k] ? `<small>${esc(t.hints[k])}</small>` : "";
-  return `<button class="opt"${a}><b>${esc(t.choices[k])}</b>${hint}</button>`;
+// a task's window (main.ts task_open, in #task): its item as the list
+// has it, whole (its detail shown, its thread open), alone; a note if
+// it's no longer listed
+export function task_window_html(tasks: Task[], id: string): string {
+  const t = tasks.find((x) => x.id === id);
+  return t === undefined ? `<p class="none">A pendência ${esc(id)} não está mais na lista.</p>` : `<ul>${task_item(tasks, t, true)}</ul>`;
 }
 
-// a task's window (main.ts task_render, in #task): its parts, each made
-// again only as it changes (what is typed in it stays): its head (id,
-// title, state, who acts, ref, what it waits for and frees, its answer
-// and comment), its detail, its choices with what each means, the
-// comment and "Avisar o Unii agora" its resolutions take (main.ts
-// task_act), its acts, its thread (View.task_thread, the marks taken off)
-export function task_html(v: View.View, t: Task): string[] {
-  const STATE = { open: "Aberta", done: "Concluída", dropped: "Descartada" };
-  const waits = Deps.waits(v.tasks, t);
-  const frees = View.task_frees_said(v, t);
-  const meta = [STATE[t.state], t.who === "user" ? "com você" : "com o Unii", ...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...(t.state === "open" && waits.length > 0 ? ["aguarda " + esc(waits.join(", "))] : []), ...(frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`])];
-  const said = [...(t.answer === null ? [] : ["Resposta: <b>" + esc(t.answer) + "</b>"]), ...(t.note === null ? [] : ["Comentário: “" + esc(t.note) + "”"])];
-  const open = t.state === "open";
-  const head = `<div class="top"><p class="head"><span class="id">${esc(t.id)}</span><span class="title" id="task-title">${esc(t.title)}</span></p><button type="button" class="x" data-close aria-label="Fechar">✕</button><p class="meta">${meta.join(" · ")}</p>${said.length === 0 ? "" : `<p class="said">${said.join(" · ")}</p>`}</div>`;
-  const detail = t.detail === "" ? [] : [`<div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div>`];
-  const choices = !open || t.choices.length === 0 ? [] : [`<div class="opts" role="group" aria-label="Opções">${t.choices.map((c, k) => opt_html(t, k)).join("")}</div>`];
-  const act = (state: Task["state"], text: string, cls: string) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state })}>${esc(text)}</button>`;
-  const resolve = open
-    ? `<div class="resolve"><label for="task-note">Comentário ou justificativa (opcional)</label><textarea id="task-note" class="note" rows="2" maxlength="1000"></textarea><div class="acts"><label class="go"><input type="checkbox"> Avisar o Unii agora</label>${t.choices.length === 0 ? act("done", "Concluir", "done") : ""}${act("dropped", "Descartar", "drop")}</div></div>`
-    : `<div class="acts">${act("open", "Reabrir", "reopen")}</div>`;
-  const thread = View.task_thread(v, t.id);
-  const talk = thread.length === 0
-    ? [`<p class="none">Nenhuma mensagem sobre esta pendência ainda. O Unii responde aqui e no chat.</p>`]
-    : thread.map((e) => `<div class="msgs">${View.entry_rows(e.id, e.kind, View.task_unmark(e.text), e.images).map(row_html).join("")}</div>`);
-  const form = `<form class="talk"><label for="task-say" class="sub">Mensagem sobre a pendência</label><textarea id="task-say" rows="2" placeholder="Pergunte ou comente; vai ao chat marcada com ${esc(t.id)}."></textarea><button type="submit">Enviar</button></form>`;
-  return [head, ...detail, ...choices, resolve, `<h3>Conversa${thread.length === 0 ? "" : " (" + thread.length + ")"}</h3>`, ...talk, form];
+// a task's item: open (its acts, fields and thread), waiting for others
+// (none of those), or closed (Reabrir); whole: as its window shows it.
+// Its title opens its window
+function task_item(tasks: Task[], t: Task, whole: boolean): string {
+  const when = (iso: string) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const title = whole ? `<span class="title" id="task-title">${esc(t.title)}</span>` : `<button type="button" class="title" data-open="${esc(t.id)}" title="Abrir a pendência">${esc(t.title)}</button>`;
+  const head = `<p class="head"><span class="id">${esc(t.id)}</span>${title}</p>`;
+  const said = View.origin_said(t);
+  const url = t.origin_url !== null && /^https?:\/\//i.test(t.origin_url) ? t.origin_url : null;
+  const origin = said === "" ? [] : [url === null ? `<span class="origin" title="Origem">${esc(said)}</span>` : `<a class="origin" title="Origem" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(said)}</a>`];
+  const meta = (more: string[]) => `<p class="meta">${[...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...more, ...origin].join(" · ")}</p>`;
+  const act = (state: Task["state"], text: string, cls: string, answer?: string) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...(answer === undefined ? {} : { answer }) })}>${esc(text)}</button>`;
+  const mine = t.assignee === "user";
+  const whose = (u: Task | undefined) => (u === undefined || u.assignee === "user" ? "" : " (" + View.assignee_said(u) + ")");
+  if (t.state !== "open") {
+    const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii ainda não viu"])];
+    return `<li class="task closed" data-task="${esc(t.id)}">${head}${meta(how)}<div class="acts">${act("open", "Reabrir", "reopen")}</div>${whole ? thread_html(t, true) : ""}</li>`;
+  }
+  if (Deps.blocked_ids(tasks).has(t.id)) {
+    const more = [`aguarda ${esc(Deps.waits(tasks, t).map((id) => id + whose(tasks.find((u) => u.id === id))).join(", "))}`, ...(mine ? [] : [esc(View.assignee_said(t))])];
+    return `<li class="task waiting ${esc(mine ? "user" : "other " + t.assignee)}" data-task="${esc(t.id)}">${head}${meta(more)}</li>`;
+  }
+  const n = Deps.frees(tasks, t);
+  const who = [...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(mine ? [] : [esc(View.assignee_said(t))])];
+  const md = `<div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div>`;
+  const detail = t.detail === "" ? "" : whole ? md : `<details><summary>Detalhes</summary>${md}</details>`;
+  const opt = (c: string, k: number) => `<button class="opt"${act_html({ $: "Task", task: t.id, state: "done", answer: c })}>${esc(c)}${t.descriptions?.[k] ? `<small>${esc(t.descriptions[k])}</small>` : ""}</button>`;
+  const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map(opt).join("")}</div>`;
+  const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário ou justificativa (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
+  const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
+  const acts = `<div class="acts">${go}${act("done", "Concluir", mine ? "done" : "done quiet")}${act("dropped", "Descartar", "drop")}</div>`;
+  const talk = View.task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(View.task_talk_said(t))}</span>`];
+  const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
+  return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head}${meta([...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t, whole)}${opts}${note}${acts}${thread_html(t, whole)}</li>`;
+}
+
+// a task's fields, each a fieldset: a choice and yes or no as radios,
+// many as checkboxes, a text as a textarea; its draft answer checked or
+// in it. "" for none. In its window (whole), its radios are named apart
+// from the list's, or the two would be one group and a pick in one
+// would uncheck the other
+function fields_html(t: Task, whole = false): string {
+  const fields = t.fields ?? [];
+  if (fields.length === 0) {
+    return "";
+  }
+  const draft = t.draft ?? {};
+  const one = (f: Field) => {
+    const v = Object.hasOwn(draft, f.id) ? draft[f.id] : undefined;
+    const name = (whole ? "w-" : "f-") + t.id + "-" + f.id;
+    const req = f.required ? ` <span class="req" title="Obrigatório">*</span>` : "";
+    const legend = `<legend>${esc(f.label)}${req}</legend>`;
+    if (f.kind === "text") {
+      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text">${legend}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
+    }
+    const type = f.kind === "multi" ? "checkbox" : "radio";
+    const on = (c: string) => (Array.isArray(v) ? v.includes(c) : v === c);
+    const means = (k: number) => (f.descriptions?.[k] ? `<small>${esc(f.descriptions[k])}</small>` : "");
+    const boxes = f.choices.map((c, k) => `<label><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> <span>${esc(c)}${means(k)}</span></label>`).join("");
+    return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}">${legend}<div class="picks">${boxes}</div></fieldset>`;
+  };
+  return `<div class="fields">${fields.map(one).join("")}</div>`;
+}
+
+// a task's thread: its messages (Unii's as Markdown, as messages are;
+// the user's as typed), a box and Enviar (main.ts: the box's text, as a
+// TaskSay); open while it's the user's turn, and in the task's window
+function thread_html(t: Task, whole = false): string {
+  const thread = t.thread ?? [];
+  const msg = (m: Task["thread"][number]) => m.who === "unii"
+    ? `<li class="unii"><span class="who">Unii</span><div class="md">${Md.md_parse(m.text).map(block_html).join("")}</div></li>`
+    : `<li class="user"><span class="who">Você</span><p>${esc(m.text)}</p></li>`;
+  const open = whole || (thread.length > 0 && t.talk !== null) ? " open" : "";
+  const said = thread.length === 0 ? "Conversar sobre esta pendência" : "Conversa (" + thread.length + ")";
+  const box = `<textarea class="say" rows="2" maxlength="4000" placeholder="Escreva sobre esta pendência (não a conclui)" aria-label="Mensagem sobre ${esc(t.id)}" data-keep="say"></textarea>`;
+  const send = `<button class="say-send"${act_html({ $: "TaskSay", task: t.id, text: "" })}>Enviar</button>`;
+  return `<details class="thread" data-keep="thread"${open}><summary>${esc(said)}</summary>${thread.length === 0 ? "" : `<ol>${thread.map(msg).join("")}</ol>`}${box}<div class="acts">${send}</div></details>`;
 }
 
 // Settings page
@@ -301,7 +359,8 @@ const SETTING: Record<string, [string, string]> = {
   vendors   : ["Vendors", "Whose models the server offers."],
   models    : ["Models", "The models offered, of those vendors."],
   pick      : ["Default model", "What a chat runs on until it picks another."],
-  compactor : ["Compactor model", "What writes the memory's summaries."],
+  compactor : ["Compactor model", "What writes the memory's summaries. Sonnet medium summarizes more faithfully than Haiku, using more of a plan's limits."],
+  compactor_context : ["Compactor context", "How much of the chat each summary sees, in KB (1 to 128). More context lets it copy more into a summary that its message doesn't say. New summaries only."],
   agents    : ["Subagent model", "What subagents run on."],
   site      : ["Site", "The server's address, for sign-in links and the installer."],
   apple     : ["iOS App ID", "The app's team and bundle ID, whose sign-in links it opens."],
@@ -321,7 +380,7 @@ export const VENDOR_KEY: Record<string, string> = { "claude-api": "anthropic", "
 export const PICKS = ["pick", "compactor", "agents"];
 
 const GROUPS: Array<[string, string[]]> = [
-  ["Models", ["vendors", "models", "pick", "compactor", "agents"]],
+  ["Models", ["vendors", "models", "pick", "compactor", "compactor_context", "agents"]],
   ["Server", ["site", "apple", "apns"]],
 ];
 
@@ -385,6 +444,9 @@ function control_html(r: Row): string {
     case "compactor":
     case "agents": {
       return `<input type="hidden" name="${r.key}" value="${esc(r.value)}"><div class="four"></div>`;
+    }
+    case "compactor_context": {
+      return `<input id="set-${r.key}" name="${r.key}" type="number" min="1" max="128" step="1" inputmode="numeric" value="${esc(r.value)}" placeholder="${esc(r.def)}">`;
     }
   }
   return `<input id="set-${r.key}" name="${r.key}" value="${esc(r.value)}" placeholder="${esc(r.def)}" spellcheck="false" autocapitalize="off">`;

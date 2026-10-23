@@ -108,9 +108,9 @@ function panel_pick(p: Panel, v: View.View): Task | null {
 }
 
 // the questions Unii asked since seen: the open tasks of the user's with
-// choices that none waits on and seen hasn't, added to it
+// choices or fields that none waits on and seen hasn't, added to it
 export function panel_asks(v: View.View, seen: Set<string>): Task[] {
-  const fresh = View.view_tasks(v).open.filter((t) => t.who === "user" && t.choices.length > 0 && !seen.has(t.id));
+  const fresh = View.view_tasks(v).open.filter((t) => t.assignee === "user" && (t.choices.length > 0 || t.fields.length > 0) && !seen.has(t.id));
   fresh.forEach((t) => seen.add(t.id));
   return fresh;
 }
@@ -279,7 +279,8 @@ function panel_lines(p: Panel, v: View.View, w: number, h: number, x: number): P
 // a task's lines: the mark (picked or not), its box (green, done), id
 // (yellow, open) and title, wrapped under the title's start; a dim line
 // of what more there is to know (it frees others, in magenta; it is
-// Unii's, its ref, more), and its choices, numbered
+// Unii's, its ref, more), and its choices, numbered, each with what it
+// means
 function task_lines(v: View.View, t: Task, mark: string, more: string[], w: number): Paint.Line[] {
   const ink   = t.state === "open" ? (mark === " " ? Paint.INK : BOLD) : Paint.DIM;
   const id    = t.state === "open" ? { ...Paint.INK, c: Theme.ANSI.id } : Paint.DIM;
@@ -288,14 +289,10 @@ function task_lines(v: View.View, t: Task, mark: string, more: string[], w: numb
   const pad   = Paint.Run(" ".repeat(INDENT));
   const lines = text.map((l, k) => (k === 0 ? [Paint.Run(mark + " ", mark === " " ? Paint.DIM : BOLD), Paint.Run(BOX[t.state], box), Paint.Run(" "), ...l] : [pad, ...l]));
   const frees = View.task_frees_said(v, t);
-  const said  = [...(t.who === "unii" ? ["com o Unii"] : []), ...(t.ref === null ? [] : [t.ref]), ...(t.answer === null ? [] : ["resposta: " + t.answer]), ...more].map(Paint.text_clean).join(" · ");
+  const said  = [...(View.task_talk_said(t) === "" ? [] : [View.task_talk_said(t)]), ...(t.assignee === "unii" ? ["com o Unii"] : []), ...(t.ref === null ? [] : [t.ref]), ...(t.answer === null ? [] : ["resposta: " + t.answer]), ...more].map(Paint.text_clean).join(" · ");
   const runs  = [...(frees === "" ? [] : [Paint.Run(frees, { ...Paint.INK, c: Theme.ANSI.frees })]), ...(frees !== "" && said !== "" ? [Paint.Run(" · ", Paint.DIM)] : []), ...(said === "" ? [] : [Paint.Run(said, Paint.DIM)])];
   const tail  = runs.length === 0 ? [] : Paint.runs_wrap(runs, Math.max(4, w - INDENT), false).map((l) => [pad, ...l]);
-  // each choice, and under it what it means (dimmed), wrapped
-  const opts  = mark === " " || t.state !== "open" ? [] : t.choices.flatMap((c, k) => [
-    [pad, Paint.Run(k + 1 + ") ", BOLD), Paint.Run(Paint.text_clean(c))],
-    ...(t.hints?.[k] ? Paint.runs_wrap([Paint.Run(Paint.text_clean(t.hints[k]), Paint.DIM)], Math.max(4, w - INDENT - 3), false).map((l) => [pad, Paint.Run("   "), ...l]) : []),
-  ]);
+  const opts  = mark === " " || t.state !== "open" ? [] : t.choices.flatMap((c, k) => Paint.runs_wrap([Paint.Run(k + 1 + ") ", BOLD), Paint.Run(Paint.text_clean(c)), ...(t.descriptions?.[k] ? [Paint.Run(" · " + Paint.text_clean(t.descriptions[k]), Paint.DIM)] : [])], Math.max(4, w - INDENT), false).map((l) => [pad, ...l]));
   return [...lines, ...tail, ...opts];
 }
 

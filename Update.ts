@@ -9,7 +9,7 @@
 // this unii's version: each release ships one, a new one for every
 // change to Term.ts or what it imports. The fork's release script reads
 // it here and tags the release with it, as is ("20")
-export const VERSION = "21-enzilla.1";
+export const VERSION = "22-enzilla.1";
 
 export const REPO        = "https://github.com/enzilla/uniichat";
 export const INSTALL     = REPO + "/releases/latest/download/install.sh";

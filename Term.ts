@@ -144,6 +144,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/open #id",         "",                        "open block #id, as it shows, and keep it open",  (t, a) => term_block(t, a, true)],
       ["/close #id",        "",                        "close block #id and keep it closed",             (t, a) => term_block(t, a, false)],
       ["/fold",             "Ctrl+F",                  "the chat in the fewest blocks; again: unfold (Ctrl+F eaten? type /fold)", term_fold],
+      ["/mode [mode]",      "",                        "the memory mode, standard or conversation (messages stay word for word in Unii's view); with one, that one", term_mode],
       ["/import [...]",     "",                        "import your Claude and ChatGPT chats (alone: options)", term_import],
       ["/export",           "",                        "save the memory as ./unii-memory.json",          term_export],
       ["/copy [n]",         "",                        "copia a última resposta do Unii; com n, o n-ésimo bloco de código dela (pelo terminal: funciona via ssh)", term_copy],
@@ -172,9 +173,11 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ]],
     ["Pendências", [
       ["/p [P7|aguardando]", "",                       "a lista de pendências; com um id, o detalhe dela; aguardando: as que esperam outras", term_tasks],
-      ["/abrir P7",         "",                        "na tela cheia: abre a pendência numa janela, com o detalhe, as opções com o que cada uma significa e a conversa sobre ela (lá: 1-9 escolhe e pede a justificativa, Enter conclui, ! conclui e avisa, d descarta, r reabre, Tab escreve sobre ela, Esc fecha)", term_open_arg],
-      ["/ok P7 [opção] [comentário]", "",             "conclui a pendência; o Unii a vê no próximo turno", (t, a) => term_task(t, a, "done", false)],
-      ["/ok! P7 [opção] [comentário]", "",            "conclui a pendência e avisa o Unii agora",       (t, a) => term_task(t, a, "done", true)],
+      ["/abrir P7",         "",                        "na tela cheia: abre a pendência numa janela, com o detalhe, as opções, os campos (respondidos como rascunho) e a conversa sobre ela (lá: ↑↓ escolhe a pergunta, 1-9 responde, s ou n no sim ou não, Enter num texto o escreve; Enter conclui pedindo a justificativa, ! conclui e avisa, d descarta, r reabre, Tab escreve sobre ela, Esc fecha)", term_open_arg],
+      ["/ok P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência (com as respostas dos campos: 1=a 2=\"um texto\"); o Unii a vê no próximo turno", (t, a) => term_task(t, a, "done", false)],
+      ["/ok! P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência e avisa o Unii agora",     (t, a) => term_task(t, a, "done", true)],
+      ["/rascunho P7 campo=valor", "",                 "responde campos da pendência sem concluir (salvo como rascunho)", term_draft],
+      ["/conversa P7 [mensagem]", "",                  "conversa sobre a pendência sem concluir: a mensagem inicia um turno do Unii; sem mensagem, mostra a conversa", term_talk],
       ["/descartar P7 [comentário]", "",               "descarta a pendência",                          (t, a) => term_task(t, a, "dropped", false)],
       ["/reabrir P7",       "",                        "reabre uma pendência resolvida",                 (t, a) => term_task(t, a, "open", false)],
       ["/avisar",           "",                        "avisa o Unii agora das pendências resolvidas que ele ainda não viu", (t) => term_send(t, { $: "tasks_tell" })],
@@ -511,11 +514,11 @@ function term_close(t: Term): void {
 }
 
 // a key while a task's window is open: the acts' keys (Modal.modal_key),
-// or, writing a comment or a message in the input, Enter, Esc, Tab and
-// Ctrl+C; PageUp, PageDown scroll it. True if taken
+// or, writing a comment, a field's text or a message in the input,
+// Enter, Esc, Tab and Ctrl+C; PageUp, PageDown scroll it. True if taken
 function term_modal(t: Term, m: Modal.Modal, key: string): boolean {
   const out = m.focus === "acts" ? Modal.modal_key(m, t.v, key)
-    : key === "Enter" ? Modal.modal_enter(m, Screen.ed_take(t.scr.ed))
+    : key === "Enter" ? Modal.modal_enter(m, t.v, Screen.ed_take(t.scr.ed))
     : key === "Esc" || key === "Ctrl+C" || (key === "Tab" && m.focus === "talk") ? Modal.modal_back(m, key === "Ctrl+C" ? "Ctrl+C" : "Esc")
     : undefined;
   if (out === undefined) {
@@ -528,11 +531,10 @@ function term_modal(t: Term, m: Modal.Modal, key: string): boolean {
     term_close(t);
   } else if (out?.$ === "note") {
     term_note(t, out.text);
+  } else if (out?.$ === "fill") {
+    Screen.ed_type(t.scr.ed, out.text);
   } else if (out?.$ === "act") {
     term_act(t, out.act);
-    if (t.panel !== null && out.act.$ === "Send") {
-      t.panel.scroll = 0;
-    }
   }
   t.scr.grab = t.modal !== null && t.modal.focus === "acts";
   return true;
@@ -947,6 +949,17 @@ function term_copy(t: Term, arg: string): void {
   term_note(t, "Copiado: " + got.what + " (" + size + (size === 1 ? " byte" : " bytes") + ")." + tmux);
 }
 
+// the memory mode (Html.ts MODES), or with a name, that one
+function term_mode(t: Term, arg: string): void {
+  if (arg === "standard" || arg === "conversation") {
+    term_act(t, { $: "Talk", on: arg === "conversation" });
+    return;
+  }
+  const talk = t.v.talk;
+  const now = talk === null ? "standard" : "conversation, from message " + talk.from + ", " + Math.round(talk.used * 100) + "% of its space used";
+  term_note(t, (arg === "" ? "" : "No mode " + arg + ". ") + "The memory mode is " + now + ". /mode standard or /mode conversation switches it.");
+}
+
 async function term_export(t: Term): Promise<void> {
   const res  = await term_get(t, "/export", "export");
   const file = process.cwd() + "/unii-memory.json";
@@ -1047,7 +1060,36 @@ function term_task(t: Term, arg: string, state: "done" | "dropped" | "open", go:
   if (typeof got === "string") {
     return term_note(t, got);
   }
-  term_act(t, { $: "Task", task: got.task.id, state, ...(got.answer === undefined ? {} : { answer: got.answer }), note: got.note, go });
+  term_act(t, { $: "Task", task: got.task.id, state, ...(got.answer === undefined ? {} : { answer: got.answer }), note: got.note, go, ...(got.fields === undefined ? {} : { fields: got.fields }) });
+}
+
+// a task's fields answered (campo=valor), kept as a draft: not concluded
+function term_draft(t: Term, arg: string): void {
+  const got = View.task_args(t.v, arg, false);
+  if (typeof got === "string") {
+    return term_note(t, got);
+  }
+  const given = View.fields_args(got.task, got.note);
+  if (typeof given === "string") {
+    return term_note(t, given);
+  }
+  if (Object.keys(given.fields).length === 0) {
+    return term_note(t, (got.task.fields ?? []).length === 0 ? "A pendência " + got.task.id + " não tem campos." : "Informe as respostas como campo=valor, por exemplo /rascunho " + got.task.id + " 1=a.");
+  }
+  term_act(t, { $: "TaskDraft", task: got.task.id, fields: given.fields });
+}
+
+// a message about a task, in its thread (a turn of Unii's, the task
+// not concluded); none: the task whole, its thread with it
+function term_talk(t: Term, arg: string): void {
+  const got = View.task_args(t.v, arg, false);
+  if (typeof got === "string") {
+    return term_note(t, got);
+  }
+  if (got.note === "") {
+    return term_rows(t, View.entry_rows(null, "note", View.tasks_md(t.v, got.task)), false);
+  }
+  term_act(t, { $: "TaskSay", task: got.task.id, text: got.note });
 }
 
 // the footer's line of the pending list, if any is open

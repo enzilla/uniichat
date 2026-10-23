@@ -1,13 +1,14 @@
 // TaskHtml.test
 // =============
-// `bun test TaskHtml.test.ts`: a task's window on the web (Html.task_html)
-// and the list's title that opens it (Html.tasks_html).
+// `bun test TaskHtml.test.ts`: the web's task window (Html.ts
+// task_window_html): the task's item as the list makes it, whole (its
+// detail shown, its fields with the draft, its thread open), and the
+// list's title opening it.
 
 import { afterAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as T from "./Tasks.ts";
-import * as View from "./View.ts";
 import * as Html from "./web/src/Html.ts";
 
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-taskhtml-");
@@ -15,42 +16,38 @@ const NOW  = Date.parse("2026-10-23T12:00:00Z");
 
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 
-function view(): View.View {
+function tasks(): T.Task[] {
   T.tasks_forget();
   const s = T.tasks_load(fs.mkdtempSync(ROOT + "/chat-"));
-  T.task_new(s, { title: "Qual ambiente <usar>?", detail: "Para o **teste**.", ref: "hospitalar#644", choices: [{ label: "hom", description: "Ensaio, sem risco." }, "prod"] }, "main", NOW);
-  T.task_new(s, { title: "Backup" }, "main", NOW);
-  T.task_resolve(s, "P2", "done", null, "feito", NOW);
-  const v = View.view_new();
-  v.tasks = T.tasks_view(s, NOW);
-  return v;
+  T.task_new(s, { title: "Janela de deploy", detail: "Depois do **PR 644**.", fields: [
+    { id: "amb", label: "Ambiente", kind: "choice", choices: ["hom", "prod"] },
+    { id: "obs", label: "Observação", kind: "text", required: false },
+  ] }, "main", NOW);
+  T.task_draft(s, "P1", { amb: "prod" });
+  T.task_say(s, "P1", "qual a janela?", NOW);
+  return T.tasks_view(s, NOW);
 }
 
-test("an open task's window: its head escaped, detail, each choice with what it means, the comment, its acts, its thread unmarked, its box", () => {
-  const v = view();
-  v.whole = new Map<number, View.Entry>([[1, { kind: "user", text: View.task_mark(v.tasks[0]) + "\nqual a diferença?" }], [2, { kind: "unii", text: "hom é o ensaio." }]]);
-  v.threads = { P1: [2] };
-  const html = Html.task_html(v, v.tasks[0]).join("\n");
-  expect(html).toContain('id="task-title">Qual ambiente &lt;usar&gt;?');
-  expect(html).toContain("Aberta · com você");
-  expect(html).toContain("<strong>teste</strong>");
-  expect(html).toContain('<b>hom</b><small>Ensaio, sem risco.</small>');
-  expect(html).toContain('<b>prod</b></button>');
-  expect(html).toContain('class="note"');
-  expect(html).toContain("Avisar o Unii agora");
-  expect(html).not.toContain(">Concluir<"); // with choices, a choice concludes it
-  expect(html).toContain("Conversa (2)");
-  expect(html).toContain("qual a diferença?");
-  expect(html).not.toContain("Sobre a pendência");
-  expect(html).toContain('id="task-say"');
+test("the list's title opens the window; the window holds the item whole: detail shown, draft checked, thread open", () => {
+  const ts = tasks();
+  expect(Html.tasks_html(ts).now[0]).toContain(`data-open="P1"`);
+  const win = Html.task_window_html(ts, "P1");
+  expect(win).toContain(`id="task-title"`);
+  expect(win).not.toContain("<summary>Detalhes</summary>");
+  expect(win).toContain("<strong>PR 644</strong>");
+  expect(win).toMatch(/value="prod" checked/);
+  expect(win).toMatch(/<details class="thread" data-keep="thread" open>/);
+  expect(win).toContain("qual a janela?");
+  expect(win).toContain(`data-keep="note"`);
 });
 
-test("a closed task's window: its answer and comment, Reabrir, no choices; the list's title opens a window", () => {
-  const v = view();
-  const html = Html.task_html(v, v.tasks.find((t) => t.id === "P2")!).join("\n");
-  expect(html).toContain("Concluída");
-  expect(html).toContain("Comentário: “feito”");
-  expect(html).toContain(">Reabrir<");
-  expect(html).not.toContain('class="opts"');
-  expect(Html.tasks_html(v.tasks).open[0]).toContain('data-open="P1"');
+test("a task no longer listed says so", () => {
+  expect(Html.task_window_html(tasks(), "P9")).toContain("A pendência P9 não está mais na lista.");
+});
+
+test("the window's radios are named apart from the list's (one group each)", () => {
+  const ts = tasks();
+  const names = (html: string) => [...html.matchAll(/type="radio" name="([^"]+)"/g)].map((m) => m[1]);
+  const list = new Set(names(Html.tasks_html(ts).now[0]));
+  expect(names(Html.task_window_html(ts, "P1")).some((n) => list.has(n))).toBe(false);
 });

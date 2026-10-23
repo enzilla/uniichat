@@ -186,15 +186,19 @@ function chat(): void {
     }
   };
   document.onclick = click;
-  $("#task").onsubmit = task_say;
-  // in its box, Enter sends (Shift+Enter: a new line), as the chat's
-  $("#task").onkeydown = (ev) => {
-    const say = (ev.target as HTMLElement).closest("#task-say");
-    if (say !== null && ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
-      ev.preventDefault();
-      say.closest("form")?.requestSubmit();
-    }
-  };
+  // the list's items and a task's window (the same item, whole) take
+  // the same acts: a field answered, a thread opened, Ctrl+Enter sends
+  for (const box of [$("#tasks"), $("#task")]) {
+    box.addEventListener("change", task_draft);
+    box.addEventListener("toggle", thread_toggle, true);
+    box.addEventListener("keydown", (ev) => {
+      const el = ev.target as HTMLElement;
+      if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+        ev.preventDefault();
+        task_say(el.closest<HTMLElement>("li[data-task]")!.dataset.task!, el);
+      }
+    });
+  }
   $("#task").addEventListener("close", () => (TASK = null));
   // a phone's keyboard up or down: the box's last line stays in sight, if
   // the caret is there; the page's bottom, if at it
@@ -319,7 +323,12 @@ function click(ev: MouseEvent): void {
     go(path ?? "/");
   }
   if (a !== undefined) {
-    act(task_act(el, JSON.parse(a)));
+    const made = JSON.parse(a) as View.Act;
+    if (made.$ === "TaskSay") {
+      task_say(made.task, el);
+    } else {
+      act(task_act(el, made));
+    }
   }
   if (text !== undefined) {
     navigator.clipboard.writeText(text).then(() => copied(el), () => toast("Could not copy."));
@@ -373,35 +382,158 @@ function left(ev: FocusEvent): void {
   }
 }
 
-// a task's Concluir, Descartar or choice (Html.tasks_html, task_html)
-// takes its item's or window's comment and "Avisar o Unii agora"
+// a task's Concluir, Descartar or choice (Html.tasks_html) takes its
+// item's comment and "Avisar o Unii agora"
 function task_act(el: HTMLElement, a: View.Act): View.Act {
-  const item = el.closest("[data-task]");
+  const item = el.closest("li[data-task]");
   if (a.$ !== "Task" || a.state === "open" || item === null) {
     return a;
   }
-  const note = item.querySelector<HTMLInputElement | HTMLTextAreaElement>(".note")?.value ?? "";
+  const note = item.querySelector<HTMLInputElement>("input.note")?.value ?? "";
   const go = item.querySelector<HTMLInputElement>(".go input")?.checked ?? false;
-  return { ...a, note, go };
+  const fields = a.state === "done" ? task_fields(item) : {};
+  return { ...a, note, go, ...(Object.keys(fields).length === 0 ? {} : { fields }) };
+}
+
+// a field's answer as its fieldset holds it (Html.fields_html): a text,
+// the choices checked (multi), the one checked ("" none)
+function field_value(set: HTMLElement): unknown {
+  if (set.dataset.kind === "text") {
+    return set.querySelector("textarea")?.value ?? "";
+  }
+  const on = [...set.querySelectorAll<HTMLInputElement>("input:checked")].map((i) => i.value);
+  return set.dataset.kind === "multi" ? on : (on[0] ?? "");
+}
+
+// every field's answer of a task's item, by field id
+function task_fields(item: Element): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const set of item.querySelectorAll<HTMLElement>("fieldset.field")) {
+    out[set.dataset.field!] = field_value(set);
+  }
+  return out;
+}
+
+// a field changed (a radio, a box, a text left): kept as a draft
+function task_draft(ev: Event): void {
+  const set = (ev.target as HTMLElement).closest<HTMLElement>(":is(#tasks, #task) fieldset.field");
+  const item = set?.closest<HTMLElement>("li[data-task]");
+  if (set === null || set === undefined || item === null || item === undefined) {
+    return;
+  }
+  act({ $: "TaskDraft", task: item.dataset.task!, fields: { [set.dataset.field!]: field_value(set) } });
+}
+
+// a message in a task's thread (the box of the item at: the list's or
+// its window's): the box emptied, its text back in it if the server
+// refuses (and it's still empty)
+function task_say(task: string, at: Element): void {
+  const where = at.closest("#task") !== null ? "#task" : "#tasks";
+  const box = () => document.querySelector<HTMLTextAreaElement>(`${where} li[data-task="${CSS.escape(task)}"] textarea.say`);
+  const text = box()?.value ?? "";
+  for (const msg of View.view_act(v, { $: "TaskSay", task, text })) {
+    const was = box();
+    if (was !== null) {
+      was.value = "";
+    }
+    View.link_send(v, msg, (out) => {
+      if (out.error === undefined) {
+        return;
+      }
+      toast(out.error);
+      const now = box();
+      if (now !== null && now.value.trim() === "") {
+        now.value = text;
+      }
+    });
+  }
+  draw(false);
+}
+
+// what's typed in the list or a task's window and not sent (data-keep: a
+// comment, a text field, a thread's box, a box checked), and where the
+// focus is, taken before its items are made again and put back in the
+// new ones (by where it is, task and name)
+type Kept = { el: Element; value: string | null; checked: boolean | null; focus: boolean; start: number | null; end: number | null };
+function keep_take(): Map<string, Kept> {
+  const kept = new Map<string, Kept>();
+  for (const el of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(":is(#tasks, #task) li[data-task] :is(input, textarea)[data-keep]")) {
+    const key = el.closest(":is(#tasks, #task)")!.id + "/" + el.closest<HTMLElement>("li[data-task]")!.dataset.task + "/" + el.dataset.keep;
+    const box = el instanceof HTMLInputElement && el.type === "checkbox";
+    const focus = document.activeElement === el;
+    const value = !box && el.value !== el.defaultValue ? el.value : null;
+    const checked = box && (el as HTMLInputElement).checked !== (el as HTMLInputElement).defaultChecked ? (el as HTMLInputElement).checked : null;
+    if (value !== null || checked !== null || focus) {
+      kept.set(key, { el, value, checked, focus, start: box ? null : el.selectionStart, end: box ? null : el.selectionEnd });
+    }
+  }
+  return kept;
+}
+function keep_put(kept: Map<string, Kept>): void {
+  for (const [key, k] of kept) {
+    const [where, task, name] = key.split("/");
+    const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${where} li[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
+    if (el === null || el === k.el) {
+      continue;
+    }
+    if (k.value !== null) {
+      el.value = k.value;
+    }
+    if (k.checked !== null) {
+      (el as HTMLInputElement).checked = k.checked;
+    }
+    if (k.focus) {
+      el.focus();
+      if (k.start !== null && k.end !== null) {
+        el.setSelectionRange(k.start, k.end);
+      }
+    }
+  }
+}
+
+// a thread opened or shut by hand stays so, its item made again, till
+// a message comes to it (THREADS: by task, how and at how many messages)
+const THREADS = new Map<string, { open: boolean; n: number }>();
+function thread_toggle(ev: Event): void {
+  const el = ev.target as HTMLElement;
+  const item = el.closest<HTMLElement>("#tasks li[data-task]");
+  if (!(el instanceof HTMLDetailsElement) || !el.classList.contains("thread") || item === null) {
+    return;
+  }
+  THREADS.set(item.dataset.task!, { open: el.open, n: el.querySelectorAll("ol > li").length });
+}
+function threads_put(): void {
+  for (const el of document.querySelectorAll<HTMLDetailsElement>("#tasks li[data-task] details.thread")) {
+    const task = el.closest<HTMLElement>("li[data-task]")!.dataset.task!;
+    const was = THREADS.get(task);
+    if (was !== undefined && was.n === el.querySelectorAll("ol > li").length && el.open !== was.open) {
+      el.open = was.open;
+    }
+  }
 }
 
 // the pending list: the header's ✓ (on a wide screen, an aside instead:
 // style.css), its items made again only as the list changes (a state)
 // (those that wait for others: out of the count, a summary that opens
 // to them)
-let TASKS: { of: unknown; html: { open: string[]; waiting: string[]; closed: string[] } } = { of: null, html: { open: [], waiting: [], closed: [] } };
+let TASKS: { of: unknown; html: { open: string[]; now: string[]; waiting: string[]; closed: string[] } } = { of: null, html: { open: [], now: [], waiting: [], closed: [] } };
 function tasks_bar(): void {
   if (TASKS.of !== v.tasks) {
     TASKS = { of: v.tasks, html: Html.tasks_html(v.tasks) };
   }
-  const { open, waiting, closed } = TASKS.html;
+  const { open, now, waiting, closed } = TASKS.html;
   const untold = View.view_untold(v).length;
   document.body.classList.toggle("tasking", v.tasks.length > 0);
   $(".tasks").hidden = v.tasks.length === 0;
-  $(".tasks span").textContent = String(open.length);
+  $(".tasks span").textContent = View.tasks_count_said(open.length, waiting.length);
   $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
   $("#tasks .none").hidden = open.length > 0;
-  markup($("#tasks ul.now"), open);
+  $("#tasks .none").textContent = View.tasks_none_said(waiting.length);
+  const kept = keep_take();
+  markup($("#tasks ul.now"), now);
+  task_render();
+  keep_put(kept);
+  threads_put();
   markup($("#tasks .waiting ul"), waiting);
   $("#tasks .waiting").hidden = waiting.length === 0;
   $("#tasks .waiting summary").textContent = View.tasks_waiting_said(waiting.length);
@@ -414,46 +546,27 @@ function tasks_bar(): void {
   }
 }
 
-// A task's window
-// ---------------
-// A native modal dialog (focus kept in it, Esc closes it): the task whole,
-// its choices, its comment, its thread and a box whose messages go to
-// the chat about it (View: their mark). Made again as the task, its
-// thread or the chat change, part by part (what is typed stays)
-
-// the task whose window is open, if one
+// a task's window (Html.task_window_html): a native modal dialog over the
+// page (focus kept in it, Esc closes it), made again with the list
 let TASK: string | null = null;
-
+let WINDOW: { of: unknown; id: string | null } = { of: null, id: null };
 function task_open(id: string): void {
   TASK = id;
+  WINDOW = { of: null, id: null };
   task_render();
   const box = $<HTMLDialogElement>("#task");
   if (!box.open) {
     box.showModal();
   }
-  (box.querySelector<HTMLElement>("#task-say") ?? box.querySelector<HTMLElement>(".x"))?.focus();
+  box.querySelector<HTMLElement>("textarea.say, .x")?.focus();
 }
-
 function task_render(): void {
-  if (TASK === null) {
+  if (TASK === null || (WINDOW.of === v.tasks && WINDOW.id === TASK)) {
     return;
   }
-  const t = v.tasks.find((x) => x.id === TASK);
-  const box = $("#task");
-  box.dataset.task = TASK;
-  markup(box.querySelector(".body")!, t === undefined ? [`<p class="none">A pendência ${Html.esc(TASK)} não está mais na lista.</p><button type="button" class="x" data-close aria-label="Fechar">✕</button>`] : Html.task_html(v, t));
-}
-
-// a message written in the window: to the chat, about its task
-function task_say(ev: SubmitEvent): void {
-  ev.preventDefault();
-  const say = (ev.target as HTMLElement).querySelector<HTMLTextAreaElement>("#task-say");
-  const text = say?.value.trim() ?? "";
-  if (say === null || text === "" || TASK === null) {
-    return;
-  }
-  act({ $: "Send", text, task: TASK });
-  say.value = "";
+  WINDOW = { of: v.tasks, id: TASK };
+  $("#task").dataset.task = TASK;
+  $("#task .body").innerHTML = Html.task_window_html(v.tasks, TASK);
 }
 
 function copied(button: HTMLElement): void {
@@ -935,7 +1048,6 @@ function bars(): void {
     $("#timers").hidePopover();
   }
   tasks_bar();
-  task_render();
   send.classList.toggle("stop", stop);
   // an agent's page has no box: messages go to UniiChat
   $(".composer").hidden = !on;
@@ -945,7 +1057,7 @@ function bars(): void {
   $(".composer").classList.toggle("rec", P.rec !== null);
   // a knob focused (its menu just closed) stays so as its value changes
   const knob = (document.activeElement as HTMLElement | null)?.dataset?.knob;
-  markup($("#pick"), Html.pick_html(View.view_fold(v), v.fold === null, View.view_shown(v)));
+  markup($("#pick"), Html.pick_html(View.view_fold(v), v.fold === null, View.view_shown(v), v.page === null ? v.talk : undefined));
   if (knob !== undefined) {
     $("#pick [data-knob=" + knob + "]").focus();
   }

@@ -25,7 +25,7 @@ import { clip_pages } from "./Clip.ts";
 import { Disk } from "./Disk.ts";
 import { Mcp } from "./Mcp.ts";
 import * as Import from "./Import.ts";
-import { JOBS, Memory, type Msg as Log, type Share } from "./Memory.ts";
+import { JOBS, Memory, TALK, type Msg as Log, type Share } from "./Memory.ts";
 import { OpenAI } from "./OpenAI.ts";
 import { Owner } from "./Owner.ts";
 import { Pick } from "./Pick.ts";
@@ -37,7 +37,7 @@ import { move_over, write_whole } from "./Write.ts";
 import * as Timer from "./Timer.ts";
 import * as Tasks from "./Tasks.ts";
 import { PROMPTS, SEARCHES, Tools, type Agent, type Live } from "./Tools.ts";
-import { FRAME, IMAGES, live_push, PING, QUIT, SUMMARIES, TICK, TURN, turn_task, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
+import { FRAME, IMAGES, live_push, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
 import hello_md from "./hello.md" with { type: "text" };
 import app_js from "./web/app.js" with { type: "file" };
@@ -64,7 +64,9 @@ type Sock = ServerWebSocket<{ who: string; tab: string; wire: string | null; hos
 type Body = { fh: fs.promises.FileHandle; size: number };
 
 // a message logged: its pages [id, end)
-type Msg = { id: number; end: number };
+// (origin: where it came from, for the tasks a turn adds (Tasks.Origin):
+// a schedule's, a subagent's report; none, the user's)
+type Msg = { id: number; end: number; origin?: string };
 
 // what the agent saw at its last call: the view before message `from`,
 // then every message from it on
@@ -113,8 +115,6 @@ type Chat = {
   held  : Array<() => void> | null;
   limits: Record<string, Parked>;
   fell  : Map<string, string>;
-  thread: string | null;              // the task the turn running is about (View.turn_task), if one
-  threads: Record<string, number[]>; // Unii's answers about each task (THREADS), by its id
 };
 
 // Constants
@@ -135,16 +135,17 @@ const PID        = config.DIR + "/server.pid";
 const CHAT       = config.DIR + "/chat";
 // a turn's head
 const HEAD       = "Turn: the user's new message:\n\n";
-// Unii's answers in turns about one task, by its id: its thread's (the
-// user's messages about it carry its mark, View.task_mark), kept with
-// the chat
-const THREADS    = "/threads.json";
 // a goal's check (Chat.check): its own system prompt, asked after the
 // chat (the view, its latest messages whole) of its goal; unmet, the
 // user's nudge
 const GOAL       = "You check a goal. Below is a chat between a user and Unii, an AI agent: its older messages as summary lines (id+n|text), then its latest messages whole, then the goal the user set with /goal. Answer yes if the chat shows the goal fully satisfied now, else no. Write that one word, nothing else.";
 const GOAL_ASK   = "\nThe goal:\n\n";
 const GOAL_NO    = "The goal isn't satisfied yet: keep working.";
+// conversation mode (Memory.ts) full: switched off, as the chat says;
+// switched on with its first messages over its space already: refused
+const TALK_FULL  = "Conversation mode switched itself off: the messages it kept word for word, from message {id} on, filled their space in Unii's view. They show as summaries again; switch it on to keep the next ones whole.";
+const TALK_BIG   = "Conversation mode can't start: the messages since message {id} already fill its space in Unii's view.";
+const TALK_IMP   = "Conversation mode switched itself off: the messages imported filled its space in Unii's view (from message {id} on). Switch it on to keep the next ones whole.";
 const FULL       = "UniiChat's disk is full; try again soon.";
 // an import running: its batch's file in the chat's dir (Chat.keep)
 const BATCH      = "/import.json";
@@ -226,7 +227,7 @@ export namespace Chat {
     const chat: Chat = {
       mem, tools, pick, socks: new Set(), acts: new Map(), busy: false, call: null, model: "", check: null, asked: false, open: 0, sent: [], wait: [],
       halt: new AbortController(), live: [], calls: {}, eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null,
-      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(), thread: null, threads: Chat.threads_read(mem.dir),
+      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(),
     };
     // a saved pick (a profile, by name) not offered gave way: told once
     const shown = (p: Pick) => p.profile ?? Pick.label(p);
@@ -353,6 +354,7 @@ export namespace Chat {
     const mem = chat.mem;
     if (chat.call !== null && Memory.whole(mem, msg.id) === msg.id) {
       chat.sent.push(msg);
+      chat.tools.origin = Tasks.turn_origin([chat.tools.origin, msg.origin]);
       chat.call.send(Memory.say(mem, msg.id, msg.end));
       return;
     }
@@ -382,6 +384,7 @@ export namespace Chat {
       chat.wait = [];
       chat.busy = false;
       Chat.live(chat, null, []);
+      Chat.tasks_talked(chat);
       Chat.phone(chat);
       Chat.after(chat);
       Chat.change(chat);
@@ -414,8 +417,9 @@ export namespace Chat {
       }
     }
     const msgs = (chat.sent = chat.wait.splice(0));
+    chat.tools.origin = Tasks.turn_origin(msgs.map((m) => m.origin));
     const says = msgs.filter((m) => m.end > from).map((m) => Memory.say(mem, Math.max(m.id, from), m.end));
-    const view = Memory.view(mem, from);
+    const view = Memory.view(mem, from, mem.view.parts, mem.talk);
     // the MCP servers' notes the chat showed are in the view: the call's
     // listing gives the master the rest, and those made since (Mcp.heard)
     Mcp.heard(chat.tools.mcp, Tools.off(chat.tools), "main", true);
@@ -426,10 +430,8 @@ export namespace Chat {
     chat.socks.forEach((sock) => Chat.show(chat, sock));
     const tasks = { text: Tasks.tasks_block(Tasks.tasks_load(mem.dir), Date.now()), mark: false };
     const asked = await Chat.invoked(chat, text, halt.signal);
-    chat.thread = turn_task(says.map((say) => say.text));
-    const about = Chat.about(chat, chat.thread);
     // the skills first: they stay the same from turn to turn (Tools.skills)
-    const blocks = [Tools.instructions(chat.tools), Tools.skills(chat.tools), ...view, Tools.devices(chat.tools), Tools.at_work(chat.tools), tasks, ...asked, ...about, { text: HEAD + text, mark: true }];
+    const blocks = [Tools.instructions(chat.tools), Tools.skills(chat.tools), ...view, Tools.devices(chat.tools), Tools.at_work(chat.tools), tasks, ...asked, { text: HEAD + text, mark: true }];
     const ask = { ...Chat.share(chat, Tools.prompt("prompt")), searches: SEARCHES, server, blocks, imgs };
     chat.model = chat.pick.model;
     chat.asked = true;
@@ -456,41 +458,10 @@ export namespace Chat {
     }));
   }
 
-  // the task a turn's messages are all about, whole (its detail, choices,
-  // state, what it waits for), for that turn; none: no block
-  export function about(chat: Chat, id: string | null): { text: string; mark: boolean }[] {
-    const s = Tasks.tasks_load(chat.mem.dir);
-    const t = id === null ? null : Tasks.task_find(s, id);
-    return t === null ? [] : [{ text: "This turn's messages are about task " + t.id + " (the user wrote them in its window, where your answers show too); all of it:\n" + Tasks.task_line(t, Date.now(), true, s.tasks) + "\n\n", mark: false }];
-  }
-
-  // the threads kept (none, or unreadable: none)
-  export function threads_read(dir: string): Record<string, number[]> {
-    try {
-      const all = JSON.parse(fs.readFileSync(dir + THREADS, "utf8"));
-      return Object.fromEntries(Object.entries(all).filter(([, ids]) => Array.isArray(ids)).map(([id, ids]) => [id, (ids as unknown[]).filter(Number.isInteger) as number[]]));
-    } catch {
-      return {};
-    }
-  }
-
-  // Unii's answer logged in a turn about a task: its thread's, kept, the
-  // views told
-  export function threaded(chat: Chat, id: number): void {
-    const task = chat.thread;
-    if (task === null) {
-      return;
-    }
-    chat.threads[task] = [...(chat.threads[task] ?? []), id];
-    write_whole(chat.mem.dir + THREADS, JSON.stringify(chat.threads) + "\n");
-    Chat.change(chat);
-  }
-
   // the turn's call ends; false: the turn ends
   export async function ended(chat: Chat, call: Call, halt: AbortController): Promise<boolean> {
     const end = await call.done;
     chat.call = null;
-    chat.thread = null;
     delete chat.limits[TURN];
     Chat.unanswered(chat, null);
     Chat.live(chat, null, []);
@@ -578,10 +549,33 @@ export namespace Chat {
     for (const { i, kind, text, date, images } of roots) {
       Chat.all(chat, { $: "entry", id: i, kind, text, date, images });
     }
-    if (kind === "unii") {
-      roots.forEach((root) => Chat.threaded(chat, root.i));
-    }
+    Chat.talked(chat);
     return { id: roots[0].i, end: chat.mem.count };
+  }
+
+  // a message logged in conversation mode: the views see its space fill
+  // (their meter); past it (TALK) it switches itself off, said in the
+  // chat: never a message of it quietly summarized again
+  export function talked(chat: Chat, why = TALK_FULL): void {
+    const mem = chat.mem;
+    if (mem.talk === null) {
+      return;
+    }
+    if (Memory.talk_size(mem) <= TALK) {
+      return Chat.all(chat, Chat.state(chat));
+    }
+    const from = mem.talk;
+    Chat.talk(chat, null);
+    Chat.note(chat, why.replace("{id}", String(from)));
+  }
+
+  // conversation mode from message `from` on, or off (null): saved, and
+  // told to every view
+  export function talk(chat: Chat, from: number | null): void {
+    chat.mem.talk = from;
+    chat.mem.talked.clear();
+    Memory.save(chat.mem);
+    Chat.change(chat);
   }
 
   // a message the call took was logged as it came
@@ -697,12 +691,25 @@ export namespace Chat {
     Chat.unanswered(chat, agent);
     Chat.live(chat, agent, []);
     Chat.hold(chat, () => {
-      const msg = Chat.push(chat, null, "work", text);
+      const msg = { ...Chat.push(chat, null, "work", text), origin: "agent:" + agent.name };
       if (!stopped) {
         Chat.take(chat, msg);
       }
       Chat.change(chat);
     });
+  }
+
+  // a turn ended: each task whose thread still waits for Unii (the user
+  // wrote there, Unii didn't task_reply) gets the turn's last reply, if
+  // Unii's, and it's the user's turn (Tasks.tasks_talked). Not
+  // Chat.talked, conversation mode's
+  export function tasks_talked(chat: Chat): void {
+    const s = Tasks.tasks_load(chat.mem.dir);
+    if (!s.tasks.some((t) => t.talk === "unii")) {
+      return;
+    }
+    const last = Memory.message(chat.mem, chat.mem.count - 1);
+    Tasks.tasks_talked(s, last !== null && last.kind === "unii" ? last.text : null, Date.now());
   }
 
   // a turn's last message, Unii's reply or why there was none, to the
@@ -761,6 +768,8 @@ export namespace Chat {
     }
     Memory.push(chat.mem, held.map((m) => tag(m, false)));
     chat.batch = Chat.batch(chat, { a, b: chat.mem.count, said, spent: 0 });
+    // in conversation mode, its space with them counted (most fill it)
+    Chat.talked(chat, TALK_IMP);
     chat.socks.forEach((sock) => Chat.show(chat, sock));
     Chat.progress(chat);
     return { going: chat.batch !== null };
@@ -794,12 +803,13 @@ export namespace Chat {
   }
 
   // kept as it is till it ends (a restart changes nothing): written
-  // whole, then moved in place
+  // whole, then moved in place; flushed soon (Disk.ts)
   export function keep(batch: Batch, chat: Chat): void {
     const file = chat.mem.dir + BATCH;
     const { a, b, said, spent } = batch;
     fs.writeFileSync(file + ".new", JSON.stringify({ a, b, said, spent, why: chat.mem.hold[1] }));
     move_over(file + ".new", file);
+    Disk.wrote(file);
   }
 
   // the import a chat ran when let go (BATCH); null: none
@@ -974,7 +984,7 @@ export namespace Chat {
         }
         if (dues.length > 0) {
           const fresh = dues.filter((t) => Owner.act_get("timer " + t.id + " " + t.at) === null);
-          const msgs = fresh.map((t) => Chat.push(chat, null, "work", Timer.timer_say(t, at), [], false, "timer " + t.id + " " + t.at));
+          const msgs = fresh.map((t) => ({ ...Chat.push(chat, null, "work", Timer.timer_say(t, at), [], false, "timer " + t.id + " " + t.at), origin: "timer" }));
           mem.timers = mem.timers.flatMap((t) => (dues.includes(t) ? (Timer.timer_after(t, at) ?? []) : [t]));
           Memory.save(mem);
           msgs.forEach((msg) => Chat.take(chat, msg));
@@ -1049,7 +1059,8 @@ export namespace Chat {
     const labels = Object.fromEntries(chat.tools.labels);
     const tasks = Tasks.tasks_view(Tasks.tasks_load(chat.mem.dir), Date.now());
     const skills = Tools.opened(chat.tools).flatMap(([device, d]) => d.skills.map((s) => ({ name: s.name, description: s.description, device })));
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, skills, threads: chat.threads };
+    const talk = chat.mem.talk === null ? null : { from: chat.mem.talk, used: Math.min(1, Memory.talk_size(chat.mem) / TALK) };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, skills, talk };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1251,6 +1262,24 @@ export namespace Chat {
         }
         return {};
       }
+      case "talk": {
+        // conversation mode on (from its last message whole: Memory.talk_from)
+        // or off; one on already keeps where it started
+        const on = msg.on === true || msg.on === "true";
+        const mem = chat.mem;
+        if ((mem.talk !== null) === on) {
+          return {};
+        }
+        const from = on ? Memory.talk_from(mem) : null;
+        mem.talk = from;
+        if (from !== null && Memory.talk_size(mem) > TALK) {
+          mem.talk = null;
+          mem.talked.clear();
+          return { error: TALK_BIG.replace("{id}", String(from)) };
+        }
+        Chat.talk(chat, from);
+        return {};
+      }
       case "mcp": {
         // an MCP server on or off in this chat: one off ends, its calls
         // running failed; the chat is told, so the AI knows its tools
@@ -1284,7 +1313,7 @@ export namespace Chat {
         // at once, by a message that starts a turn (a resolution made
         // before, untold, too)
         const s = Tasks.tasks_load(chat.mem.dir);
-        const t = Tasks.task_resolve(s, msg.task, msg.state, msg.answer, msg.note, Date.now());
+        const t = Tasks.task_resolve(s, msg.task, msg.state, msg.answer, msg.note, Date.now(), msg.fields);
         if (typeof t === "string") {
           return { error: t };
         }
@@ -1293,6 +1322,30 @@ export namespace Chat {
         if (t !== null || (go && was !== null && !was.told)) {
           Chat.resolved(chat, [was!], go);
         }
+        Chat.change(chat);
+        return {};
+      }
+      case "task_draft": {
+        // a task's fields answered by the user, kept as a draft: no turn,
+        // nothing told (Tasks.task_draft); set again, the same
+        const t = Tasks.task_draft(Tasks.tasks_load(chat.mem.dir), msg.task, msg.fields);
+        if (typeof t === "string") {
+          return { error: t };
+        }
+        Chat.change(chat);
+        return {};
+      }
+      case "task_say": {
+        // the user talks about a task: a message of the chat, marked with
+        // it (one memory), in its thread too, that starts a turn; the
+        // task waits for Unii (Tasks.task_say). Recorded as the message's
+        // last page, so done again it adds nothing
+        const s = Tasks.tasks_load(chat.mem.dir);
+        const t = Tasks.task_say(s, msg.task, msg.text, Date.now());
+        if (typeof t === "string") {
+          return { error: t };
+        }
+        await Chat.writing(chat, async () => Chat.take(chat, Chat.push(chat, null, "user", Tasks.task_mark(t, t.thread.at(-1)!.text), [], false, id)));
         Chat.change(chat);
         return {};
       }
