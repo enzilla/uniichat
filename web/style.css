@@ -397,52 +397,52 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 #tasks .head { margin: 0; display: flex; gap: 8px; font-size: 14.5px; line-height: 1.4; font-weight: 500; overflow-wrap: anywhere; }
 #tasks .id { flex: none; font: 12px/20px var(--mono); color: var(--mid); }
 #tasks .meta { margin: 2px 0 4px; font-size: 12.5px; color: var(--mid); overflow-wrap: anywhere; }
-#tasks .meta:empty { display: none; }
-#tasks .ref { padding: 0 6px; border-radius: 6px; background: var(--block); }
-#tasks li.other .title, #tasks li.closed .title { color: var(--mid); }
+:is(#tasks, #task) .meta:empty { display: none; }
+:is(#tasks, #task) .ref { padding: 0 6px; border-radius: 6px; background: var(--block); }
+:is(#tasks, #task) li.other .title, :is(#tasks, #task) li.closed .title { color: var(--mid); }
 /* the open ones by assignee: each group's heading; a task not the
    user's has no Concluir in relief; where one came from, a quiet badge */
-#tasks li.group { padding: 12px 0 2px; border-top: 0; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--mid); }
-#tasks li.group .n { font-weight: 400; }
-#tasks .origin { padding: 0 6px; border: 1px solid var(--hair); border-radius: 6px; font-size: 11.5px; color: var(--mid); text-decoration: none; }
-#tasks a.origin:hover { color: var(--ink); }
-#tasks details { margin: 4px 0; font-size: 13.5px; }
-#tasks summary { cursor: pointer; color: var(--mid); font-size: 13px; }
-#tasks .md { overflow-wrap: anywhere; }
-#tasks .md :is(p, ul, ol, pre, blockquote) { margin: 6px 0; font-size: 13.5px; }
-#tasks .opts, #tasks .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
-#tasks :is(.opts, .acts) button { padding: 4px 10px; border-radius: 8px; background: var(--block); font-size: 13px; }
-#tasks .opts button { border: 1px solid var(--frame); }
-#tasks :is(.opts, .acts) button:hover { background: var(--hover); }
-#tasks .acts .done { background: var(--ink); color: var(--paper); }
-#tasks .acts .done:hover { background: var(--ink); opacity: .85; }
-#tasks .acts .done.quiet { background: var(--block); color: var(--mid); }
-#tasks .acts .done.quiet:hover { background: var(--hover); opacity: 1; }
-#tasks .go { margin-right: auto; display: flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--mid); cursor: pointer; }
-#tasks .note { width: 100%; margin-top: 6px; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); }
-#tasks .tell { margin: 8px 0 0; text-align: center; background: var(--block); font-size: 13.5px; }
-#tasks .closed, #tasks .waiting { margin-top: 10px; }
-#tasks .waiting summary { padding: 4px 0; }
-#tasks li.waiting .title { color: var(--mid); }
-#tasks .frees { padding: 0 6px; border-radius: 6px; background: var(--ink); color: var(--paper); font-weight: 500; }
-#tasks .closed summary { padding: 4px 0; }
+:is(#tasks, #task) li.group { padding: 12px 0 2px; border-top: 0; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--mid); }
+:is(#tasks, #task) li.group .n { font-weight: 400; }
+:is(#tasks, #task) .origin { padding: 0 6px; border: 1px solid var(--hair); border-radius: 6px; font-size: 11.5px; color: var(--mid); text-decoration: none; }
+:is(#tasks, #task) a.origin:hover { color: var(--ink); }
+:is(#tasks, #task) details { margin: 4px 0; font-size: 13.5px; }
+:is(#tasks, #task) summary { cursor: pointer; color: var(--mid); font-size: 13px; }
+:is(#tasks, #task) .md { overflow-wrap: anywhere; }
+:is(#tasks, #task) .md :is(p, ul, ol, pre, blockquote) { margin: 6px 0; font-size: 13.5px; }
+:is(#tasks, #task) .opts, :is(#tasks, #task) .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+:is(#tasks, #task) :is(.opts, .acts) button { padding: 4px 10px; border-radius: 8px; background: var(--block); font-size: 13px; }
+:is(#tasks, #task) .opts button { border: 1px solid var(--frame); }
+:is(#tasks, #task) :is(.opts, .acts) button:hover { background: var(--hover); }
+:is(#tasks, #task) .acts .done { background: var(--ink); color: var(--paper); }
+:is(#tasks, #task) .acts .done:hover { background: var(--ink); opacity: .85; }
+:is(#tasks, #task) .acts .done.quiet { background: var(--block); color: var(--mid); }
+:is(#tasks, #task) .acts .done.quiet:hover { background: var(--hover); opacity: 1; }
+:is(#tasks, #task) .go { margin-right: auto; display: flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--mid); cursor: pointer; }
+:is(#tasks, #task) .note { width: 100%; margin-top: 6px; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); }
+:is(#tasks, #task) .tell { margin: 8px 0 0; text-align: center; background: var(--block); font-size: 13.5px; }
+:is(#tasks, #task) .closed, :is(#tasks, #task) .waiting { margin-top: 10px; }
+:is(#tasks, #task) .waiting summary { padding: 4px 0; }
+:is(#tasks, #task) li.waiting .title { color: var(--mid); }
+:is(#tasks, #task) .frees { padding: 0 6px; border-radius: 6px; background: var(--ink); color: var(--paper); font-weight: 500; }
+:is(#tasks, #task) .closed summary { padding: 4px 0; }
 /* a task's fields (each answered apart, a draft till Concluir) and its
    thread (talk without concluding), with whose turn it is */
-#tasks .fields { margin-top: 6px; display: grid; gap: 6px; }
-#tasks .field { margin: 0; padding: 6px 8px; border: 1px solid var(--hair); border-radius: 8px; min-width: 0; }
-#tasks .field legend { padding: 0 4px; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
-#tasks .field .req { color: var(--mid); }
-#tasks .field .picks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
-#tasks .field label { display: flex; align-items: center; gap: 4px; cursor: pointer; overflow-wrap: anywhere; }
-#tasks .field textarea, #tasks .thread textarea { width: 100%; box-sizing: border-box; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); resize: vertical; }
-#tasks .talk { padding: 0 6px; border-radius: 6px; background: var(--block); }
-#tasks .talk.user { background: var(--ink); color: var(--paper); font-weight: 500; }
-#tasks .thread { margin-top: 8px; }
-#tasks .thread ol { margin: 6px 0; padding: 0; list-style: none; display: grid; gap: 6px; }
-#tasks .thread ol li { padding: 0; border: 0; font-size: 13.5px; overflow-wrap: anywhere; }
-#tasks .thread .who { display: block; font-size: 12px; color: var(--mid); }
-#tasks .thread li.user p { margin: 0; white-space: pre-wrap; }
-#tasks .thread .acts { justify-content: flex-end; }
+:is(#tasks, #task) .fields { margin-top: 6px; display: grid; gap: 6px; }
+:is(#tasks, #task) .field { margin: 0; padding: 6px 8px; border: 1px solid var(--hair); border-radius: 8px; min-width: 0; }
+:is(#tasks, #task) .field legend { padding: 0 4px; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+:is(#tasks, #task) .field .req { color: var(--mid); }
+:is(#tasks, #task) .field .picks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
+:is(#tasks, #task) .field label { display: flex; align-items: center; gap: 4px; cursor: pointer; overflow-wrap: anywhere; }
+:is(#tasks, #task) .field textarea, :is(#tasks, #task) .thread textarea { width: 100%; box-sizing: border-box; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); resize: vertical; }
+:is(#tasks, #task) .talk { padding: 0 6px; border-radius: 6px; background: var(--block); }
+:is(#tasks, #task) .talk.user { background: var(--ink); color: var(--paper); font-weight: 500; }
+:is(#tasks, #task) .thread { margin-top: 8px; }
+:is(#tasks, #task) .thread ol { margin: 6px 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+:is(#tasks, #task) .thread ol li { padding: 0; border: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+:is(#tasks, #task) .thread .who { display: block; font-size: 12px; color: var(--mid); }
+:is(#tasks, #task) .thread li.user p { margin: 0; white-space: pre-wrap; }
+:is(#tasks, #task) .thread .acts { justify-content: flex-end; }
 @media (min-width: 1100px) {
   body.tasking { padding-right: 376px; }
   body.tasking header .tasks { display: none; }

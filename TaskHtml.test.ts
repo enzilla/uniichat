@@ -44,3 +44,10 @@ test("the list's title opens the window; the window holds the item whole: detail
 test("a task no longer listed says so", () => {
   expect(Html.task_window_html(tasks(), "P9")).toContain("A pendência P9 não está mais na lista.");
 });
+
+test("the window's radios are named apart from the list's (one group each)", () => {
+  const ts = tasks();
+  const names = (html: string) => [...html.matchAll(/type="radio" name="([^"]+)"/g)].map((m) => m[1]);
+  const list = new Set(names(Html.tasks_html(ts).now[0]));
+  expect(names(Html.task_window_html(ts, "P1")).some((n) => list.has(n))).toBe(false);
+});

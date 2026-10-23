@@ -260,13 +260,15 @@ function task_item(tasks: Task[], t: Task, whole: boolean): string {
   const acts = `<div class="acts">${go}${act("done", "Concluir", mine ? "done" : "done quiet")}${act("dropped", "Descartar", "drop")}</div>`;
   const talk = View.task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(View.task_talk_said(t))}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
-  return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head}${meta([...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t)}${opts}${note}${acts}${thread_html(t, whole)}</li>`;
+  return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head}${meta([...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t, whole)}${opts}${note}${acts}${thread_html(t, whole)}</li>`;
 }
 
 // a task's fields, each a fieldset: a choice and yes or no as radios,
 // many as checkboxes, a text as a textarea; its draft answer checked or
-// in it. "" for none
-function fields_html(t: Task): string {
+// in it. "" for none. In its window (whole), its radios are named apart
+// from the list's, or the two would be one group and a pick in one
+// would uncheck the other
+function fields_html(t: Task, whole = false): string {
   const fields = t.fields ?? [];
   if (fields.length === 0) {
     return "";
@@ -274,7 +276,7 @@ function fields_html(t: Task): string {
   const draft = t.draft ?? {};
   const one = (f: Field) => {
     const v = Object.hasOwn(draft, f.id) ? draft[f.id] : undefined;
-    const name = "f-" + t.id + "-" + f.id;
+    const name = (whole ? "w-" : "f-") + t.id + "-" + f.id;
     const req = f.required ? ` <span class="req" title="Obrigatório">*</span>` : "";
     const legend = `<legend>${esc(f.label)}${req}</legend>`;
     if (f.kind === "text") {

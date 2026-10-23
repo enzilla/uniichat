@@ -1725,9 +1725,9 @@ function task_item(tasks, t, whole) {
   const acts = `<div class="acts">${go}${act("done", "Concluir", mine ? "done" : "done quiet")}${act("dropped", "Descartar", "drop")}</div>`;
   const talk = task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
-  return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head}${meta([...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t)}${opts}${note}${acts}${thread_html(t, whole)}</li>`;
+  return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head}${meta([...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t, whole)}${opts}${note}${acts}${thread_html(t, whole)}</li>`;
 }
-function fields_html(t) {
+function fields_html(t, whole = false) {
   const fields = t.fields ?? [];
   if (fields.length === 0) {
     return "";
@@ -1735,7 +1735,7 @@ function fields_html(t) {
   const draft = t.draft ?? {};
   const one = (f) => {
     const v = Object.hasOwn(draft, f.id) ? draft[f.id] : undefined;
-    const name = "f-" + t.id + "-" + f.id;
+    const name = (whole ? "w-" : "f-") + t.id + "-" + f.id;
     const req = f.required ? ` <span class="req" title="Obrigatório">*</span>` : "";
     const legend = `<legend>${esc(f.label)}${req}</legend>`;
     if (f.kind === "text") {
