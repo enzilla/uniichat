@@ -72,6 +72,9 @@ const USAGE = `Usage: unii [url]           the chat in this terminal (url: $UNII
        unii serve claude [logout|status]
                             the same for a Claude plan (its claude-sub
                             vendor), in Claude Code's own sign-in
+       unii serve cursor [logout|status]
+                            the same for a Cursor plan (its cursor-sub
+                            vendor), in Cursor's agent's own sign-in
        unii serve sessions  the browsers, terminals and devices signed in
        unii serve revoke <n>|--all
                             sign one of them out (its open sockets close),
@@ -197,6 +200,8 @@ if ((SETS.length > 0 && !FLAG.has("--service")) || (FLAG.size > 0 && !runs && !(
   await (await import("./ChatGPT.ts")).ChatGPT.cli(REST.slice(1)).catch((err) => fail(err.message));
 } else if (cmd === "serve" && sub === "claude" && [undefined, "logout", "status"].includes(more) && !odd([cmd, sub, ...(more ? [more] : [])])) {
   await (await import("./ClaudeSub.ts")).ClaudeSub.cli(REST.slice(1)).catch((err) => fail(err.message));
+} else if (cmd === "serve" && sub === "cursor" && [undefined, "logout", "status"].includes(more) && !odd([cmd, sub, ...(more ? [more] : [])])) {
+  await (await import("./CursorSub.ts")).CursorSub.cli(REST.slice(1)).catch((err) => fail(err.message));
 } else if (cmd === "serve" && sub === "sessions" && !odd([cmd, sub])) {
   await (await import("./Owner.ts")).Owner.sessions();
 } else if (cmd === "serve" && sub === "revoke" && more !== undefined && !odd([cmd, sub, more])) {

@@ -137,6 +137,11 @@ export const CHATGPT    = config_path(config_get("chatgpt", DIR + "/chatgpt.json
 export const CLAUDE_SUB = config_path(config_get("claude_sub", DIR + "/claude-sub"));
 export const CLAUDE     = config_path(config_get("claude", ""));
 
+// cursor-sub's Cursor agent (CursorSub.ts): the home it runs in, where its
+// sign-in and config are kept; its CLI ("": the `agent` installed)
+export const CURSOR_SUB = config_path(config_get("cursor_sub", DIR + "/cursor-sub"));
+export const CURSOR     = config_path(config_get("cursor", ""));
+
 // the keys the environment gave (removed from it), and every key as used:
 // the environment's, else keys.json's
 const ENV_KEYS: Record<string, string> = Object.fromEntries(Object.entries(VARS).map(([name, v]) => [name, config_key(v)]));

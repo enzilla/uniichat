@@ -48,7 +48,7 @@ export type Fall = { vendor: Vendor; model: Model; effort?: string; speed?: stri
 // Constants
 // =========
 
-export const VENDORS: Vendor[] = ["claude-api", "openai-api", "openai-sub", "claude-sub"];
+export const VENDORS: Vendor[] = ["claude-api", "openai-api", "openai-sub", "claude-sub", "cursor-sub"];
 
 const OPUS  : Model = { label: "opus-5.5",   id: "claude-opus-5-5",   speeds: ["slow", "fast"] };
 const SONNET: Model = { label: "sonnet-5.5", id: "claude-sonnet-5-5", speeds: ["slow"] };
@@ -68,6 +68,17 @@ const MODELS: Record<Vendor, Model[]> = {
   "openai-api": OPENAI,
   "openai-sub": PLAN,
   "claude-sub": [{ ...OPUS, speeds: ["slow"] }, SONNET, HAIKU],
+  // a Cursor plan's (CursorSub.ts): each by its id less effort and speed,
+  // which the call adds as Cursor names its variants
+  "cursor-sub": [
+    OPUS,
+    SONNET,
+    { label: "fable-5.1",        id: "claude-fable-5-1", speeds: ["slow"] },
+    { label: "gpt-5.6-sol",      id: "gpt-5.6-sol",      speeds: ["slow", "fast"] },
+    { label: "grok-4.7",         id: "grok-4.7",         speeds: ["slow", "fast"] },
+    { label: "gemini-3.8-flash", id: "gemini-3.8-flash", speeds: ["slow"] },
+    { label: "composer-2.5",     id: "composer-2.5",     speeds: ["slow", "fast"] },
+  ],
 };
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
