@@ -37,7 +37,7 @@ export type Panel = {
 
 // what a key in the list asks of Term.ts: an act, a text put in the input
 // (the list let go), a note
-export type Out = { $: "act"; act: View.Act } | { $: "type"; text: string } | { $: "note"; text: string };
+export type Out = { $: "act"; act: View.Act } | { $: "type"; text: string } | { $: "note"; text: string } | { $: "open"; task: string }; // open: the task's window (Modal.ts)
 
 // Constants
 // =========
@@ -65,7 +65,7 @@ const BOLD = { ...Paint.INK, b: true };
 const AGENT = "@";
 
 // the list's keys, as its foot shows them (focused, or not)
-const KEYS_ON  = ["␣ marca · 1-9 opção · ! marca e avisa", "d descarta · c comenta · a avisa · Esc sai"];
+const KEYS_ON  = ["Enter abre · ␣ marca · 1-9 opção · ! marca e avisa", "d descarta · c comenta · a avisa · Esc sai"];
 const KEYS_OFF = ["Ctrl+P: pendências"];
 
 // Panel
@@ -145,7 +145,7 @@ export function panel_key(p: Panel, v: View.View, key: string): Out | null | und
     return key === "Enter" || key === " " ? { $: "act", act: { $: "Goto", name: p.sel.slice(AGENT.length) } } : undefined;
   }
   if (t === null) {
-    return /^[ x!dcr1-9]$|^Enter$/.test(key) ? { $: "note", text: "Nenhuma pendência." } : undefined;
+    return /^[ x!dcor1-9]$|^Enter$/.test(key) ? { $: "note", text: "Nenhuma pendência." } : undefined;
   }
   const open = t.state === "open";
   // an open task resolved: the pick goes on to the open one after it
@@ -157,10 +157,13 @@ export function panel_key(p: Panel, v: View.View, key: string): Out | null | und
   };
   const choose = (k: number) => (k >= 1 && k <= t.choices.length ? done(panel_act(t, "done", false, t.choices[k - 1])) : { $: "note" as const, text: "A pendência " + t.id + (t.choices.length === 0 ? " não tem opções." : " tem as opções 1 a " + t.choices.length + ".") });
   switch (key) {
+    case "Enter":
+    case "o": {
+      return { $: "open", task: t.id };
+    }
     case " ":
-    case "x":
-    case "Enter": {
-      return !open ? panel_act(t, "open", false) : t.choices.length === 0 ? done(panel_act(t, "done", false)) : { $: "note", text: "Escolha a opção da " + t.id + " com 1 a " + t.choices.length + "." };
+    case "x": {
+      return !open ? panel_act(t, "open", false) : t.choices.length === 0 ? done(panel_act(t, "done", false)) : { $: "note", text: "Escolha a opção da " + t.id + " com 1 a " + t.choices.length + ", ou Enter abre a pendência." };
     }
     case "!": {
       return !open ? undefined : t.choices.length === 0 ? done(panel_act(t, "done", true)) : { $: "type", text: "/ok! " + t.id + " " };
@@ -183,8 +186,8 @@ function panel_act(t: Task, state: Task["state"], go: boolean, answer?: string):
 }
 
 // a mouse event ("Mouse:b:col:row:M"): the wheel scrolls the chat; a
-// press on a task picks it and focuses the list, on its box also marks
-// it; on an agent, opens its tab
+// press on a task picks it and focuses the list: on its box marks it,
+// elsewhere opens its window; on an agent, opens its tab
 export function panel_mouse(p: Panel, v: View.View, key: string): Out | null {
   const [b, col, row, end] = key.split(":").slice(1);
   if (b === "64" || b === "65") {
@@ -197,7 +200,7 @@ export function panel_mouse(p: Panel, v: View.View, key: string): Out | null {
   }
   p.sel = hit.id;
   p.focus = true;
-  return Number(col) <= hit.box || hit.id.startsWith(AGENT) ? panel_key(p, v, " ") ?? null : null;
+  return Number(col) <= hit.box || hit.id.startsWith(AGENT) ? panel_key(p, v, " ") ?? null : { $: "open", task: hit.id };
 }
 
 // the chat scrolled by n lines (up: more), within what there is

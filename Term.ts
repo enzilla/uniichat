@@ -15,6 +15,7 @@ import * as os from "node:os";
 import type { Kind } from "./AskAI.ts";
 import * as Client from "./Client.ts";
 import * as Import from "./Import.ts";
+import * as Modal from "./Modal.ts";
 import * as Paint from "./Paint.ts";
 import * as Panel from "./Panel.ts";
 import { type Move, Pick } from "./Pick.ts";
@@ -56,7 +57,13 @@ type Term = {
   asked   : Set<string> | null;
   busy    : boolean | null;
   focus   : boolean;
+  modal   : Modal.Modal | null;
+  kept    : Kept | null;
 };
+
+// what a task's window keeps of the chat while open: the input's text,
+// the lines under the chat, how far it was scrolled
+type Kept = { draft: string; extra: Paint.Line[]; scroll: number };
 
 // a choice of a list (a command without its value: /model, /mcp): its
 // title, its items, the one picked, the text typed that filters them
@@ -165,12 +172,13 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ]],
     ["Pendências", [
       ["/p [P7|aguardando]", "",                       "a lista de pendências; com um id, o detalhe dela; aguardando: as que esperam outras", term_tasks],
+      ["/abrir P7",         "",                        "na tela cheia: abre a pendência numa janela, com o detalhe, as opções com o que cada uma significa e a conversa sobre ela (lá: 1-9 escolhe e pede a justificativa, Enter conclui, ! conclui e avisa, d descarta, r reabre, Tab escreve sobre ela, Esc fecha)", term_open_arg],
       ["/ok P7 [opção] [comentário]", "",             "conclui a pendência; o Unii a vê no próximo turno", (t, a) => term_task(t, a, "done", false)],
       ["/ok! P7 [opção] [comentário]", "",            "conclui a pendência e avisa o Unii agora",       (t, a) => term_task(t, a, "done", true)],
       ["/descartar P7 [comentário]", "",               "descarta a pendência",                          (t, a) => term_task(t, a, "dropped", false)],
       ["/reabrir P7",       "",                        "reabre uma pendência resolvida",                 (t, a) => term_task(t, a, "open", false)],
       ["/avisar",           "",                        "avisa o Unii agora das pendências resolvidas que ele ainda não viu", (t) => term_send(t, { $: "tasks_tell" })],
-      ["",                  "Ctrl+P",                  "na tela cheia: o foco vai à coluna de pendências e agentes e volta (lá: setas, espaço marca, 1-9 opção, ! marca e avisa, d descarta, c comenta, a avisa, Enter num agente abre a aba dele, Esc sai; o clique marca ou abre)", term_focus],
+      ["",                  "Ctrl+P",                  "na tela cheia: o foco vai à coluna de pendências e agentes e volta (lá: setas, Enter ou o abre a pendência numa janela, espaço marca, 1-9 opção, ! marca e avisa, d descarta, c comenta, a avisa, Enter num agente abre a aba dele, Esc sai; o clique na caixa marca, no título abre)", term_focus],
       ["",                  "PageUp, PageDown",        "na tela cheia: rola a conversa (a roda do mouse também; Shift e arrastar seleciona texto)", term_page_key],
     ]],
   ];
@@ -206,6 +214,8 @@ function term_new(url: string, token: string): Term {
     asked   : null,
     busy    : null,
     focus   : true,
+    modal   : null,
+    kept    : null,
   };
   t.scr.first = (key) => term_menu_key(t, key);
   process.stdin.on("end", () => {
@@ -307,11 +317,11 @@ function term_asks(t: Term): void {
     return;
   }
   for (const task of Panel.panel_asks(t.v, t.asked)) {
-    if (t.chooser !== null || t.scr.ed.text !== "" || !t.scr.tty) {
-      term_note(t, "O Unii perguntou (" + task.id + "): " + task.title + " — responda na coluna (Ctrl+P) ou com /ok " + task.id + " <opção>.");
+    if (t.chooser !== null || t.modal !== null || t.scr.ed.text !== "" || t.panel === null) {
+      term_note(t, "O Unii perguntou (" + task.id + "): " + task.title + " — abra com /abrir " + task.id + " (ou Enter na coluna) para ver as opções e responder.");
       continue;
     }
-    term_choose(t, task.id + " · " + task.title, task.choices.map((choice): Choice => ({ text: choice, note: "", now: false, run: () => term_act(t, { $: "Task", task: task.id, state: "done", answer: choice }) })));
+    term_open(t, task.id);
   }
 }
 
@@ -380,6 +390,12 @@ function term_press(t: Term, key: string): void {
     term_chooser_key(t, t.chooser, key);
     return term_draw(t);
   }
+  if (t.panel !== null && (t.panel.focus || key.startsWith("Mouse:")) && term_panel(t, t.panel, key)) {
+    return term_draw(t);
+  }
+  if (t.modal !== null && key !== "" && term_modal(t, t.modal, key)) {
+    return term_draw(t);
+  }
   if (t.panel !== null && term_panel(t, t.panel, key)) {
     return term_draw(t);
   }
@@ -440,7 +456,7 @@ function term_panel(t: Term, p: Panel.Panel, key: string): boolean {
   if (out === undefined) {
     return key.startsWith("Mouse:");
   }
-  t.scr.grab = p.focus;
+  t.scr.grab = p.focus || t.modal?.focus === "acts";
   if (out?.$ === "act") {
     term_act(t, out.act);
   } else if (out?.$ === "note") {
@@ -449,7 +465,76 @@ function term_panel(t: Term, p: Panel.Panel, key: string): boolean {
     term_focus(t);
     Screen.ed_take(t.scr.ed);
     Screen.ed_type(t.scr.ed, out.text);
+  } else if (out?.$ === "open") {
+    term_open(t, out.task);
   }
+  return true;
+}
+
+// A task's window
+// ---------------
+
+// a task's window opened (Modal.ts) over the chat, the list's focus let
+// go; the chat's input, its lines under it and its scroll kept for its
+// close; another task's, if one was open, takes its place
+function term_open(t: Term, id: string): void {
+  const p = t.panel;
+  if (p === null) {
+    return term_note(t, "A janela da pendência é da tela cheia (unii sem --classic). Aqui, /p " + id + ".");
+  }
+  if (t.kept === null) {
+    t.kept = { draft: Screen.ed_take(t.scr.ed), extra: p.extra, scroll: p.scroll };
+    [p.extra, p.scroll] = [[], 0];
+  }
+  p.focus = false;
+  t.modal = Modal.modal_new(id);
+  t.scr.grab = true;
+}
+
+// /abrir P7
+function term_open_arg(t: Term, arg: string): void {
+  const got = View.task_args(t.v, arg, false);
+  return typeof got === "string" ? term_note(t, got) : term_open(t, got.task.id);
+}
+
+// the window closed: the chat as it was
+function term_close(t: Term): void {
+  const p = t.panel;
+  const kept = t.kept;
+  [t.modal, t.kept] = [null, null];
+  Screen.ed_take(t.scr.ed);
+  if (p !== null && kept !== null) {
+    [p.extra, p.scroll] = [kept.extra, kept.scroll];
+    Screen.ed_type(t.scr.ed, kept.draft);
+  }
+  t.scr.grab = p?.focus ?? false;
+}
+
+// a key while a task's window is open: the acts' keys (Modal.modal_key),
+// or, writing a comment or a message in the input, Enter, Esc, Tab and
+// Ctrl+C; PageUp, PageDown scroll it. True if taken
+function term_modal(t: Term, m: Modal.Modal, key: string): boolean {
+  const out = m.focus === "acts" ? Modal.modal_key(m, t.v, key)
+    : key === "Enter" ? Modal.modal_enter(m, Screen.ed_take(t.scr.ed))
+    : key === "Esc" || key === "Ctrl+C" || (key === "Tab" && m.focus === "talk") ? Modal.modal_back(m, key === "Ctrl+C" ? "Ctrl+C" : "Esc")
+    : undefined;
+  if (out === undefined) {
+    return false;
+  }
+  if (m.focus === "acts") {
+    Screen.ed_take(t.scr.ed);
+  }
+  if (out?.$ === "close") {
+    term_close(t);
+  } else if (out?.$ === "note") {
+    term_note(t, out.text);
+  } else if (out?.$ === "act") {
+    term_act(t, out.act);
+    if (t.panel !== null && out.act.$ === "Send") {
+      t.panel.scroll = 0;
+    }
+  }
+  t.scr.grab = t.modal !== null && t.modal.focus === "acts";
   return true;
 }
 
@@ -460,7 +545,8 @@ function term_focus(t: Term): void {
     return term_note(t, p === null ? "A coluna de pendências é da tela cheia: unii sem --classic. Aqui, /p." : "A tela é estreita para a coluna de pendências: /p as lista.");
   }
   p.focus = !p.focus;
-  t.scr.grab = p.focus;
+  // back from the list to a task's window: its acts' keys again
+  t.scr.grab = p.focus || t.modal?.focus === "acts";
 }
 
 // PageUp, PageDown: the chat half a screen up, down
@@ -1254,8 +1340,10 @@ function term_frame(t: Term, p: Panel.Panel): void {
   const w     = Screen.screen_width();
   const fw    = w - 2 * MARGIN;
   const h     = process.stdout.rows || 24;
-  const off   = t.scr.off || p.focus;
-  const input = t.scr.off ? null : Screen.screen_input(t.scr, fw, Math.max(1, Math.floor(h / 3)), p.focus ? "Ctrl+P ou Esc volta à mensagem" : View.HINT + " · /help");
+  const m     = t.modal;
+  const off   = t.scr.off || p.focus || m?.focus === "acts";
+  const hint  = m !== null ? Modal.modal_hint(m) : p.focus ? "Ctrl+P ou Esc volta à mensagem" : View.HINT + " · /help";
+  const input = t.scr.off ? null : Screen.screen_input(t.scr, fw, Math.max(1, Math.floor(h / 3)), hint);
   const under = t.scr.off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", fw, OFFLINE)];
   const tasks = Panel.panel_width(w) === 0 ? term_tasks_line(t.v, fw) : [];
   const menu  = t.chooser !== null ? term_chooser_lines(t, fw) : term_menu_lines(t, fw);
@@ -1263,7 +1351,7 @@ function term_frame(t: Term, p: Panel.Panel): void {
   // ponytail: the whole chat laid out at each paint (a frame apart while
   // it streams); bounded by the memory's view, cache by its parts if a
   // long one lags
-  const body  = term_lines([...View.view_body(t.v), ...View.view_tail(t.v)]);
+  const body  = m !== null ? term_inset([[], ...Modal.modal_lines(m, t.v, term_inner())]) : term_lines([...View.view_body(t.v), ...View.view_tail(t.v)]);
   const lines = Panel.panel_frame(p, t.v, body, foot, w, h);
   const at    = input === null || off ? null : { row: h - foot.length + menu.length + 1 + input.at.row, col: input.at.col + MARGIN };
   Screen.screen_frame(t.scr, lines, at);
