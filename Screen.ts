@@ -81,9 +81,10 @@ const MODES_ON  = "\x1b[?2004h\x1b[<u\x1b[>1u\x1b[?u";
 const MODES_OFF = "\x1b[?2004l\x1b[<u\x1b[?25h";
 
 // the full screen: the alternate screen, the mouse's clicks and wheel
-// (SGR); off, the screen as it was
-const FULL_ON  = "\x1b[?1049h\x1b[?1000h\x1b[?1006h";
-const FULL_OFF = "\x1b[?1000l\x1b[?1006l\x1b[?1049l";
+// (SGR), the terminal's focus told (CSI I, CSI O: FocusIn, FocusOut);
+// off, the screen as it was
+const FULL_ON  = "\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?1004h";
+const FULL_OFF = "\x1b[?1004l\x1b[?1000l\x1b[?1006l\x1b[?1049l";
 
 // a mouse event (SGR): button, column, row, M pressed or m released
 const MOUSE = /^<(\d+);(\d+);(\d+)$/;
@@ -199,6 +200,30 @@ export function screen_frame(scr: Screen, lines: Paint.Line[], at: Spot | null):
   process.stdout.write(SYNC_ON + "\x1b[H" + draw + "\x1b[J" + move + SYNC_OFF);
 }
 
+// the bell, then a desktop notification in the way the terminal takes
+// one, if it is known to (by its env: kitty's OSC 99; iTerm2's, WezTerm's,
+// ghostty's, Windows Terminal's OSC 9; foot's, rxvt's OSC 777); none
+// inside tmux, which passes on only the bell
+export function screen_notify(env: Record<string, string | undefined>, title: string, body: string): string {
+  const text = (s: string) => s.replace(/[\x00-\x1f\x7f-\x9f;\s]+/g, " ").trim();
+  const term = env.TERM ?? "";
+  const prog = env.TERM_PROGRAM ?? "";
+  const bell = "\x07";
+  if (env.TMUX) {
+    return bell;
+  }
+  if (term === "xterm-kitty") {
+    return bell + "\x1b]99;;" + text(title + ": " + body) + "\x1b\\";
+  }
+  if (["iTerm.app", "WezTerm", "ghostty"].includes(prog) || env.WT_SESSION) {
+    return bell + "\x1b]9;" + text(title + ": " + body) + "\x07";
+  }
+  if (term.startsWith("foot") || term.startsWith("rxvt")) {
+    return bell + "\x1b]777;notify;" + text(title) + ";" + text(body) + "\x07";
+  }
+  return bell;
+}
+
 // the footer erased
 function screen_erase(scr: Screen): string {
   const up = scr.up > 0 ? "\x1b[" + scr.up + "A" : "";
@@ -239,6 +264,10 @@ function screen_key(scr: Screen, data: string): number {
     return seq[0].length;
   }
   const mouse = seq !== null && /^[Mm]$/.test(seq[2]) ? MOUSE.exec(seq[1] ?? "") : null;
+  if (seq !== null && seq[1] === "" && (seq[2] === "I" || seq[2] === "O") && seq[0].startsWith("\x1b[")) {
+    scr.on(seq[2] === "I" ? "FocusIn" : "FocusOut");
+    return seq[0].length;
+  }
   if (mouse !== null) {
     scr.on("Mouse:" + mouse.slice(1).join(":") + ":" + seq![2]);
     return seq![0].length;

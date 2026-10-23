@@ -54,6 +54,8 @@ type Term = {
   menu    : Menu;
   chooser : Chooser | null;
   asked   : Set<string> | null;
+  busy    : boolean | null;
+  focus   : boolean;
 };
 
 // a choice of a list (a command without its value: /model, /mcp): its
@@ -202,6 +204,8 @@ function term_new(url: string, token: string): Term {
     menu    : { sel: 0, text: "", shut: false },
     chooser : null,
     asked   : null,
+    busy    : null,
+    focus   : true,
   };
   t.scr.first = (key) => term_menu_key(t, key);
   process.stdin.on("end", () => {
@@ -273,8 +277,24 @@ function term_hear(t: Term, msg: View.Server): void {
   term_draw(t);
   if (msg.$ === "state") {
     term_asks(t);
+    term_ended(t);
     term_idle(t);
   }
+}
+
+// Unii's turn ended (busy, then not, failed or not): the bell, with a
+// desktop notification where the terminal takes one (Screen.screen_notify);
+// on the full screen only while the terminal isn't in focus (it tells),
+// on the classic one always the bell alone. UNII_NO_BELL=1: none
+function term_ended(t: Term): void {
+  const was = t.busy;
+  t.busy = t.v.busy;
+  if (was !== true || t.v.busy || !t.scr.tty || process.env.UNII_NO_BELL === "1" || (t.panel !== null && t.focus)) {
+    return;
+  }
+  const last = View.view_copy(t.v, 0);
+  const said = typeof last === "string" ? "" : last.text.split("\n").find((l) => l.trim() !== "")?.slice(0, 120) ?? "";
+  process.stdout.write(t.panel === null ? "\x07" : Screen.screen_notify(process.env, "O Unii terminou", said));
 }
 
 // a question Unii asked (a task of the user's with choices, Panel.panel_asks)
@@ -352,6 +372,10 @@ function term_idle(t: Term): void {
 // a key ("": text typed): its line of COMMANDS (an agent's page: of
 // PAGE_KEYS)
 function term_press(t: Term, key: string): void {
+  if (key === "FocusIn" || key === "FocusOut") {
+    t.focus = key === "FocusIn";
+    return;
+  }
   if (t.chooser !== null && key !== "") {
     term_chooser_key(t, t.chooser, key);
     return term_draw(t);
