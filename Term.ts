@@ -130,6 +130,14 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ["Sign-in", [
       ["/logout",           "",                        "sign this terminal out and quit",               term_logout],
     ]],
+    ["Pendências", [
+      ["/p [P7]",           "",                        "a lista de pendências; com um id, o detalhe dela", term_tasks],
+      ["/ok P7 [opção] [comentário]", "",             "conclui a pendência; o Unii a vê no próximo turno", (t, a) => term_task(t, a, "done", false)],
+      ["/ok! P7 [opção] [comentário]", "",            "conclui a pendência e avisa o Unii agora",       (t, a) => term_task(t, a, "done", true)],
+      ["/descartar P7 [comentário]", "",               "descarta a pendência",                          (t, a) => term_task(t, a, "dropped", false)],
+      ["/reabrir P7",       "",                        "reabre uma pendência resolvida",                 (t, a) => term_task(t, a, "open", false)],
+      ["/avisar",           "",                        "avisa o Unii agora das pendências resolvidas que ele ainda não viu", (t) => term_send(t, { $: "tasks_tell" })],
+    ]],
   ];
 }
 
@@ -580,6 +588,36 @@ async function export_sessions(path: string): Promise<Import.Session[]> {
   return Import.import_export(Bun.file(path));
 }
 
+// the pending list (Tasks.ts), printed as a note with its links; with an
+// id, that task whole
+function term_tasks(t: Term, arg: string): void {
+  if (arg === "") {
+    term_rows(t, View.entry_rows(null, "note", View.tasks_md(t.v)), false);
+    return;
+  }
+  const got = View.task_args(t.v, arg, false);
+  if (typeof got === "string") {
+    return term_note(t, got);
+  }
+  term_rows(t, View.entry_rows(null, "note", View.tasks_md(t.v, got.task)), false);
+}
+
+// a task resolved: done (with a choice, by its text or number), dropped,
+// opened again; each with a comment; go: Unii told now
+function term_task(t: Term, arg: string, state: "done" | "dropped" | "open", go: boolean): void {
+  const got = View.task_args(t.v, arg, state === "done");
+  if (typeof got === "string") {
+    return term_note(t, got);
+  }
+  term_act(t, { $: "Task", task: got.task.id, state, ...(got.answer === undefined ? {} : { answer: got.answer }), note: got.note, go });
+}
+
+// the footer's line of the pending list, if any is open
+function term_tasks_line(v: View.View, w: number): Paint.Line[] {
+  const text = View.tasks_footer(v, w);
+  return text === "" ? [] : [[Paint.Run(text, Paint.DIM)]];
+}
+
 async function term_logout(t: Term): Promise<void> {
   await View.post(t.url + "/api/logout", {}, Client.auth(t.token));
   const conf = Client.read("tui");
@@ -833,7 +871,7 @@ function term_paint(t: Term): void {
   const off   = !View.view_typing(t.v);
   const input = Screen.screen_input(t.scr, iw, room - 3, off ? OFF : View.HINT + " · /help", off);
   const under = Paint.rule_text(t.v.up ? "" : "offline", iw);
-  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, Paint.tabs_line(t.v, iw)]);
+  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, ...term_tasks_line(t.v, iw), Paint.tabs_line(t.v, iw)]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];
   const tail  = term_lines([...held, ...View.view_tail(t.v, rest)]).flatMap((l) => Paint.runs_wrap(l, w, true));

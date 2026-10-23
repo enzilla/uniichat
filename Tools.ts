@@ -34,6 +34,7 @@ import { Memory } from "./Memory.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
 import COMPACT_PROMPT from "./compact.txt" with { type: "text" };
 import { EFFORTS, Pick } from "./Pick.ts";
+import * as Tasks from "./Tasks.ts";
 import * as Timer from "./Timer.ts";
 import type { Live } from "./View.ts";
 
@@ -222,6 +223,26 @@ const BOSS: Spec[] = [
   spec("unschedule", "Cancel a schedule, by its id.", { id: STR }, ["id"]),
   spec("stop", "Stop a subagent at once, by name, whatever it is doing (mid-call, waiting on a usage limit, running a tool on a device: that job is cancelled). Others keep running. Its report says it was stopped; its chat and work dir stay, so a later tell resumes it.", { name: STR, why: { type: "string", description: "Why, for its report." } }, ["name"]),
   spec("resume", "Wake every call on this server waiting for an AI service's usage limit (your turn, summaries), when the user says a limit was reset early. Each asks again once; one still limited waits again. A subagent at a usage limit ends and reports it instead: tell it to go on.", {}, []),
+  // the pending list (Tasks.ts)
+  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with who \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. Title: short, the action or question, in the user's language.", {
+    title   : STR,
+    detail  : { type: "string", description: "Markdown: the context needed to decide, with links." },
+    who     : { type: "string", enum: ["user", "unii"], description: "Who must act; by default the user." },
+    choices : { type: "array", items: STR, description: "Answers the user picks with one click (\"sim\", \"não\"), at most 9." },
+    ref     : { type: "string", description: "What it belongs to: a project, an agent, a PR." },
+  }, ["title"]),
+  spec("task_edit", "Change a task of the pending list, by its id (P7): its texts, choices or ref, or its state: close (done, dropped) one that you resolved or that no longer applies, or open one again.", {
+    id      : STR,
+    title   : STR,
+    detail  : STR,
+    who     : { type: "string", enum: ["user", "unii"] },
+    choices : { type: "array", items: STR },
+    ref     : STR,
+    state   : { type: "string", enum: ["open", "done", "dropped"] },
+    answer  : STR,
+    note    : { type: "string", description: "How it was resolved." },
+  }, ["id"]),
+  spec("tasks", "List the pending list: the open tasks with their details; all: those closed in the last 7 days too; ref: only those whose ref contains it; id: that one whole.", { all: { type: "boolean" }, ref: STR, id: STR }, []),
 ];
 const DEVICE = { device: { type: "string", description: "The name of the device to run on, one listed under Devices." } };
 function kit(who: string): Spec[] {
@@ -479,6 +500,11 @@ export namespace Tools {
       case "skill": {
         return Tools.job(tools, String(args.device), { name, input: { name: String(args.name) }, cwd: "main" }, signal, id);
       }
+      case "task_add":
+      case "task_edit":
+      case "tasks": {
+        return Tools.task(tools, name, args, who);
+      }
       default: {
         const { device, ...input } = args;
         return Tools.job(tools, String(device), { name, input, cwd: who }, signal, id);
@@ -515,6 +541,24 @@ export namespace Tools {
     Memory.save(mem);
     tools.hooks.timed();
     return true;
+  }
+
+  // Tasks
+  // -----
+
+  // the pending list's tools (Tasks.ts); a change told to every view
+  export function task(tools: Tools, name: string, args: any, who: string): Out {
+    const s = Tasks.tasks_load(tools.mem.dir);
+    const now = Date.now();
+    if (name === "tasks") {
+      return { text: Tasks.tasks_list(s, args, now), fail: false };
+    }
+    const t = name === "task_add" ? Tasks.task_new(s, args, who, now) : Tasks.task_edit(s, args, now);
+    if (typeof t === "string") {
+      return { text: t, fail: true };
+    }
+    tools.hooks.change();
+    return { text: (name === "task_add" ? "Added " : "Changed ") + Tasks.task_line(t, now).slice(2), fail: false };
   }
 
   // Devices

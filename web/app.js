@@ -953,6 +953,7 @@ function view_new() {
     limits: {},
     timers: [],
     mcp: [],
+    tasks: [],
     parts: [],
     turn: Infinity,
     fold: null,
@@ -1129,7 +1130,26 @@ function view_act(v, act) {
       }
       return [{ $: "mcp", name: act.name, on: !on }];
     }
+    case "Task": {
+      const t = v.tasks.find((x) => x.id === act.task);
+      if (t === undefined) {
+        v.notes.push("Pendência " + act.task + " não encontrada.");
+        return [];
+      }
+      if (act.answer !== undefined && !t.choices.includes(act.answer)) {
+        v.notes.push("A pendência " + t.id + " não tem a opção “" + act.answer + "”.");
+        return [];
+      }
+      const note = act.note?.trim() ?? "";
+      return [{ $: "task", task: t.id, state: act.state, ...act.answer === undefined ? {} : { answer: act.answer }, ...note === "" ? {} : { note }, ...act.go ? { go: true } : {} }];
+    }
+    case "TasksTell": {
+      return [{ $: "tasks_tell" }];
+    }
   }
+}
+function view_untold(v) {
+  return v.tasks.filter((t) => !t.told);
 }
 function view_body(v) {
   if (v.page !== null) {
@@ -1545,6 +1565,26 @@ function timers_html(timers) {
     const cancel = `<button class="cancel"${act_html({ $: "Unschedule", id: t.id })}>Cancel</button>`;
     return `<li data-id="${esc(t.id)}"><span class="when">${esc(timer_when(t))}</span><span class="text">${esc(t.text)}</span>${cancel}</li>`;
   });
+}
+function tasks_html(tasks) {
+  const when = (iso) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const head = (t) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
+  const meta = (t, more) => `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more].join(" · ")}</p>`;
+  const act = (t, state, text, cls, answer) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
+  const open = (t) => {
+    const who = t.who === "unii" ? ["com o Unii"] : [];
+    const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${md_parse(t.detail).map(block_html).join("")}</div></details>`;
+    const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
+    const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}">`;
+    const go = `<label class="go"><input type="checkbox"> Avisar o Unii agora</label>`;
+    const acts = `<div class="acts">${go}${act(t, "done", "Concluir", "done")}${act(t, "dropped", "Descartar", "drop")}</div>`;
+    return `<li class="task ${esc(t.who)}" data-task="${esc(t.id)}">${head(t)}${meta(t, [...who, `<time>${esc(when(t.made))}</time>`])}${detail}${opts}${note}${acts}</li>`;
+  };
+  const closed = (t) => {
+    const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii ainda não viu"]];
+    return `<li class="task closed" data-task="${esc(t.id)}">${head(t)}${meta(t, how)}<div class="acts">${act(t, "open", "Reabrir", "reopen")}</div></li>`;
+  };
+  return { open: tasks.filter((t) => t.state === "open").map(open), closed: tasks.filter((t) => t.state !== "open").map(closed) };
 }
 function account_html(prompts, notify = null) {
   const item = (what, note, act) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
@@ -1998,7 +2038,7 @@ function click(ev) {
     go(path ?? "/");
   }
   if (a !== undefined) {
-    act(JSON.parse(a));
+    act(task_act(el, JSON.parse(a)));
   }
   if (text !== undefined) {
     navigator.clipboard.writeText(text).then(() => copied(el), () => toast("Could not copy."));
@@ -2037,6 +2077,36 @@ function left(ev) {
   const to = ev.relatedTarget;
   if (menu !== null && to !== null && !menu.contains(to) && to !== menu.previousElementSibling) {
     menu.hidePopover();
+  }
+}
+function task_act(el, a) {
+  const item = el.closest("li[data-task]");
+  if (a.$ !== "Task" || a.state === "open" || item === null) {
+    return a;
+  }
+  const note = item.querySelector("input.note")?.value ?? "";
+  const go = item.querySelector(".go input")?.checked ?? false;
+  return { ...a, note, go };
+}
+var TASKS = { of: null, html: { open: [], closed: [] } };
+function tasks_bar() {
+  if (TASKS.of !== v.tasks) {
+    TASKS = { of: v.tasks, html: tasks_html(v.tasks) };
+  }
+  const { open, closed } = TASKS.html;
+  const untold = view_untold(v).length;
+  document.body.classList.toggle("tasking", v.tasks.length > 0);
+  $(".tasks").hidden = v.tasks.length === 0;
+  $(".tasks span").textContent = String(open.length);
+  $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
+  $("#tasks .none").hidden = open.length > 0;
+  markup($("#tasks ul.now"), open);
+  markup($("#tasks .closed ul"), closed);
+  $("#tasks .closed").hidden = closed.length === 0;
+  $("#tasks .tell").hidden = untold === 0;
+  $("#tasks .tell span").textContent = String(untold);
+  if (v.tasks.length === 0 && $("#tasks").matches(":popover-open")) {
+    $("#tasks").hidePopover();
   }
 }
 function copied(button) {
@@ -2429,6 +2499,7 @@ function bars() {
   if (v.timers.length === 0 && $("#timers").matches(":popover-open")) {
     $("#timers").hidePopover();
   }
+  tasks_bar();
   send.classList.toggle("stop", stop);
   send.disabled = !on;
   BOX.disabled = !on;

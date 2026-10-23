@@ -10,6 +10,7 @@ import * as Call from "../../Call.ts";
 import * as Md from "../../Md.ts";
 import { EFFORTS, LABELS, Pick, VENDORS } from "../../Pick.ts";
 import type { Key, Page, Row } from "../../Settings.ts";
+import type { Task } from "../../Tasks.ts";
 import * as Theme from "../../Theme.ts";
 import * as Timer from "../../Timer.ts";
 import * as View from "../../View.ts";
@@ -169,6 +170,33 @@ export function timers_html(timers: Timer.Timer[]): string[] {
     const cancel = `<button class="cancel"${act_html({ $: "Unschedule", id: t.id })}>Cancel</button>`;
     return `<li data-id="${esc(t.id)}"><span class="when">${esc(Timer.timer_when(t))}</span><span class="text">${esc(t.text)}</span>${cancel}</li>`;
   });
+}
+
+// the pending list (the aside, or the header's ✓ popover; Tasks.ts):
+// each open task's title, ref, detail (Markdown, as messages are), its
+// choices (each concludes with it), a comment, Concluir and Descartar (main.ts adds the comment
+// and "avisar" to the act); each closed lately, how, and Reabrir. No
+// time ago in it: an item's markup changes only as the task does, so
+// a comment being typed stays (main.ts markup)
+export function tasks_html(tasks: Task[]): { open: string[]; closed: string[] } {
+  const when = (iso: string) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const head = (t: Task) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
+  const meta = (t: Task, more: string[]) => `<p class="meta">${[...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...more].join(" · ")}</p>`;
+  const act = (t: Task, state: Task["state"], text: string, cls: string, answer?: string) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...(answer === undefined ? {} : { answer }) })}>${esc(text)}</button>`;
+  const open = (t: Task) => {
+    const who = t.who === "unii" ? ["com o Unii"] : [];
+    const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div></details>`;
+    const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
+    const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}">`;
+    const go = `<label class="go"><input type="checkbox"> Avisar o Unii agora</label>`;
+    const acts = `<div class="acts">${go}${act(t, "done", "Concluir", "done")}${act(t, "dropped", "Descartar", "drop")}</div>`;
+    return `<li class="task ${esc(t.who)}" data-task="${esc(t.id)}">${head(t)}${meta(t, [...who, `<time>${esc(when(t.made))}</time>`])}${detail}${opts}${note}${acts}</li>`;
+  };
+  const closed = (t: Task) => {
+    const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii ainda não viu"])];
+    return `<li class="task closed" data-task="${esc(t.id)}">${head(t)}${meta(t, how)}<div class="acts">${act(t, "open", "Reabrir", "reopen")}</div></li>`;
+  };
+  return { open: tasks.filter((t) => t.state === "open").map(open), closed: tasks.filter((t) => t.state !== "open").map(closed) };
 }
 
 // Settings page

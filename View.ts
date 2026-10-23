@@ -15,6 +15,7 @@ import * as Md from "./Md.ts";
 import { LABELS, type Fall, type Move, Pick } from "./Pick.ts";
 import { GLYPH, WHO } from "./Theme.ts";
 import type { Timer } from "./Timer.ts";
+import type { Task } from "./Tasks.ts";
 
 // Types
 // =====
@@ -67,6 +68,7 @@ export type State = {
   limits    : Record<string, Parked>;
   timers    : Timer[];
   mcp       : Plug[];
+  tasks     : Task[]; // the pending list: open, then closed lately (Tasks.tasks_view)
 };
 
 // an MCP server of the server's config (Mcp.ts), on or off in this chat
@@ -136,6 +138,8 @@ export type Client =
   | { $: "mcp"; name: string; on: boolean } // an MCP server turned on or off in this chat
   | { $: "out"; job: string; out: object }
   | { $: "unschedule"; id: string } // a schedule cancelled
+  | { $: "task"; task: string; state: Task["state"]; answer?: string; note?: string; go?: boolean } // a pending task resolved (go: Unii told now)
+  | { $: "tasks_tell" } // the resolutions untold, told to Unii now
   | { $: "zoom"; part: Part }
   | { $: "root" }
   | { $: "agent"; name: string };
@@ -164,6 +168,8 @@ export type Act =
   | { $: "Goto"; name: string | null }          // a tab, a name, the logo (null: UniiChat)
   | { $: "Unschedule"; id: string }             // a schedule's Cancel
   | { $: "Plug"; name: string }                 // an MCP server turned on if off, else off
+  | { $: "Task"; task: string; state: Task["state"]; answer?: string; note?: string; go?: boolean } // a pending task's Concluir, Descartar, Reabrir, or a choice
+  | { $: "TasksTell" }                          // Avisar o Unii agora
 
 // what a page draws, top to bottom
 export type Row =
@@ -268,6 +274,7 @@ export function view_new(): View {
     limits    : {},
     timers    : [],
     mcp       : [],
+    tasks     : [],
     parts     : [],
     turn      : Infinity,
     fold      : null,
@@ -453,7 +460,102 @@ export function view_act(v: View, act: Act): Client[] {
       }
       return [{ $: "mcp", name: act.name, on: !on }];
     }
+    case "Task": {
+      const t = v.tasks.find((x) => x.id === act.task);
+      if (t === undefined) {
+        v.notes.push("Pendência " + act.task + " não encontrada.");
+        return [];
+      }
+      if (act.answer !== undefined && !t.choices.includes(act.answer)) {
+        v.notes.push("A pendência " + t.id + " não tem a opção “" + act.answer + "”.");
+        return [];
+      }
+      const note = act.note?.trim() ?? "";
+      return [{ $: "task", task: t.id, state: act.state, ...(act.answer === undefined ? {} : { answer: act.answer }), ...(note === "" ? {} : { note }), ...(act.go ? { go: true } : {}) }];
+    }
+    case "TasksTell": {
+      return [{ $: "tasks_tell" }];
+    }
   }
+}
+
+// Pending list
+// ============
+
+// the open tasks, the user's first, and those closed lately, as the
+// server sent them (Tasks.tasks_view)
+export function view_tasks(v: View): { open: Task[]; closed: Task[] } {
+  return { open: v.tasks.filter((t) => t.state === "open"), closed: v.tasks.filter((t) => t.state !== "open") };
+}
+
+// the resolutions Unii hasn't seen yet
+export function view_untold(v: View): Task[] {
+  return v.tasks.filter((t) => !t.told);
+}
+
+// a command's words ("P7 sim pode mesclar", "7 2", "p7"): its task, the
+// choice it names (the longest that starts the rest, as written; else by
+// its number), the comment after; else why not. A task with choices
+// whose rest starts with a number none of them is (/ok P1 4 with 3):
+// refused, nothing done, rather than "4" taken as a comment
+export function task_args(v: View, arg: string, choose: boolean): { task: Task; answer?: string; note: string } | string {
+  const m = /^\s*[Pp]?(\d+)(?=\s|$)\s*([\s\S]*)$/.exec(arg);
+  if (m === null) {
+    return "Qual pendência? Informe o id, como P7.";
+  }
+  const id = "P" + Number(m[1]);
+  const task = v.tasks.find((t) => t.id === id);
+  if (task === undefined) {
+    return "Pendência " + id + " não encontrada.";
+  }
+  const rest = m[2].trim();
+  if (!choose || task.choices.length === 0) {
+    return { task, note: rest };
+  }
+  const low = rest.toLowerCase();
+  const said = [...task.choices].sort((a, b) => b.length - a.length).find((c) => low === c.toLowerCase() || low.startsWith(c.toLowerCase() + " "));
+  const num = said === undefined ? /^(\d+)(?=\s|$)/.exec(rest) : null;
+  if (num !== null && (Number(num[1]) < 1 || Number(num[1]) > task.choices.length)) {
+    const n = task.choices.length;
+    return "Opção " + num[1] + " inválida: a pendência " + id + " tem " + n + (n === 1 ? " opção (1)." : " opções (1 a " + n + ").") + " Nada foi alterado.";
+  }
+  const answer = said ?? (num !== null ? task.choices[Number(num[1]) - 1] : undefined);
+  const used = said !== undefined ? said.length : num !== null ? num[1].length : 0;
+  return { task, answer, note: rest.slice(used).trim() };
+}
+
+// the footer's line of the pending list ("" with none open): ids that
+// fit in w, else the count alone
+export function tasks_footer(v: View, w: number): string {
+  const { open } = view_tasks(v);
+  if (open.length === 0) {
+    return "";
+  }
+  const n = open.length + (open.length === 1 ? " aberta" : " abertas");
+  const long = "Pendências: " + n + " (" + open.map((t) => t.id).join(", ") + ") · /p";
+  const short = "Pendências: " + open.length + " · /p";
+  return long.length <= w ? long : short.length <= w ? short : "";
+}
+
+// the pending list as Markdown, for the terminal's /p (one: its whole)
+export function tasks_md(v: View, one: Task | null = null): string {
+  const STATE = { open: "aberta", done: "concluída", dropped: "descartada" };
+  const tag = (t: Task) => (t.ref === null ? "" : " · " + t.ref);
+  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c).join("  "));
+  if (one !== null) {
+    const said = [one.answer === null ? "" : "Resposta: " + one.answer + ".", one.note === null ? "" : "Comentário: " + one.note].filter((x) => x !== "").join(" ");
+    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + (one.who === "user" ? "com você" : "com o Unii") + tag(one) + opts(one);
+    return [head, said, one.detail].filter((x) => x !== "").join("\n\n");
+  }
+  const { open, closed } = view_tasks(v);
+  const line = (t: Task) => "- **" + t.id + "** " + t.title + (t.who === "unii" ? " (com o Unii)" : "") + tag(t) + opts(t);
+  const done = (t: Task) => "- " + t.id + " " + STATE[t.state] + ": " + t.title + (t.answer === null ? "" : " — resposta: " + t.answer);
+  const parts = [
+    open.length === 0 ? "Nenhuma pendência aberta." : "**Pendências abertas (" + open.length + ")**\n\n" + open.map(line).join("\n"),
+    closed.length === 0 ? "" : "**Resolvidas recentemente**\n\n" + closed.slice(0, 10).map(done).join("\n"),
+    "`/p P7` detalha · `/ok P7 [opção] [comentário]` conclui · `/ok!` conclui e avisa o Unii · `/descartar P7` · `/reabrir P7` · `/avisar`",
+  ];
+  return parts.filter((x) => x !== "").join("\n\n");
 }
 
 export function view_body(v: View): Row[] {

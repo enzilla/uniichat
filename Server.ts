@@ -35,6 +35,7 @@ import { Settings } from "./Settings.ts";
 import { INSTALL } from "./Update.ts";
 import { write_whole } from "./Write.ts";
 import * as Timer from "./Timer.ts";
+import * as Tasks from "./Tasks.ts";
 import { PROMPTS, SEARCHES, Tools, type Agent, type Live } from "./Tools.ts";
 import { FRAME, IMAGES, live_push, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
@@ -410,7 +411,8 @@ export namespace Chat {
     const server = Tools.at(chat.tools, "main");
     chat.eye = Chat.eye(mem, from);
     chat.socks.forEach((sock) => Chat.show(chat, sock));
-    const blocks = [...view, Tools.devices(chat.tools), Tools.skills(chat.tools), Tools.at_work(chat.tools), { text: HEAD + text, mark: true }];
+    const tasks = { text: Tasks.tasks_block(Tasks.tasks_load(mem.dir), Date.now()), mark: false };
+    const blocks = [...view, Tools.devices(chat.tools), Tools.skills(chat.tools), Tools.at_work(chat.tools), tasks, { text: HEAD + text, mark: true }];
     const ask = { ...Chat.share(chat, Tools.prompt("prompt")), searches: SEARCHES, server, blocks, imgs };
     chat.model = chat.pick.model;
     chat.asked = true;
@@ -430,6 +432,10 @@ export namespace Chat {
     chat.wait.unshift(...chat.sent.slice(chat.sent.length - end.left.length));
     if (!end.ok && !halt.signal.aborted) {
       Chat.failed(chat, end.text);
+    }
+    // the pending list's changes the call showed: told (Tasks.ts)
+    if (end.ok) {
+      Tasks.tasks_told(Tasks.tasks_load(chat.mem.dir));
     }
     if (end.note) {
       Chat.all(chat, { $: "note", text: end.note });
@@ -966,7 +972,8 @@ export namespace Chat {
     const timers = chat.mem.timers.map((t) => ({ ...t, text: t.text.length > TIMER_TEXT ? t.text.slice(0, TIMER_TEXT) + "…" : t.text }));
     const mcp = config.MCP.map(({ name }) => ({ name, on: !chat.mem.off.includes(name) }));
     const labels = Object.fromEntries(chat.tools.labels);
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp };
+    const tasks = Tasks.tasks_view(Tasks.tasks_load(chat.mem.dir), Date.now());
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1186,8 +1193,50 @@ export namespace Chat {
         Chat.change(chat);
         return {};
       }
+      case "task": {
+        // a task of the pending list resolved by the user (Tasks.ts): it
+        // sets a state, so done again it changes nothing; go: Unii told
+        // at once, by a message that starts a turn (a resolution made
+        // before, untold, too)
+        const s = Tasks.tasks_load(chat.mem.dir);
+        const t = Tasks.task_resolve(s, msg.task, msg.state, msg.answer, msg.note, Date.now());
+        if (typeof t === "string") {
+          return { error: t };
+        }
+        const go = msg.go === true || msg.go === "true";
+        const was = t ?? Tasks.task_find(s, msg.task);
+        if (t !== null || (go && was !== null && !was.told)) {
+          Chat.resolved(chat, [was!], go);
+        }
+        Chat.change(chat);
+        return {};
+      }
+      case "tasks_tell": {
+        // "avisar o Unii agora": every resolution untold, in one message
+        const told = Tasks.tasks_tell(Tasks.tasks_load(chat.mem.dir));
+        if (told.length === 0) {
+          return { error: "Não há pendências resolvidas para avisar." };
+        }
+        Chat.resolved(chat, told, true);
+        return {};
+      }
     }
     return { error: "No act " + msg.$ + "." };
+  }
+
+  // the user's resolutions of the pending list, in the chat: a note (Unii
+  // sees them in its next turn's block), or, go, told now by a
+  // "[Pendências]" message taken as a report is
+  export function resolved(chat: Chat, tasks: Tasks.Task[], go: boolean): void {
+    const text = tasks.map(Tasks.task_said).join("\n");
+    if (!go) {
+      return Chat.note(chat, text);
+    }
+    Tasks.tasks_told(Tasks.tasks_load(chat.mem.dir), new Map(tasks.map((t) => [t.id, t.rev])));
+    Chat.hold(chat, () => {
+      Chat.take(chat, Chat.push(chat, null, "work", "[Pendências] " + text));
+      Chat.change(chat);
+    });
   }
 
   // a post (msg.req) refused before a byte of its body is read under
