@@ -6,6 +6,9 @@
 // process group. The stop tool's halt job kills all an agent's shells
 // left (UNII_AGENT); as the device quits, end() kills every
 // shell's group (SHELLS), and any process marked UNII_RUN that left it.
+// A shell call is cut at its timeout (TIMEOUT), view_video at
+// VIDEO_LIMIT; read, write and edit take regular files only, so no job
+// waits forever (the server keeps a backstop too: Tools.job_limit).
 // A file changed (write over one, edit) answers as a unified diff (Diff),
 // which both views draw as one (Md.ts). read shows an image file as an
 // image; view_video, frames of a video on one sheet (ffmpeg's).
@@ -67,6 +70,17 @@ const SHELLS = new Map<Bun.Subprocess, string>();
 // how long halt() tries to see an agent's processes gone (ms)
 const GONE = 3000;
 
+// a shell call's time limit, in seconds: by default, and the most one
+// may ask (Machine.limit); past it, its process group gets SIGTERM, and
+// SIGKILL what is left after TERM ms
+export const TIMEOUT = 600;
+export const TIMEOUT_MAX = 3600;
+const TERM = 5000;
+
+// the time limit of a view_video call (ms): its ffprobe and ffmpeg runs
+// are killed past it
+export const VIDEO_LIMIT = 300_000;
+
 // the lines kept around each change in a diff
 const CONTEXT = 3;
 
@@ -97,7 +111,7 @@ const CELL = 16;
 const EDIT = { type: "object", properties: { path: STR, old: STR, new: STR, all: { type: "boolean" } }, required: ["path", "old", "new"] };
 
 export const TOOLS: Spec[] = [
-  spec("shell", "Run a command with the device's shell ($SHELL -c), stdout and stderr together, and return its output, then its exit code and time, as (exit 0 in 0.4 s); output past " + CAP + " characters keeps its head and tail. Each call is a new shell. The call waits until the command and everything holding its output end, so give background jobs their own output file. Background jobs live only while the device runs: stopping it kills every process the calls started.", { command: STR }, ["command"]),
+  spec("shell", "Run a command with the device's shell ($SHELL -c), stdout and stderr together, and return its output, then its exit code and time, as (exit 0 in 0.4 s); output past " + CAP + " characters keeps its head and tail. Each call is a new shell. The call waits until the command and everything holding its output end, so give background jobs their own output file. Background jobs live only while the device runs: stopping it kills every process the calls started. timeout: seconds before the call is cut (default " + TIMEOUT + ", at most " + TIMEOUT_MAX + "): past it, the command and every process in its group get SIGTERM, then SIGKILL " + TERM / 1000 + " s later, and the call answers the output so far ending (timed out after N s: killed), failed. Give a larger timeout to a long build or test run; run longer work in the background, with its own output file, and check on it with later calls.", { command: STR, timeout: { type: "number", description: "Seconds before the command is killed; default " + TIMEOUT + ", at most " + TIMEOUT_MAX + "." } }, ["command"]),
   spec("read", "Read a text file. offset: the first line to show (from 1); limit: how many lines; at: the character of the first line to start from. It ends saying the lines shown, as [lines 4-7 of 15]; output past " + CAP + " characters comes in pages, saying where to go on. An image file (png, jpeg, gif, webp) comes as the picture, scaled to fit " + FIT + " px, or max_side px if given (a GIF shows its first frame; view_video plays it).", { path: STR, offset: INT, limit: INT, at: INT, max_side: INT }, ["path"]),
   spec("write", "Write a whole file, making its directories. Answers a unified diff of what changed (a new file: all its lines added).", { path: STR, content: STR }, ["path", "content"]),
   spec("view_video", "See part of a video (any file ffmpeg opens: mp4, mkv, webm, mov, avi, gif...) as ONE image: a grid of its frames, row by row, each stamped with its frame number (top) and time (bottom), fitting " + FIT + " px, or max_side px. It also answers a line on the whole video (duration, fps, frames, size). start and end: the range, ends included, in frames from 0 (or seconds, with unit \"second\"); by default the whole video. step: take every step-th frame; by default the one that gives at most 16. Each frame gets smaller as more share the sheet: past about 25 they get hard to read, and " + SHEET + " is the most. For a long stretch, raise step, narrow the range, or call again on the next range. Needs ffmpeg and ffprobe on the device.", { path: STR, start: { type: "number" }, end: { type: "number" }, unit: { type: "string", enum: ["frame", "second"] }, step: INT, max_side: INT }, ["path"]),
@@ -128,9 +142,10 @@ export namespace Machine {
       fs.mkdirSync(cwd, { recursive: true });
       switch (job.name) {
         case "shell": {
-          return await Machine.shell(cwd, String(input.command), signal);
+          return await Machine.shell(cwd, String(input.command), signal, Machine.limit(input.timeout));
         }
         case "read": {
+          Machine.regular(file, false);
           const kind = image_kind(Machine.head(file));
           const data = kind === null ? null : fs.readFileSync(file);
           const shown = data === null ? null : await Machine.image(data, kind!, Machine.side(input.max_side));
@@ -143,9 +158,12 @@ export namespace Machine {
           return Machine.read(file, Number(input.offset ?? 1), Number(input.limit ?? Infinity), Number(input.at ?? 0));
         }
         case "view_video": {
-          return await Machine.video(file, input, signal);
+          const late = AbortSignal.timeout(VIDEO_LIMIT);
+          const out = await Machine.video(file, input, AbortSignal.any([signal, late]));
+          return late.aborted && !signal.aborted ? { text: "view_video timed out after " + VIDEO_LIMIT / 1000 + " s: ffmpeg was killed. Narrow the range, raise step or take fewer frames.", fail: true } : out;
         }
         case "write": {
+          Machine.regular(file, true);
           return Machine.write(file, String(input.path), String(input.content));
         }
         case "edit": {
@@ -173,12 +191,34 @@ export namespace Machine {
     }
   }
 
+  // a shell call's time limit in seconds, from its timeout input: a
+  // number over 0, TIMEOUT_MAX at most; anything else, TIMEOUT
+  export function limit(given: unknown): number {
+    const n = typeof given === "string" && given.trim() !== "" ? Number(given) : typeof given === "number" ? given : NaN;
+    return Number.isFinite(n) && n > 0 ? Math.min(n, TIMEOUT_MAX) : TIMEOUT;
+  }
+
+  // throws unless a file is a regular one (or, for a write, none yet): a
+  // FIFO, a device or a socket would block the device's whole process on
+  // open or read, beyond any stop
+  export function regular(file: string, may_lack: boolean): void {
+    const stat = fs.statSync(file, { throwIfNoEntry: !may_lack });
+    if (stat !== undefined && !stat.isFile()) {
+      throw new Error(file + " is not a regular file" + (stat.isDirectory() ? " (a directory)" : " (a FIFO, device or socket, which could block)") + ".");
+    }
+  }
+
   // runs a command, in its own process group (detached), every process
   // marked UNII_RUN, its output decoded as one stream (a char split over
   // reads stays whole; a broken one at its end shows) and cut as it
   // comes. A stop kills the group and ends the wait at once, whatever
-  // still holds its output
-  export async function shell(cwd: string, command: string, signal: AbortSignal): Promise<Out> {
+  // still holds its output. Past `secs`, the group gets SIGTERM, then
+  // SIGKILL if any of it is left after TERM ms (on Windows, its tree is
+  // killed at once), and the wait ends, the output so far answered: a
+  // process that left the group (setsid) and holds the output can't
+  // keep the call waiting, though it lives on till a stop or the device
+  // ends
+  export async function shell(cwd: string, command: string, signal: AbortSignal, secs: number = TIMEOUT): Promise<Out> {
     SHELLS.forEach((_, p) => Machine.group(p) || SHELLS.delete(p));
     const agent = path.basename(cwd);
     const start = performance.now();
@@ -202,6 +242,22 @@ export namespace Machine {
       readers.forEach((r) => r.cancel().catch(() => {}));
     };
     signal.addEventListener("abort", kill, { once: true });
+    let timed: string | null = null;
+    const timer = setTimeout(async () => {
+      timed = "killed";
+      if (WIN) {
+        return kill();
+      }
+      Machine.kill(-proc.pid, "SIGTERM");
+      const until = Date.now() + TERM;
+      while (Machine.alive(-proc.pid) && Date.now() < until && !signal.aborted) {
+        await Bun.sleep(50);
+      }
+      if (Machine.alive(-proc.pid)) {
+        timed = "killed, SIGKILL after SIGTERM didn't end it";
+      }
+      kill();
+    }, secs * 1000);
     await Promise.all(readers.map(async (reader) => {
       try {
         for (let got = await reader.read(); !got.done; got = await reader.read()) {
@@ -209,12 +265,18 @@ export namespace Machine {
         }
       } catch {}
     }));
+    clearTimeout(timer);
     signal.removeEventListener("abort", kill);
+    // the shell itself may still be in its group's TERM grace
+    if (timed !== null && Machine.group(proc)) {
+      Machine.kill(-proc.pid);
+    }
     const code = await proc.exited;
     const time = ((performance.now() - start) / 1000).toFixed(1) + " s";
-    const exit = signal.aborted ? "stopped" : proc.signalCode ? "killed by " + proc.signalCode : "exit " + code;
+    const exit = signal.aborted ? "stopped" : timed !== null ? "timed out after " + +secs.toFixed(3) + " s: " + timed : proc.signalCode ? "killed by " + proc.signalCode : "exit " + code;
+    const tail = timed !== null ? ")\nGive a larger timeout (at most " + TIMEOUT_MAX + " s) or run it in the background with its own output file." : " in " + time + ")";
     const text = (WIN ? out.text().replace(/\r\n/g, "\n") : out.text()).replace(/\n$/, "");
-    return { text: (text === "" ? "" : text + "\n") + "(" + exit + " in " + time + ")", fail: exit !== "exit 0" };
+    return { text: (text === "" ? "" : text + "\n") + "(" + exit + tail, fail: exit !== "exit 0" };
   }
 
   // whether a shell's process group may still hold a job: the shell runs,
@@ -236,13 +298,14 @@ export namespace Machine {
     }
   }
 
-  // a process, or a group (-pid); on Windows, a process and its tree
-  export function kill(pid: number): void {
+  // a process, or a group (-pid), by `sig`; on Windows, a process and its
+  // tree, forced
+  export function kill(pid: number, sig: NodeJS.Signals = "SIGKILL"): void {
     try {
       if (WIN) {
         Bun.spawnSync(["taskkill", "/T", "/F", "/PID", String(Math.abs(pid))], { windowsHide: true });
       } else {
-        process.kill(pid, "SIGKILL");
+        process.kill(pid, sig);
       }
     } catch {}
   }
@@ -513,6 +576,7 @@ export namespace Machine {
     const files = new Map<string, { shown: string; was: string; text: string }>();
     for (const [k, e] of list.entries()) {
       const file  = path.resolve(cwd, String(e?.path));
+      Machine.regular(file, true);
       const known = files.get(file);
       const was   = known?.was ?? (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
       const text  = known?.text ?? was ?? "";

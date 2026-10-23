@@ -71,6 +71,18 @@ newest release. The installer also moves data from older versions.
    `systemctl --user enable --now unii-device` (and `loginctl
    enable-linger` to run it while you're logged out).
 
+   A shell call has a time limit: `timeout` seconds, 600 by default, 3600
+   at most. Past it, its process group gets SIGTERM, then SIGKILL 5 s
+   later, and the call answers its output so far, ending `(timed out
+   after N s: killed)`. A process that left the group (`setsid`) lives on
+   till a stop or the device ends, but can't keep the call waiting.
+   `view_video` is cut at 300 s; `read`, `write` and `edit` refuse a
+   FIFO, device or socket, which would block the device. The server ends
+   a job on its own 30 s past a shell's or view_video's limit (120 s for
+   `read`, `write`, `edit`, `skill`) and tells the device to kill it: so
+   a device running an older unii, which keeps no limit, is covered too,
+   though its output so far is lost.
+
 The server's settings are in `~/.unii/config.json` (most are on the
 Settings page). Each may also be set as `UNII_<KEY>`, which wins. Besides
 `vendors`, `models`, `pick`, `compactor`, `agents`, `profiles` and `site`:
