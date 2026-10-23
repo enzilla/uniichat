@@ -34,6 +34,7 @@ import { Memory } from "./Memory.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
 import COMPACT_PROMPT from "./compact.txt" with { type: "text" };
 import { EFFORTS, Pick } from "./Pick.ts";
+import * as Rank from "./Rank.ts";
 import * as Tasks from "./Tasks.ts";
 import * as Timer from "./Timer.ts";
 import type { Live } from "./View.ts";
@@ -194,7 +195,12 @@ while its device runs, and leaves the list when it stops: a task that needs
 one not listed can't be done now, so tell the user it isn't available.`;
 const DEVICES_NONE = "(None is open now.)";
 
-const SKILLS = "Skills on the devices open now, by device: when a task matches one's description, load it with the skill tool first, then follow it.";
+const SKILLS = "Skills on the devices open now: every one's name, by device; then those that fit this turn best, with what each is for. When a task matches one, load it with the skill tool first, then follow it; skills_search finds the others by words.";
+
+// the skills shown with what each is for (those that fit the turn best),
+// those skills_search answers with
+const FIT   = 8;
+const FOUND = 10;
 
 // how long a device may take to list its skills, in ms: one that takes
 // longer keeps those it listed last
@@ -257,6 +263,7 @@ function kit(who: string): Spec[] {
   });
 }
 const SKILL: Spec = spec("skill", "Load a skill listed under Skills: its SKILL.md, with the folder its other files are in on that device (read or run them there with your other tools).", { ...DEVICE, name: STR }, ["device", "name"]);
+const SKILLS_SEARCH: Spec = spec("skills_search", "Search the skills on the open devices by words (what you need done): the best fits, each with its device and what it is for.", { query: STR }, ["query"]);
 // Tools
 // =====
 
@@ -303,9 +310,24 @@ export namespace Tools {
 
   // after the devices, so a change hits a call's tail, not its cached
   // prefix
-  export function skills(tools: Tools): Block {
-    const lines = Tools.opened(tools).flatMap(([name, d]) => d.skills.map((s) => "- " + name + ": " + s.name + ": " + s.description.replace(/\s+/g, " ")));
-    return { text: lines.length === 0 ? "" : SKILLS + "\n" + lines.join("\n") + "\n\n", mark: false };
+  // the skills block: every skill's name, by device, then the FIT that
+  // the turn's text fits best (Rank.ts), with what each is for
+  export function skills(tools: Tools, text: string): Block {
+    const opened = Tools.opened(tools).filter(([, d]) => d.skills.length > 0);
+    if (opened.length === 0) {
+      return { text: "", mark: false };
+    }
+    const names = opened.map(([name, d]) => "- " + name + ": " + d.skills.map((s) => s.name).join(", "));
+    const fit   = Tools.skills_fit(tools, text, FIT);
+    const best  = fit.length === 0 ? "" : "\n\nBest fits for this turn:\n" + fit.join("\n");
+    return { text: SKILLS + "\n" + names.join("\n") + best + "\n\n", mark: false };
+  }
+
+  // the skills that fit a text best, at most n, each a line: its device,
+  // its name, what it is for
+  export function skills_fit(tools: Tools, text: string, n: number): string[] {
+    const all = Tools.opened(tools).flatMap(([name, d]) => d.skills.map((s) => ({ name, s })));
+    return Rank.rank(all.map(({ s }) => s.name + " " + s.description), text, n).map((k) => "- " + all[k].name + ": " + all[k].s.name + ": " + all[k].s.description.replace(/\s+/g, " "));
   }
 
   // each open device's skills, asked as a job; one that fails (a unii
@@ -429,7 +451,7 @@ export namespace Tools {
   }
 
   export function list(tools: Tools, who: string): Spec[] {
-    return who === "main" ? [...OWN, ...BOSS, ...kit(who), SKILL] : [...OWN, ...kit(who), SKILL];
+    return who === "main" ? [...OWN, ...BOSS, ...kit(who), SKILL, SKILLS_SEARCH] : [...OWN, ...kit(who), SKILL, SKILLS_SEARCH];
   }
 
   // whether `who` gets the MCP servers' tools: the master and subagents
@@ -508,6 +530,10 @@ export namespace Tools {
       }
       case "skill": {
         return Tools.job(tools, String(args.device), { name, input: { name: String(args.name) }, cwd: "main" }, signal, id);
+      }
+      case "skills_search": {
+        const found = Tools.skills_fit(tools, String(args.query), FOUND);
+        return { text: found.length === 0 ? "No skill fits " + JSON.stringify(String(args.query)) + "; Skills lists every name." : found.join("\n"), fail: false };
       }
       case "task_add":
       case "task_edit":
@@ -839,7 +865,7 @@ export namespace Tools {
     const run = Pick.ask(Tools.pick(tools, agent));
     const own = Memory.file_text(PROMPTS.prompt.file);
     const system = own === "" ? SUB : SUB + "\n\n" + AGENT_PROMPT + "\n\n" + own;
-    const blocks = [...agent.view, Tools.devices(tools), Tools.skills(tools), log];
+    const blocks = [...agent.view, Tools.devices(tools), Tools.skills(tools, log.text.slice(-4000)), log];
     return { ...run, system, blocks, searches: SEARCHES, server, agent: true };
   }
 

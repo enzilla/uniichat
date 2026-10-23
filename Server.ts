@@ -419,7 +419,8 @@ export namespace Chat {
     chat.eye = Chat.eye(mem, from);
     chat.socks.forEach((sock) => Chat.show(chat, sock));
     const tasks = { text: Tasks.tasks_block(Tasks.tasks_load(mem.dir), Date.now()), mark: false };
-    const blocks = [...view, Tools.devices(chat.tools), Tools.skills(chat.tools), Tools.at_work(chat.tools), tasks, { text: HEAD + text, mark: true }];
+    const asked = await Chat.invoked(chat, text, halt.signal);
+    const blocks = [...view, Tools.devices(chat.tools), Tools.skills(chat.tools, text), Tools.at_work(chat.tools), tasks, ...asked, { text: HEAD + text, mark: true }];
     const ask = { ...Chat.share(chat, Tools.prompt("prompt")), searches: SEARCHES, server, blocks, imgs };
     chat.model = chat.pick.model;
     chat.asked = true;
@@ -427,6 +428,23 @@ export namespace Chat {
     const call = (chat.call = AskAI.ask(ask, (ev) => Chat.on(chat, null, ev)));
     Chat.change(chat);
     return Chat.ended(chat, call, halt);
+  }
+
+  // the skills a message invokes by name (a line starting /name, as the
+  // terminal completes them), each loaded whole from the first open
+  // device that has it, for this turn: Unii then needn't decide to load
+  // it. One that fails to load is said so
+  export async function invoked(chat: Chat, text: string, signal: AbortSignal): Promise<{ text: string; mark: boolean }[]> {
+    const names = [...new Set([...text.matchAll(/^\/([\p{L}\p{N}_.:-]+)/gmu)].map((m) => m[1]))];
+    const found = names.flatMap((name) => {
+      const on = Tools.opened(chat.tools).find(([, d]) => d.skills.some((s) => s.name === name));
+      return on === undefined ? [] : [{ name, device: on[0] }];
+    });
+    return Promise.all(found.map(async ({ name, device }) => {
+      const out = await Tools.job(chat.tools, device, { name: "skill", input: { name }, cwd: "main" }, signal, crypto.randomUUID());
+      const said = out.fail ? "could not be loaded: " + out.text : "loaded here, follow it for their message:\n\n" + out.text;
+      return { text: "The user invoked the skill " + name + " on " + device + "; it " + said + "\n\n", mark: false };
+    }));
   }
 
   // the turn's call ends; false: the turn ends
