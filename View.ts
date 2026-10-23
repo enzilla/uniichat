@@ -74,6 +74,7 @@ export type State = {
   mcp       : Plug[];
   tasks     : Task[]; // the pending list: open, then closed lately (Tasks.tasks_view)
   skills    : Skilled[]; // the skills on the devices open now (Machine.skills), for the terminal to complete
+  threads   : Record<string, number[]>; // Unii's answers about each task, by its id (Server.ts: a turn of its messages only)
 };
 
 // an MCP server of the server's config (Mcp.ts), on or off in this chat
@@ -125,7 +126,7 @@ export type Server =
   | { $: "job"; id: string; job: unknown };
 
 // a message a person sends: its text, its images
-export type Sent = { text: string; images?: Blob[] };
+export type Sent = { text: string; images?: Blob[]; task?: string }; // task: about it (task_mark)
 
 // an act's answer: why refused (status: HTTP's), a recording's words, an
 // import's still running; a body, made anew for each post (what fetch
@@ -285,6 +286,7 @@ export function view_new(): View {
     mcp       : [],
     tasks     : [],
     skills    : [],
+    threads   : {},
     parts     : [],
     turn      : Infinity,
     fold      : null,
@@ -414,7 +416,12 @@ export function view_act(v: View, act: Act): Client[] {
         v.notes.push(word + " is no command; nothing was sent. The terminal's /help lists its commands; the site's are in its ☰ menu.");
         return [];
       }
-      const blob = new Blob([...images, text]);
+      const about = act.task === undefined ? undefined : v.tasks.find((t) => t.id === act.task);
+      if (act.task !== undefined && about === undefined) {
+        v.notes.push("Pendência " + act.task + " não encontrada; nada foi enviado.");
+        return [];
+      }
+      const blob = new Blob([...images, about === undefined ? text : task_mark(about) + "\n" + text]);
       const say: Client = { $: "say", sizes: images.map((b) => b.size), body: () => blob };
       v.fold = null;
       return goal === null ? [say] : [{ $: "goal", text: goal }, say];
@@ -584,6 +591,42 @@ export function view_copy(v: View, n: number): { text: string; what: string } | 
     return all.length === 0 ? "A última resposta não tem bloco de código." : "A última resposta tem " + all.length + (all.length === 1 ? " bloco" : " blocos") + " de código: /copy 1" + (all.length === 1 ? "." : " a /copy " + all.length + ".");
   }
   return { text: all[n - 1].x, what: "o bloco de código " + n };
+}
+
+// A task's thread
+// ---------------
+
+// a message about a task starts with its mark, as the chat and Unii read
+// it; the task's thread is those messages and Unii's answers in the turns
+// they alone began (State.threads)
+const MARK = /^\[Sobre a pendência (P\d+)( · [^\]\n]*)?\]\n?/;
+
+export function task_mark(t: Task): string {
+  return "[Sobre a pendência " + t.id + " · " + t.title.replace(/[\]\n]/g, " ") + "]";
+}
+
+// the task a message is about (its mark's), else null
+export function task_marked(text: string): string | null {
+  return MARK.exec(text)?.[1] ?? null;
+}
+
+// a message without its mark
+export function task_unmark(text: string): string {
+  return text.replace(MARK, "");
+}
+
+// the task a turn's messages are all about (none marked, or two tasks or
+// one unmarked among them: null)
+export function turn_task(texts: string[]): string | null {
+  const ids = new Set(texts.map(task_marked));
+  return ids.size === 1 && !ids.has(null) ? [...ids][0] : null;
+}
+
+// a task's thread, as known here: the messages marked about it and the
+// answers about it, in order (the summarized ones not, till zoomed)
+export function task_thread(v: View, id: string): (Entry & { id: number })[] {
+  const answers = new Set(v.threads[id] ?? []);
+  return [...v.whole].filter(([k, e]) => answers.has(k) || (e.kind === "user" && task_marked(e.text) === id)).sort((a, b) => a[0] - b[0]).map(([k, e]) => ({ ...e, id: k }));
 }
 
 // the footer's line of the pending list ("" with none open): ids that
