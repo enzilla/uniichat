@@ -19,7 +19,7 @@ const call = (name: string, args: object, who = "main") => Tools.call(tools, who
 
 test("only the master has the tools", () => {
   const names = (who: string) => Tools.list(tools, who).map((s) => s.name);
-  for (const name of ["task_add", "task_edit", "tasks"]) {
+  for (const name of ["task_add", "task_edit", "task_reply", "tasks"]) {
     expect(names("main")).toContain(name);
     expect(names("SmoothCow")).not.toContain(name);
   }
@@ -57,4 +57,22 @@ test("after through the tools: waits and frees said; a cycle refused, nothing ch
   const list = (await call("tasks", {})).text;
   expect(list).toContain(id + " [user] Salvar o token xoxp frees " + bid);
   expect(list).toContain("Waiting for other tasks (hidden from the user until freed):\n- " + bid + " [unii] Ligar o MCP waits for " + id);
+});
+
+test("fields and the thread by the tools: added, refused when wrong, replied to, listed whole", async () => {
+  const fields = [{ id: "amb", label: "Ambiente", kind: "choice", choices: ["hom", "prod"] }, { id: "obs", label: "Obs", kind: "text", required: false }];
+  const add = await call("task_add", { title: "Aplicar onde?", fields });
+  expect(add.fail).toBe(false);
+  expect(add.text).toContain("fields: amb* \"Ambiente\" (choice: hom | prod); obs \"Obs\" (text)");
+  const id = add.text.split(" ")[1];
+  expect((await call("task_add", { title: "Outra", fields: [{ id: "x", label: "X", kind: "choice", choices: ["só"] }] })).text).toBe("Field x (choice) needs at least 2 choices.");
+  expect((await call("task_edit", { id, fields: "nope" })).fail).toBe(true);
+  const s = Tasks.tasks_load(DIR);
+  Tasks.task_draft(s, id, { amb: "prod" });
+  Tasks.task_say(s, id, "Por que prod?", Date.now());
+  expect(await call("task_reply", { id, text: "Porque o hom já tem." })).toEqual({ text: "Replied in " + id + "'s thread; the user's turn there.", fail: false });
+  expect((await call("task_reply", { id: "P999", text: "x" })).fail).toBe(true);
+  const whole = (await call("tasks", { id })).text;
+  expect(whole).toContain("draft (not sent yet): Ambiente: prod");
+  expect(whole).toContain("thread (the user's turn):\n  user: Por que prod?\n  you: Porque o hom já tem.");
 });

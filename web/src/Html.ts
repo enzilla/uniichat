@@ -10,7 +10,7 @@ import * as Call from "../../Call.ts";
 import * as Md from "../../Md.ts";
 import { EFFORTS, LABELS, Pick, VENDORS } from "../../Pick.ts";
 import type { Key, Page, Row } from "../../Settings.ts";
-import type { Task } from "../../Tasks.ts";
+import type { Field, Task } from "../../Tasks.ts";
 import * as Deps from "../../TaskDeps.ts";
 import * as Theme from "../../Theme.ts";
 import * as Timer from "../../Timer.ts";
@@ -180,7 +180,11 @@ export function timers_html(timers: Timer.Timer[]): string[] {
 // time ago in it: an item's markup changes only as the task does, so
 // a comment being typed stays (main.ts markup). Those that wait for
 // others (TaskDeps.ts) apart, without acts, each with what it waits for;
-// those that free others marked "libera N"
+// those that free others marked "libera N". Its fields (each answered
+// apart, a draft: main.ts sends each change) and its thread (a message
+// there starts a turn, not a conclusion), with whose turn it is. What
+// is typed and not sent (data-keep) survives the item made again
+// (main.ts keep)
 export function tasks_html(tasks: Task[]): { open: string[]; waiting: string[]; closed: string[] } {
   const when = (iso: string) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   const head = (t: Task) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
@@ -192,10 +196,12 @@ export function tasks_html(tasks: Task[]): { open: string[]; waiting: string[]; 
     const who = [...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(t.who === "unii" ? ["com o Unii"] : [])];
     const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div></details>`;
     const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
-    const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}">`;
-    const go = `<label class="go"><input type="checkbox"> Avisar o Unii agora</label>`;
+    const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
+    const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
     const acts = `<div class="acts">${go}${act(t, "done", "Concluir", "done")}${act(t, "dropped", "Descartar", "drop")}</div>`;
-    return `<li class="task ${esc(t.who)}" data-task="${esc(t.id)}">${head(t)}${meta(t, [...who, `<time>${esc(when(t.made))}</time>`])}${detail}${opts}${note}${acts}</li>`;
+    const talk = View.task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(View.task_talk_said(t))}</span>`];
+    const cls = "task " + t.who + (t.talk === null ? "" : " talk-" + t.talk);
+    return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head(t)}${meta(t, [...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t)}${opts}${note}${acts}${thread_html(t)}</li>`;
   };
   const closed = (t: Task) => {
     const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii ainda não viu"])];
@@ -208,6 +214,46 @@ export function tasks_html(tasks: Task[]): { open: string[]; waiting: string[]; 
   };
   const opened = tasks.filter((t) => t.state === "open");
   return { open: opened.filter((t) => !blocked.has(t.id)).map(open), waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
+}
+
+// a task's fields, each a fieldset: a choice and yes or no as radios,
+// many as checkboxes, a text as a textarea; its draft answer checked or
+// in it. "" for none
+function fields_html(t: Task): string {
+  const fields = t.fields ?? [];
+  if (fields.length === 0) {
+    return "";
+  }
+  const draft = t.draft ?? {};
+  const one = (f: Field) => {
+    const v = Object.hasOwn(draft, f.id) ? draft[f.id] : undefined;
+    const name = "f-" + t.id + "-" + f.id;
+    const req = f.required ? ` <span class="req" title="Obrigatório">*</span>` : "";
+    const legend = `<legend>${esc(f.label)}${req}</legend>`;
+    if (f.kind === "text") {
+      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text">${legend}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
+    }
+    const type = f.kind === "multi" ? "checkbox" : "radio";
+    const on = (c: string) => (Array.isArray(v) ? v.includes(c) : v === c);
+    const boxes = f.choices.map((c) => `<label><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> ${esc(c)}</label>`).join("");
+    return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}">${legend}<div class="picks">${boxes}</div></fieldset>`;
+  };
+  return `<div class="fields">${fields.map(one).join("")}</div>`;
+}
+
+// a task's thread: its messages (Unii's as Markdown, as messages are;
+// the user's as typed), a box and Enviar (main.ts: the box's text, as a
+// TaskSay); open while it's the user's turn
+function thread_html(t: Task): string {
+  const thread = t.thread ?? [];
+  const msg = (m: Task["thread"][number]) => m.who === "unii"
+    ? `<li class="unii"><span class="who">Unii</span><div class="md">${Md.md_parse(m.text).map(block_html).join("")}</div></li>`
+    : `<li class="user"><span class="who">Você</span><p>${esc(m.text)}</p></li>`;
+  const open = thread.length > 0 && t.talk !== null ? " open" : "";
+  const said = thread.length === 0 ? "Conversar sobre esta pendência" : "Conversa (" + thread.length + ")";
+  const box = `<textarea class="say" rows="2" maxlength="4000" placeholder="Escreva sobre esta pendência (não a conclui)" aria-label="Mensagem sobre ${esc(t.id)}" data-keep="say"></textarea>`;
+  const send = `<button class="say-send"${act_html({ $: "TaskSay", task: t.id, text: "" })}>Enviar</button>`;
+  return `<details class="thread" data-keep="thread"${open}><summary>${esc(said)}</summary>${thread.length === 0 ? "" : `<ol>${thread.map(msg).join("")}</ol>`}${box}<div class="acts">${send}</div></details>`;
 }
 
 // Settings page

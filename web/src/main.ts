@@ -183,6 +183,15 @@ function chat(): void {
     attach([...(ev.dataTransfer?.files ?? [])]);
   };
   document.onclick = click;
+  $("#tasks").addEventListener("change", task_draft);
+  $("#tasks").addEventListener("toggle", thread_toggle, true);
+  $("#tasks").addEventListener("keydown", (ev) => {
+    const el = ev.target as HTMLElement;
+    if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+      ev.preventDefault();
+      task_say(el.closest<HTMLElement>("li[data-task]")!.dataset.task!);
+    }
+  });
   // a phone's keyboard up or down: the box's last line stays in sight, if
   // the caret is there; the page's bottom, if at it
   visualViewport!.onresize = () => {
@@ -300,7 +309,12 @@ function click(ev: MouseEvent): void {
     go(path ?? "/");
   }
   if (a !== undefined) {
-    act(task_act(el, JSON.parse(a)));
+    const made = JSON.parse(a) as View.Act;
+    if (made.$ === "TaskSay") {
+      task_say(made.task);
+    } else {
+      act(task_act(el, made));
+    }
   }
   if (text !== undefined) {
     navigator.clipboard.writeText(text).then(() => copied(el), () => toast("Could not copy."));
@@ -363,7 +377,122 @@ function task_act(el: HTMLElement, a: View.Act): View.Act {
   }
   const note = item.querySelector<HTMLInputElement>("input.note")?.value ?? "";
   const go = item.querySelector<HTMLInputElement>(".go input")?.checked ?? false;
-  return { ...a, note, go };
+  const fields = a.state === "done" ? task_fields(item) : {};
+  return { ...a, note, go, ...(Object.keys(fields).length === 0 ? {} : { fields }) };
+}
+
+// a field's answer as its fieldset holds it (Html.fields_html): a text,
+// the choices checked (multi), the one checked ("" none)
+function field_value(set: HTMLElement): unknown {
+  if (set.dataset.kind === "text") {
+    return set.querySelector("textarea")?.value ?? "";
+  }
+  const on = [...set.querySelectorAll<HTMLInputElement>("input:checked")].map((i) => i.value);
+  return set.dataset.kind === "multi" ? on : (on[0] ?? "");
+}
+
+// every field's answer of a task's item, by field id
+function task_fields(item: Element): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const set of item.querySelectorAll<HTMLElement>("fieldset.field")) {
+    out[set.dataset.field!] = field_value(set);
+  }
+  return out;
+}
+
+// a field changed (a radio, a box, a text left): kept as a draft
+function task_draft(ev: Event): void {
+  const set = (ev.target as HTMLElement).closest<HTMLElement>("#tasks fieldset.field");
+  const item = set?.closest<HTMLElement>("li[data-task]");
+  if (set === null || set === undefined || item === null || item === undefined) {
+    return;
+  }
+  act({ $: "TaskDraft", task: item.dataset.task!, fields: { [set.dataset.field!]: field_value(set) } });
+}
+
+// a message in a task's thread (its box's text): the box emptied, its
+// text back in it if the server refuses (and it's still empty)
+function task_say(task: string): void {
+  const box = () => document.querySelector<HTMLTextAreaElement>(`#tasks li[data-task="${CSS.escape(task)}"] textarea.say`);
+  const text = box()?.value ?? "";
+  for (const msg of View.view_act(v, { $: "TaskSay", task, text })) {
+    const was = box();
+    if (was !== null) {
+      was.value = "";
+    }
+    View.link_send(v, msg, (out) => {
+      if (out.error === undefined) {
+        return;
+      }
+      toast(out.error);
+      const now = box();
+      if (now !== null && now.value.trim() === "") {
+        now.value = text;
+      }
+    });
+  }
+  draw(false);
+}
+
+// what's typed in the list and not sent (data-keep: a comment, a text
+// field, a thread's box, a box checked), and where the focus is, taken
+// before its items are made again and put back in the new ones
+type Kept = { el: Element; value: string | null; checked: boolean | null; focus: boolean; start: number | null; end: number | null };
+function keep_take(): Map<string, Kept> {
+  const kept = new Map<string, Kept>();
+  for (const el of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("#tasks li[data-task] :is(input, textarea)[data-keep]")) {
+    const key = el.closest<HTMLElement>("li[data-task]")!.dataset.task + "/" + el.dataset.keep;
+    const box = el instanceof HTMLInputElement && el.type === "checkbox";
+    const focus = document.activeElement === el;
+    const value = !box && el.value !== el.defaultValue ? el.value : null;
+    const checked = box && (el as HTMLInputElement).checked !== (el as HTMLInputElement).defaultChecked ? (el as HTMLInputElement).checked : null;
+    if (value !== null || checked !== null || focus) {
+      kept.set(key, { el, value, checked, focus, start: box ? null : el.selectionStart, end: box ? null : el.selectionEnd });
+    }
+  }
+  return kept;
+}
+function keep_put(kept: Map<string, Kept>): void {
+  for (const [key, k] of kept) {
+    const [task, name] = key.split("/");
+    const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#tasks li[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
+    if (el === null || el === k.el) {
+      continue;
+    }
+    if (k.value !== null) {
+      el.value = k.value;
+    }
+    if (k.checked !== null) {
+      (el as HTMLInputElement).checked = k.checked;
+    }
+    if (k.focus) {
+      el.focus();
+      if (k.start !== null && k.end !== null) {
+        el.setSelectionRange(k.start, k.end);
+      }
+    }
+  }
+}
+
+// a thread opened or shut by hand stays so, its item made again, till
+// a message comes to it (THREADS: by task, how and at how many messages)
+const THREADS = new Map<string, { open: boolean; n: number }>();
+function thread_toggle(ev: Event): void {
+  const el = ev.target as HTMLElement;
+  const item = el.closest<HTMLElement>("#tasks li[data-task]");
+  if (!(el instanceof HTMLDetailsElement) || !el.classList.contains("thread") || item === null) {
+    return;
+  }
+  THREADS.set(item.dataset.task!, { open: el.open, n: el.querySelectorAll("ol > li").length });
+}
+function threads_put(): void {
+  for (const el of document.querySelectorAll<HTMLDetailsElement>("#tasks li[data-task] details.thread")) {
+    const task = el.closest<HTMLElement>("li[data-task]")!.dataset.task!;
+    const was = THREADS.get(task);
+    if (was !== undefined && was.n === el.querySelectorAll("ol > li").length && el.open !== was.open) {
+      el.open = was.open;
+    }
+  }
 }
 
 // the pending list: the header's ✓ (on a wide screen, an aside instead:
@@ -383,7 +512,10 @@ function tasks_bar(): void {
   $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
   $("#tasks .none").hidden = open.length > 0;
   $("#tasks .none").textContent = View.tasks_none_said(waiting.length);
+  const kept = keep_take();
   markup($("#tasks ul.now"), open);
+  keep_put(kept);
+  threads_put();
   markup($("#tasks .waiting ul"), waiting);
   $("#tasks .waiting").hidden = waiting.length === 0;
   $("#tasks .waiting summary").textContent = View.tasks_waiting_said(waiting.length);

@@ -15,7 +15,7 @@ import * as Md from "./Md.ts";
 import { LABELS, type Fall, type Move, Pick } from "./Pick.ts";
 import { GLYPH, WHO } from "./Theme.ts";
 import type { Timer } from "./Timer.ts";
-import type { Task } from "./Tasks.ts";
+import type { Field, Task, Values } from "./Tasks.ts";
 import * as Deps from "./TaskDeps.ts";
 
 // Types
@@ -139,7 +139,9 @@ export type Client =
   | { $: "mcp"; name: string; on: boolean } // an MCP server turned on or off in this chat
   | { $: "out"; job: string; out: object }
   | { $: "unschedule"; id: string } // a schedule cancelled
-  | { $: "task"; task: string; state: Task["state"]; answer?: string; note?: string; go?: boolean } // a pending task resolved (go: Unii told now)
+  | { $: "task"; task: string; state: Task["state"]; answer?: string; note?: string; go?: boolean; fields?: Record<string, unknown> } // a pending task resolved (go: Unii told now; fields: answers laid over its draft)
+  | { $: "task_draft"; task: string; fields: Record<string, unknown> } // a task's fields answered, kept as a draft
+  | { $: "task_say"; task: string; text: string } // a message in a task's thread (a message of the chat, marked)
   | { $: "tasks_tell" } // the resolutions untold, told to Unii now
   | { $: "zoom"; part: Part }
   | { $: "root" }
@@ -169,7 +171,9 @@ export type Act =
   | { $: "Goto"; name: string | null }          // a tab, a name, the logo (null: UniiChat)
   | { $: "Unschedule"; id: string }             // a schedule's Cancel
   | { $: "Plug"; name: string }                 // an MCP server turned on if off, else off
-  | { $: "Task"; task: string; state: Task["state"]; answer?: string; note?: string; go?: boolean } // a pending task's Concluir, Descartar, Reabrir, or a choice
+  | { $: "Task"; task: string; state: Task["state"]; answer?: string; note?: string; go?: boolean; fields?: Record<string, unknown> } // a pending task's Concluir, Descartar, Reabrir, or a choice
+  | { $: "TaskDraft"; task: string; fields: Record<string, unknown> } // a task's field answered (not concluded)
+  | { $: "TaskSay"; task: string; text: string }  // a message in a task's thread
   | { $: "TasksTell" }                          // Avisar o Unii agora
 
 // what a page draws, top to bottom
@@ -477,7 +481,25 @@ export function view_act(v: View, act: Act): Client[] {
         return [];
       }
       const note = act.note?.trim() ?? "";
-      return [{ $: "task", task: t.id, state: act.state, ...(act.answer === undefined ? {} : { answer: act.answer }), ...(note === "" ? {} : { note }), ...(act.go ? { go: true } : {}) }];
+      const fields = act.state === "done" && act.fields !== undefined && Object.keys(act.fields).length > 0 ? { fields: act.fields } : {};
+      return [{ $: "task", task: t.id, state: act.state, ...(act.answer === undefined ? {} : { answer: act.answer }), ...(note === "" ? {} : { note }), ...(act.go ? { go: true } : {}), ...fields }];
+    }
+    case "TaskDraft": {
+      const t = v.tasks.find((x) => x.id === act.task);
+      if (t === undefined) {
+        v.notes.push("Pendência " + act.task + " não encontrada.");
+        return [];
+      }
+      return [{ $: "task_draft", task: t.id, fields: act.fields }];
+    }
+    case "TaskSay": {
+      const t = v.tasks.find((x) => x.id === act.task);
+      const text = act.text.trim();
+      if (t === undefined || text === "") {
+        v.notes.push(t === undefined ? "Pendência " + act.task + " não encontrada." : "Escreva uma mensagem sobre a pendência " + t.id + ".");
+        return [];
+      }
+      return [{ $: "task_say", task: t.id, text }];
     }
     case "TasksTell": {
       return [{ $: "tasks_tell" }];
@@ -536,7 +558,7 @@ export function view_untold(v: View): Task[] {
 // its number), the comment after; else why not. A task with choices
 // whose rest starts with a number none of them is (/ok P1 4 with 3):
 // refused, nothing done, rather than "4" taken as a comment
-export function task_args(v: View, arg: string, choose: boolean): { task: Task; answer?: string; note: string } | string {
+export function task_args(v: View, arg: string, choose: boolean): { task: Task; answer?: string; note: string; fields?: Record<string, unknown> } | string {
   const m = /^\s*[Pp]?(\d+)(?=\s|$)\s*([\s\S]*)$/.exec(arg);
   if (m === null) {
     return "Qual pendência? Informe o id, como P7.";
@@ -546,9 +568,14 @@ export function task_args(v: View, arg: string, choose: boolean): { task: Task; 
   if (task === undefined) {
     return "Pendência " + id + " não encontrada.";
   }
-  const rest = m[2].trim();
+  const given = choose ? fields_args(task, m[2]) : { fields: {}, rest: m[2] };
+  if (typeof given === "string") {
+    return given;
+  }
+  const rest = given.rest.trim();
+  const fields = Object.keys(given.fields).length === 0 ? {} : { fields: given.fields };
   if (!choose || task.choices.length === 0) {
-    return { task, note: rest };
+    return { task, note: rest, ...fields };
   }
   const low = rest.toLowerCase();
   const said = [...task.choices].sort((a, b) => b.length - a.length).find((c) => low === c.toLowerCase() || low.startsWith(c.toLowerCase() + " "));
@@ -559,7 +586,71 @@ export function task_args(v: View, arg: string, choose: boolean): { task: Task; 
   }
   const answer = said ?? (num !== null ? task.choices[Number(num[1]) - 1] : undefined);
   const used = said !== undefined ? said.length : num !== null ? num[1].length : 0;
-  return { task, answer, note: rest.slice(used).trim() };
+  return { task, answer, note: rest.slice(used).trim(), ...fields };
+}
+
+// a task's field by its id (any case) or its number from 1
+export function field_ref(t: Task, ref: string): Field | null {
+  const fields = t.fields ?? [];
+  const by = fields.find((f) => f.id === ref) ?? fields.find((f) => f.id.toLowerCase() === ref.toLowerCase());
+  const n = /^\d+$/.test(ref) ? Number(ref) : 0;
+  return by ?? (n >= 1 && n <= fields.length ? fields[n - 1] : null);
+}
+
+// an answer as typed for a field: a choice by its text (any case) or
+// number, many by commas, sim/não (s, n), a text as is; "" clears; else
+// why not
+export function field_value(f: Field, typed: string): string | string[] | { error: string } {
+  const one = (x: string): string | null => {
+    const low = x.trim().toLowerCase();
+    if (f.kind === "yesno") {
+      return ["sim", "s", "yes", "y"].includes(low) ? "sim" : ["não", "nao", "n", "no"].includes(low) ? "não" : null;
+    }
+    const n = /^\d+$/.test(low) ? Number(low) : 0;
+    return f.choices.find((c) => c.toLowerCase() === low) ?? (n >= 1 && n <= f.choices.length ? f.choices[n - 1] : null);
+  };
+  if (f.kind === "text" || typed.trim() === "") {
+    return f.kind === "multi" ? [] : typed;
+  }
+  const all = f.kind === "multi" ? typed.split(",").filter((x) => x.trim() !== "") : [typed];
+  const got = all.map(one);
+  const bad = all.find((_, k) => got[k] === null);
+  if (bad !== undefined) {
+    return { error: "O campo “" + f.label + "” não tem a opção “" + bad.trim() + "”. Opções: " + f.choices.map((c, k) => k + 1 + ") " + c).join(", ") + ". Nada foi alterado." };
+  }
+  return f.kind === "multi" ? (got as string[]) : got[0]!;
+}
+
+// the answers typed in a command's words (campo=valor, a value in
+// quotes if it has spaces; a field by id or number), taken out of them;
+// none for a task without fields; else why not
+export function fields_args(t: Task, words: string): { fields: Record<string, unknown>; rest: string } | string {
+  const fields: Record<string, unknown> = {};
+  if ((t.fields ?? []).length === 0) {
+    return { fields, rest: words };
+  }
+  let why: string | null = null;
+  const rest = words.replace(/(^|\s)([A-Za-z0-9][A-Za-z0-9_-]*)=("[^"]*"|“[^”]*”|\S*)/g, (all, pre: string, ref: string, raw: string) => {
+    const f = field_ref(t, ref);
+    if (f === null) {
+      why = why ?? "A pendência " + t.id + " não tem o campo “" + ref + "”. Campos: " + t.fields.map((x, k) => k + 1 + ") " + x.id).join(", ") + ". Nada foi alterado.";
+      return all;
+    }
+    const value = field_value(f, /^["“]/.test(raw) ? raw.slice(1, -1) : raw);
+    if (typeof value === "object" && !Array.isArray(value)) {
+      why = why ?? value.error;
+      return all;
+    }
+    fields[f.id] = value;
+    return pre;
+  });
+  return why ?? { fields, rest };
+}
+
+// a task's thread state: "aguardando o Unii" (the user wrote), "sua vez"
+// (Unii replied); "" neither
+export function task_talk_said(t: Task): string {
+  return t.talk === "unii" ? "aguardando o Unii" : t.talk === "user" ? "sua vez" : "";
 }
 
 // the footer's line of the pending list ("" with none open): ids that
@@ -589,12 +680,14 @@ export function tasks_md(v: View, one: Task | null = null, waiting = false): str
     const waits = Deps.waits(v.tasks, one);
     const frees = task_frees_said(v, one);
     const deps = (one.state === "open" && waits.length > 0 ? " · aguarda " + waits.join(", ") : "") + (frees === "" ? "" : " · " + frees);
-    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + (one.who === "user" ? "com você" : "com o Unii") + tag(one) + deps + opts(one);
-    return [head, said, one.detail].filter((x) => x !== "").join("\n\n");
+    const talk = task_talk_said(one) === "" ? "" : " · " + task_talk_said(one);
+    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + (one.who === "user" ? "com você" : "com o Unii") + tag(one) + deps + talk + opts(one);
+    return [head, said, one.detail, fields_md(one), thread_md(one)].filter((x) => x !== "").join("\n\n");
   }
   const { open, waiting: wait, closed } = view_tasks(v);
   const frees = (t: Task) => (task_frees_said(v, t) === "" ? "" : " · **" + task_frees_said(v, t) + "**");
-  const line = (t: Task) => "- **" + t.id + "** " + t.title + (t.who === "unii" ? " (com o Unii)" : "") + frees(t) + tag(t) + opts(t);
+  const extra = (t: Task) => ((t.fields ?? []).length === 0 ? "" : " · " + t.fields.length + (t.fields.length === 1 ? " campo" : " campos")) + (task_talk_said(t) === "" ? "" : " · **" + task_talk_said(t) + "**");
+  const line = (t: Task) => "- **" + t.id + "** " + t.title + (t.who === "unii" ? " (com o Unii)" : "") + frees(t) + tag(t) + opts(t) + extra(t);
   const who = (id: string) => (v.tasks.find((t) => t.id === id)?.who === "unii" ? id + " (com o Unii)" : id);
   const waits = (t: Task) => "- " + t.id + " " + t.title + (t.who === "unii" ? " (com o Unii)" : "") + " — aguarda " + Deps.waits(v.tasks, t).map(who).join(", ");
   if (waiting) {
@@ -605,9 +698,37 @@ export function tasks_md(v: View, one: Task | null = null, waiting = false): str
     open.length === 0 ? tasks_none_said(wait.length) : "**Pendências abertas (" + open.length + ")**\n\n" + open.map(line).join("\n"),
     wait.length === 0 ? "" : "_" + tasks_waiting_said(wait.length) + "_ · `/p aguardando` mostra quais",
     closed.length === 0 ? "" : "**Resolvidas recentemente**\n\n" + closed.slice(0, 10).map(done).join("\n"),
-    "`/p P7` detalha · `/ok P7 [opção] [comentário]` conclui · `/ok!` conclui e avisa o Unii · `/descartar P7` · `/reabrir P7` · `/avisar`",
+    "`/p P7` detalha · `/ok P7 [opção] [campo=valor] [comentário]` conclui · `/ok!` conclui e avisa o Unii · `/rascunho P7 campo=valor` · `/conversa P7 mensagem` · `/descartar P7` · `/reabrir P7` · `/avisar`",
   ];
   return parts.filter((x) => x !== "").join("\n\n");
+}
+
+// a task's fields as Markdown: each numbered, its kind and choices,
+// whether required, and its answer (concluded) or draft; "" for none
+function fields_md(t: Task): string {
+  const fields = t.fields ?? [];
+  if (fields.length === 0) {
+    return "";
+  }
+  const KIND = { choice: "escolha uma", multi: "escolha várias", text: "texto", yesno: "sim ou não" };
+  const values: Values = (t.state === "done" ? t.answers : t.draft) ?? {};
+  const said = (f: Field) => {
+    const v = Object.hasOwn(values, f.id) ? values[f.id] : undefined;
+    return v === undefined || v.length === 0 ? "_sem resposta_" : Array.isArray(v) ? v.join(", ") : v;
+  };
+  const opts = (f: Field) => (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.map((c, k) => k + 1 + ") " + c).join("  ") : "");
+  const head = t.state === "done" ? "**Respostas**" : "**Campos** (respostas salvas como rascunho até concluir)";
+  return head + "\n\n" + fields.map((f, k) => k + 1 + ". " + f.label + " `" + f.id + "` (" + KIND[f.kind] + opts(f) + (f.required ? ", obrigatório" : "") + ") — " + said(f)).join("\n");
+}
+
+// a task's thread as Markdown, its newest messages; "" for none
+function thread_md(t: Task): string {
+  const thread = t.thread ?? [];
+  if (thread.length === 0) {
+    return "";
+  }
+  const talk = task_talk_said(t);
+  return "**Conversa**" + (talk === "" ? "" : " · " + talk) + "\n\n" + thread.map((m) => "- **" + (m.who === "user" ? "Você" : "Unii") + ":** " + m.text.replace(/\n+/g, " ")).join("\n");
 }
 
 export function view_body(v: View): Row[] {
