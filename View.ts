@@ -534,7 +534,7 @@ export function tasks_footer(v: View, w: number): string {
 // the pending list as Markdown, for the terminal's /p (one: its whole)
 export function tasks_md(v: View, one: Task | null = null): string {
   const STATE = { open: "aberta", done: "concluída", dropped: "descartada" };
-  const tag = (t: Task) => (t.ref === null ? "" : " · _" + t.ref + "_");
+  const tag = (t: Task) => (t.ref === null ? "" : " · " + t.ref);
   const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c).join("  "));
   if (one !== null) {
     const said = [one.answer === null ? "" : "Resposta: " + one.answer + ".", one.note === null ? "" : "Comentário: " + one.note].filter((x) => x !== "").join(" ");
