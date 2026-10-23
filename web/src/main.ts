@@ -186,16 +186,6 @@ function chat(): void {
     }
   };
   document.onclick = click;
-  $("#task").onsubmit = task_say;
-  // in its box, Enter sends (Shift+Enter: a new line), as the chat's
-  $("#task").onkeydown = (ev) => {
-    const say = (ev.target as HTMLElement).closest("#task-say");
-    if (say !== null && ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
-      ev.preventDefault();
-      say.closest("form")?.requestSubmit();
-    }
-  };
-  $("#task").addEventListener("close", () => (TASK = null));
   // a phone's keyboard up or down: the box's last line stays in sight, if
   // the caret is there; the page's bottom, if at it
   visualViewport!.onresize = () => {
@@ -293,7 +283,7 @@ function act(a: View.Act): void {
 // a click on a View.Act, a Copy button, a page (go), a knob or its
 // menu's row (Html.ts), unless it ends a selection dragged in its element
 function click(ev: MouseEvent): void {
-  const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], [data-open], [data-close], .choices > button");
+  const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], .choices > button");
   const sel = getSelection();
   if (el === null || (sel !== null && !sel.isCollapsed && el.contains(sel.focusNode))) {
     return;
@@ -301,12 +291,6 @@ function click(ev: MouseEvent): void {
   if (el.dataset.knob !== undefined) {
     place(el);
     return;
-  }
-  if (el.dataset.open !== undefined) {
-    return task_open(el.dataset.open);
-  }
-  if (el.dataset.close !== undefined) {
-    return $<HTMLDialogElement>("#task").close();
   }
   el.closest<HTMLElement>(".choices")?.hidePopover();
   const { act: a, copy: text, go: path } = el.dataset;
@@ -373,14 +357,14 @@ function left(ev: FocusEvent): void {
   }
 }
 
-// a task's Concluir, Descartar or choice (Html.tasks_html, task_html)
-// takes its item's or window's comment and "Avisar o Unii agora"
+// a task's Concluir, Descartar or choice (Html.tasks_html) takes its
+// item's comment and "Avisar o Unii agora"
 function task_act(el: HTMLElement, a: View.Act): View.Act {
-  const item = el.closest("[data-task]");
+  const item = el.closest("li[data-task]");
   if (a.$ !== "Task" || a.state === "open" || item === null) {
     return a;
   }
-  const note = item.querySelector<HTMLInputElement | HTMLTextAreaElement>(".note")?.value ?? "";
+  const note = item.querySelector<HTMLInputElement>("input.note")?.value ?? "";
   const go = item.querySelector<HTMLInputElement>(".go input")?.checked ?? false;
   return { ...a, note, go };
 }
@@ -412,48 +396,6 @@ function tasks_bar(): void {
   if (v.tasks.length === 0 && $("#tasks").matches(":popover-open")) {
     $("#tasks").hidePopover();
   }
-}
-
-// A task's window
-// ---------------
-// A native modal dialog (focus kept in it, Esc closes it): the task whole,
-// its choices, its comment, its thread and a box whose messages go to
-// the chat about it (View: their mark). Made again as the task, its
-// thread or the chat change, part by part (what is typed stays)
-
-// the task whose window is open, if one
-let TASK: string | null = null;
-
-function task_open(id: string): void {
-  TASK = id;
-  task_render();
-  const box = $<HTMLDialogElement>("#task");
-  if (!box.open) {
-    box.showModal();
-  }
-  (box.querySelector<HTMLElement>("#task-say") ?? box.querySelector<HTMLElement>(".x"))?.focus();
-}
-
-function task_render(): void {
-  if (TASK === null) {
-    return;
-  }
-  const t = v.tasks.find((x) => x.id === TASK);
-  const box = $("#task");
-  box.dataset.task = TASK;
-  markup(box.querySelector(".body")!, t === undefined ? [`<p class="none">A pendência ${Html.esc(TASK)} não está mais na lista.</p><button type="button" class="x" data-close aria-label="Fechar">✕</button>`] : Html.task_html(v, t));
-}
-
-// a message written in the window: to the chat, about its task
-function task_say(ev: SubmitEvent): void {
-  ev.preventDefault();
-  const say = (ev.target as HTMLElement).querySelector<HTMLTextAreaElement>("#task-say");
-  const text = say?.value.trim() ?? "";
-  if (say === null || text === "" || TASK === null) {
-    return;
-  }
-  act({ $: "Send", text, task: TASK });
-  say.value = "";
 }
 
 function copied(button: HTMLElement): void {
@@ -935,7 +877,6 @@ function bars(): void {
     $("#timers").hidePopover();
   }
   tasks_bar();
-  task_render();
   send.classList.toggle("stop", stop);
   // an agent's page has no box: messages go to UniiChat
   $(".composer").hidden = !on;

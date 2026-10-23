@@ -164,7 +164,7 @@ test("web: the waiting apart, without acts, escaped; libera N marked", () => {
   expect(html.waiting.length).toBe(1);
   expect(html.waiting[0]).toContain("aguarda P1");
   expect(html.waiting[0]).not.toContain("<img");
-  expect(html.waiting[0]).not.toContain("data-act"); // its title opens its window, no act
+  expect(html.waiting[0]).not.toContain("<button");
   expect(View.tasks_waiting_said(1)).toBe("+1 aguardando outras pendências");
 });
 

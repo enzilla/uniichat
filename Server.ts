@@ -37,7 +37,7 @@ import { move_over, write_whole } from "./Write.ts";
 import * as Timer from "./Timer.ts";
 import * as Tasks from "./Tasks.ts";
 import { PROMPTS, SEARCHES, Tools, type Agent, type Live } from "./Tools.ts";
-import { FRAME, IMAGES, live_push, PING, QUIT, SUMMARIES, TICK, TURN, turn_task, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
+import { FRAME, IMAGES, live_push, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
 import hello_md from "./hello.md" with { type: "text" };
 import app_js from "./web/app.js" with { type: "file" };
@@ -113,8 +113,6 @@ type Chat = {
   held  : Array<() => void> | null;
   limits: Record<string, Parked>;
   fell  : Map<string, string>;
-  thread: string | null;              // the task the turn running is about (View.turn_task), if one
-  threads: Record<string, number[]>; // Unii's answers about each task (THREADS), by its id
 };
 
 // Constants
@@ -135,10 +133,6 @@ const PID        = config.DIR + "/server.pid";
 const CHAT       = config.DIR + "/chat";
 // a turn's head
 const HEAD       = "Turn: the user's new message:\n\n";
-// Unii's answers in turns about one task, by its id: its thread's (the
-// user's messages about it carry its mark, View.task_mark), kept with
-// the chat
-const THREADS    = "/threads.json";
 // a goal's check (Chat.check): its own system prompt, asked after the
 // chat (the view, its latest messages whole) of its goal; unmet, the
 // user's nudge
@@ -231,7 +225,7 @@ export namespace Chat {
     const chat: Chat = {
       mem, tools, pick, socks: new Set(), acts: new Map(), busy: false, call: null, model: "", check: null, asked: false, open: 0, sent: [], wait: [],
       halt: new AbortController(), live: [], calls: {}, eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null,
-      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(), thread: null, threads: Chat.threads_read(mem.dir),
+      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(),
     };
     // a saved pick (a profile, by name) not offered gave way: told once
     const shown = (p: Pick) => p.profile ?? Pick.label(p);
@@ -431,10 +425,8 @@ export namespace Chat {
     chat.socks.forEach((sock) => Chat.show(chat, sock));
     const tasks = { text: Tasks.tasks_block(Tasks.tasks_load(mem.dir), Date.now()), mark: false };
     const asked = await Chat.invoked(chat, text, halt.signal);
-    chat.thread = turn_task(says.map((say) => say.text));
-    const about = Chat.about(chat, chat.thread);
     // the skills first: they stay the same from turn to turn (Tools.skills)
-    const blocks = [Tools.instructions(chat.tools), Tools.skills(chat.tools), ...view, Tools.devices(chat.tools), Tools.at_work(chat.tools), tasks, ...asked, ...about, { text: HEAD + text, mark: true }];
+    const blocks = [Tools.instructions(chat.tools), Tools.skills(chat.tools), ...view, Tools.devices(chat.tools), Tools.at_work(chat.tools), tasks, ...asked, { text: HEAD + text, mark: true }];
     const ask = { ...Chat.share(chat, Tools.prompt("prompt")), searches: SEARCHES, server, blocks, imgs };
     chat.model = chat.pick.model;
     chat.asked = true;
@@ -461,41 +453,10 @@ export namespace Chat {
     }));
   }
 
-  // the task a turn's messages are all about, whole (its detail, choices,
-  // state, what it waits for), for that turn; none: no block
-  export function about(chat: Chat, id: string | null): { text: string; mark: boolean }[] {
-    const s = Tasks.tasks_load(chat.mem.dir);
-    const t = id === null ? null : Tasks.task_find(s, id);
-    return t === null ? [] : [{ text: "This turn's messages are about task " + t.id + " (the user wrote them in its window, where your answers show too); all of it:\n" + Tasks.task_line(t, Date.now(), true, s.tasks) + "\n\n", mark: false }];
-  }
-
-  // the threads kept (none, or unreadable: none)
-  export function threads_read(dir: string): Record<string, number[]> {
-    try {
-      const all = JSON.parse(fs.readFileSync(dir + THREADS, "utf8"));
-      return Object.fromEntries(Object.entries(all).filter(([, ids]) => Array.isArray(ids)).map(([id, ids]) => [id, (ids as unknown[]).filter(Number.isInteger) as number[]]));
-    } catch {
-      return {};
-    }
-  }
-
-  // Unii's answer logged in a turn about a task: its thread's, kept, the
-  // views told
-  export function threaded(chat: Chat, id: number): void {
-    const task = chat.thread;
-    if (task === null) {
-      return;
-    }
-    chat.threads[task] = [...(chat.threads[task] ?? []), id];
-    write_whole(chat.mem.dir + THREADS, JSON.stringify(chat.threads) + "\n");
-    Chat.change(chat);
-  }
-
   // the turn's call ends; false: the turn ends
   export async function ended(chat: Chat, call: Call, halt: AbortController): Promise<boolean> {
     const end = await call.done;
     chat.call = null;
-    chat.thread = null;
     delete chat.limits[TURN];
     Chat.unanswered(chat, null);
     Chat.live(chat, null, []);
@@ -582,9 +543,6 @@ export namespace Chat {
     const roots = Memory.push(chat.mem, [{ kind, text, images, more, act }]);
     for (const { i, kind, text, date, images } of roots) {
       Chat.all(chat, { $: "entry", id: i, kind, text, date, images });
-    }
-    if (kind === "unii") {
-      roots.forEach((root) => Chat.threaded(chat, root.i));
     }
     Chat.talked(chat);
     return { id: roots[0].i, end: chat.mem.count };
@@ -1084,7 +1042,7 @@ export namespace Chat {
     const tasks = Tasks.tasks_view(Tasks.tasks_load(chat.mem.dir), Date.now());
     const skills = Tools.opened(chat.tools).flatMap(([device, d]) => d.skills.map((s) => ({ name: s.name, description: s.description, device })));
     const talk = chat.mem.talk === null ? null : { from: chat.mem.talk, used: Math.min(1, Memory.talk_size(chat.mem) / TALK) };
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, skills, threads: chat.threads, talk };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, skills, talk };
   }
 
   export function waits(chat: Chat): Wait {

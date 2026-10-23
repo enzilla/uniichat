@@ -113,7 +113,7 @@ export function modal_key(m: Modal, v: View.View, key: string): Out | null | und
 // resolution with its comment, or the message about the task
 export function modal_enter(m: Modal, text: string): Out | null {
   if (m.focus === "talk") {
-    return text.trim() === "" ? null : { $: "act", act: { $: "Send", text, task: m.task } };
+    return text.trim() === "" ? null : { $: "act", act: { $: "Send", text } };
   }
   return modal_resolve(m, text);
 }
@@ -167,10 +167,8 @@ export function modal_lines(m: Modal, v: View.View, w: number): Paint.Line[] {
   const md = (text: string) => Paint.rows_lines(View.entry_rows(null, "unii", text), w);
   const detail = t.detail === "" ? [] : [[], ...md(t.detail)];
   const choices = t.choices.length === 0 ? [] : [[], [Paint.Run(t.state === "open" ? "Opções" : "Opções oferecidas", BOLD)], ...t.choices.flatMap((c, k) => choice_lines(t, k, m.pick?.answer === c || t.answer === c, w))];
-  const thread = View.task_thread(v, t.id);
-  const talk = thread.length === 0
-    ? [[Paint.Run("Nenhuma mensagem sobre esta pendência ainda. Tab escreve uma; o Unii responde aqui e no chat.", Paint.DIM)]]
-    : Paint.rows_lines(thread.flatMap((e) => View.entry_rows(e.id, e.kind, View.task_unmark(e.text), e.images)), w);
+  const thread: unknown[] = [];
+  const talk = [[Paint.Run("Nenhuma mensagem sobre esta pendência ainda.", Paint.DIM)]];
   return [
     ...head,
     ...Paint.runs_wrap([Paint.Run(meta.join(" · "), Paint.DIM)], w, false),
@@ -189,6 +187,5 @@ export function modal_lines(m: Modal, v: View.View, w: number): Paint.Line[] {
 function choice_lines(t: Task, k: number, here: boolean, w: number): Paint.Line[] {
   const mark = Paint.Run((here ? "▸ " : "  ") + (k + 1) + "  ", { ...BOLD, c: Theme.ANSI.cmd });
   const label = Paint.Run(Paint.text_clean(t.choices[k]), here ? { ...BOLD, c: Theme.ANSI.done } : BOLD);
-  const hint = t.hints?.[k] ? Paint.runs_wrap([Paint.Run(Paint.text_clean(t.hints[k]), Paint.DIM)], Math.max(4, w - 5), false).map((l) => [Paint.Run("     "), ...l]) : [];
-  return [[mark, label], ...hint];
+  return [[mark, label]];
 }

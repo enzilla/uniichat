@@ -19,11 +19,11 @@ const NOW  = Date.parse("2026-10-23T12:00:00Z");
 
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 
-// P1: choices with what each means; P2: none; P3: done
+// P1: choices; P2: none; P3: done
 function view(): View.View {
   T.tasks_forget();
   const s = T.tasks_load(fs.mkdtempSync(ROOT + "/chat-"));
-  T.task_new(s, { title: "Qual ambiente usar?", detail: "Para o **teste de carga**.", ref: "hospitalar#644", choices: [{ label: "hom", description: "Ensaio, sem risco." }, { label: "prod", description: "Real, à noite." }] }, "main", NOW);
+  T.task_new(s, { title: "Qual ambiente usar?", detail: "Para o **teste de carga**.", ref: "hospitalar#644", choices: ["hom", "prod"] }, "main", NOW);
   T.task_new(s, { title: "Revisar o PR" }, "main", NOW);
   T.task_new(s, { title: "Backup" }, "main", NOW);
   T.task_resolve(s, "P3", "done", null, null, NOW);
@@ -72,34 +72,24 @@ test("without choices Enter marks it done, d drops it (each with a comment); a c
   expect(Modal.modal_key(m, v, "Esc")).toEqual({ $: "close" });
 });
 
-test("Tab writes about the task: Enter sends the message with its task, nothing for none; Esc back to the acts", () => {
+test("Tab writes about the task: Enter sends the message, nothing for none; Esc back to the acts", () => {
   const v = view();
   const m = Modal.modal_new("P1");
   Modal.modal_key(m, v, "Tab");
   expect(m.focus).toBe("talk");
-  expect(Modal.modal_enter(m, "qual a diferença?")).toEqual({ $: "act", act: { $: "Send", text: "qual a diferença?", task: "P1" } });
+  expect(Modal.modal_enter(m, "qual a diferença?")).toEqual({ $: "act", act: { $: "Send", text: "qual a diferença?" } });
   expect(Modal.modal_enter(m, "  ")).toBe(null);
   expect(Modal.modal_back(m, "Esc")).toBe(null);
   expect(m.focus).toBe("acts");
 });
 
-test("it draws the task whole, each choice with what it means, and its thread without the marks", () => {
+test("it draws the task whole and its choices", () => {
   const v = view();
-  v.whole = new Map<number, View.Entry>([
-    [1, { kind: "user", text: View.task_mark(v.tasks[0]) + "\nqual a diferença?" }],
-    [2, { kind: "unii", text: "hom é o ensaio." }],
-  ]);
-  v.threads = { P1: [2] };
   const all = text(Modal.modal_lines(Modal.modal_new("P1"), v, 70));
   expect(all).toContain("P1 Qual ambiente usar?");
   expect(all).toContain("aberta · com você · hospitalar#644");
   expect(all).toContain("teste de carga");
   expect(all).toContain("1  hom");
-  expect(all).toContain("Ensaio, sem risco.");
-  expect(all).toContain("Conversa (2)");
-  expect(all).toContain("qual a diferença?");
-  expect(all).toContain("hom é o ensaio.");
-  expect(all).not.toContain("[Sobre a pendência");
   expect(text(Modal.modal_lines(Modal.modal_new("P2"), v, 70))).toContain("Nenhuma mensagem sobre esta pendência ainda.");
 });
 

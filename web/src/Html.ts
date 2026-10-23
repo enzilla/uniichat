@@ -202,9 +202,7 @@ export function timers_html(timers: Timer.Timer[]): string[] {
 // those that free others marked "libera N"
 export function tasks_html(tasks: Task[]): { open: string[]; waiting: string[]; closed: string[] } {
   const when = (iso: string) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-  // the title opens the task's window (task_html), where it is whole and
-  // talked about
-  const head = (t: Task) => `<p class="head"><span class="id">${esc(t.id)}</span><button type="button" class="title" data-open="${esc(t.id)}" title="Abrir a pendência">${esc(t.title)}</button></p>`;
+  const head = (t: Task) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
   const meta = (t: Task, more: string[]) => `<p class="meta">${[...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...more].join(" · ")}</p>`;
   const act = (t: Task, state: Task["state"], text: string, cls: string, answer?: string) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...(answer === undefined ? {} : { answer }) })}>${esc(text)}</button>`;
   const blocked = Deps.blocked_ids(tasks);
@@ -212,7 +210,7 @@ export function tasks_html(tasks: Task[]): { open: string[]; waiting: string[]; 
     const n = Deps.frees(tasks, t);
     const who = [...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(t.who === "unii" ? ["com o Unii"] : [])];
     const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div></details>`;
-    const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c, k) => opt_html(t, k)).join("")}</div>`;
+    const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
     const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}">`;
     const go = `<label class="go"><input type="checkbox"> Avisar o Unii agora</label>`;
     const acts = `<div class="acts">${go}${act(t, "done", "Concluir", "done")}${act(t, "dropped", "Descartar", "drop")}</div>`;
@@ -229,41 +227,6 @@ export function tasks_html(tasks: Task[]): { open: string[]; waiting: string[]; 
   };
   const opened = tasks.filter((t) => t.state === "open");
   return { open: opened.filter((t) => !blocked.has(t.id)).map(open), waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
-}
-
-// a choice's button: its label, and what picking it means under it
-function opt_html(t: Task, k: number): string {
-  const a = act_html({ $: "Task", task: t.id, state: "done", answer: t.choices[k] });
-  const hint = t.hints?.[k] ? `<small>${esc(t.hints[k])}</small>` : "";
-  return `<button class="opt"${a}><b>${esc(t.choices[k])}</b>${hint}</button>`;
-}
-
-// a task's window (main.ts task_render, in #task): its parts, each made
-// again only as it changes (what is typed in it stays): its head (id,
-// title, state, who acts, ref, what it waits for and frees, its answer
-// and comment), its detail, its choices with what each means, the
-// comment and "Avisar o Unii agora" its resolutions take (main.ts
-// task_act), its acts, its thread (View.task_thread, the marks taken off)
-export function task_html(v: View.View, t: Task): string[] {
-  const STATE = { open: "Aberta", done: "Concluída", dropped: "Descartada" };
-  const waits = Deps.waits(v.tasks, t);
-  const frees = View.task_frees_said(v, t);
-  const meta = [STATE[t.state], t.who === "user" ? "com você" : "com o Unii", ...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...(t.state === "open" && waits.length > 0 ? ["aguarda " + esc(waits.join(", "))] : []), ...(frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`])];
-  const said = [...(t.answer === null ? [] : ["Resposta: <b>" + esc(t.answer) + "</b>"]), ...(t.note === null ? [] : ["Comentário: “" + esc(t.note) + "”"])];
-  const open = t.state === "open";
-  const head = `<div class="top"><p class="head"><span class="id">${esc(t.id)}</span><span class="title" id="task-title">${esc(t.title)}</span></p><button type="button" class="x" data-close aria-label="Fechar">✕</button><p class="meta">${meta.join(" · ")}</p>${said.length === 0 ? "" : `<p class="said">${said.join(" · ")}</p>`}</div>`;
-  const detail = t.detail === "" ? [] : [`<div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div>`];
-  const choices = !open || t.choices.length === 0 ? [] : [`<div class="opts" role="group" aria-label="Opções">${t.choices.map((c, k) => opt_html(t, k)).join("")}</div>`];
-  const act = (state: Task["state"], text: string, cls: string) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state })}>${esc(text)}</button>`;
-  const resolve = open
-    ? `<div class="resolve"><label for="task-note">Comentário ou justificativa (opcional)</label><textarea id="task-note" class="note" rows="2" maxlength="1000"></textarea><div class="acts"><label class="go"><input type="checkbox"> Avisar o Unii agora</label>${t.choices.length === 0 ? act("done", "Concluir", "done") : ""}${act("dropped", "Descartar", "drop")}</div></div>`
-    : `<div class="acts">${act("open", "Reabrir", "reopen")}</div>`;
-  const thread = View.task_thread(v, t.id);
-  const talk = thread.length === 0
-    ? [`<p class="none">Nenhuma mensagem sobre esta pendência ainda. O Unii responde aqui e no chat.</p>`]
-    : thread.map((e) => `<div class="msgs">${View.entry_rows(e.id, e.kind, View.task_unmark(e.text), e.images).map(row_html).join("")}</div>`);
-  const form = `<form class="talk"><label for="task-say" class="sub">Mensagem sobre a pendência</label><textarea id="task-say" rows="2" placeholder="Pergunte ou comente; vai ao chat marcada com ${esc(t.id)}."></textarea><button type="submit">Enviar</button></form>`;
-  return [head, ...detail, ...choices, resolve, `<h3>Conversa${thread.length === 0 ? "" : " (" + thread.length + ")"}</h3>`, ...talk, form];
 }
 
 // Settings page
