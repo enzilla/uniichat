@@ -28,6 +28,7 @@ import { Agent, type Out } from "./Agent.ts";
 import { report_text } from "./Call.ts";
 import { clip_page } from "./Clip.ts";
 import * as config from "./Config.ts";
+import * as Instructions from "./Instructions.ts";
 import { INT, STR, TOOLS, spec, type Job, type Skill, type Spec } from "./Machine.ts";
 import { Mcp, type Server, type Servers } from "./Mcp.ts";
 import { Memory } from "./Memory.ts";
@@ -55,6 +56,10 @@ type Device = {
   jobs   : Map<string, Running>;
   skills : Skill[];
   mcps   : string[];
+  rules  : Instructions.Part[];
+  paths  : string[];
+  proj   : Instructions.Part[];
+  shown  : Set<string>;
 };
 
 // a job: the link it runs on, what it runs, its output, what ends it
@@ -263,6 +268,7 @@ function kit(who: string): Spec[] {
   });
 }
 const SKILL: Spec = spec("skill", "Load a skill listed under Skills: its SKILL.md, with the folder its other files are in on that device (read or run them there with your other tools).", { ...DEVICE, name: STR }, ["device", "name"]);
+const INSTRUCTIONS: Spec = spec("instructions", "Load the instructions Claude Code would apply to work on a path on that device (a repository's folder, or a file): its CLAUDE.md files (or AGENTS.md), its rules, its auto memory, the rules for files like it. Call it before you work in a repository by shell; read, write and edit bring them by themselves. They hold from then on, under Instructions.", { ...DEVICE, path: STR }, ["device", "path"]);
 const SKILLS_SEARCH: Spec = spec("skills_search", "Search the skills on the open devices by words (what you need done): the best fits, each with its device and what it is for.", { query: STR }, ["query"]);
 // Tools
 // =====
@@ -320,6 +326,43 @@ export namespace Tools {
     return { text: lines.length === 0 ? "" : SKILLS + "\n" + lines.join("\n") + "\n\n", mark: false };
   }
 
+  // the instructions block: each open device's (in their names' order),
+  // as Claude Code would load them there (Instructions.ts): its
+  // organization's, its user's, then those of the repositories and files
+  // worked on so far. A call puts it first, before the memory's view,
+  // where it stays the same from turn to turn while they do, so the
+  // vendor's cache keeps it
+  export function instructions(tools: Tools): Block {
+    const opened = Tools.opened(tools).sort(([a], [b]) => a.localeCompare(b));
+    const one = ([name, d]: [string, Device]) => {
+      const parts = [...d.rules, ...d.proj.filter((p) => !d.rules.some((r) => r.id === p.id))];
+      return parts.length === 0 ? "" : "# Instructions on device " + name + "\n\nWhat Claude Code would load there, in its order: the organization's and the user's standing instructions, then those of the repositories and files worked on so far. Follow them in all work on that device, as the user's own.\n\n" + Instructions.parts_text(parts);
+    };
+    const text = opened.map(one).filter((t) => t !== "").join("\n\n");
+    return { text: text === "" ? "" : text + "\n\n", mark: false };
+  }
+
+  // the instructions for work on paths of a device (relative: to the
+  // agent's dir), asked of it; the paths kept, so they hold in the next
+  // turns' block. fresh: only the parts not shown yet (the block's, or
+  // earlier ones this turn), then marked shown; else all. Null: no device
+  export async function project(tools: Tools, device: string, paths: string[], who: string, signal: AbortSignal, fresh: boolean): Promise<{ text: string } | null> {
+    const d = tools.devices.get(device);
+    if (d === undefined || typeof Tools.open(tools, device) === "string") {
+      return null;
+    }
+    const out = await Tools.job(tools, device, { name: "project_instructions", input: { paths }, cwd: who }, signal, crypto.randomUUID());
+    let got: { parts: Instructions.Part[]; at: string[] } = { parts: [], at: [] };
+    try {
+      got = out.fail ? got : JSON.parse(out.text);
+    } catch {}
+    d.paths = [...new Set([...d.paths, ...(got.at ?? [])])];
+    const parts = (got.parts ?? []).filter((p) => !fresh || !d.shown.has(p.id));
+    parts.forEach((p) => d.shown.add(p.id));
+    const head = fresh ? "Instructions that now hold for " + paths.join(", ") + " (as Claude Code loads them on demand; follow them):\n\n" : "";
+    return { text: parts.length === 0 ? "" : head + Instructions.parts_text(parts) };
+  }
+
   // the skills that fit a text best, at most n, each a line: its device,
   // its name, what it is for
   export function skills_fit(tools: Tools, text: string, n: number): string[] {
@@ -335,7 +378,10 @@ export namespace Tools {
     const live = Tools.opened(tools).filter(([name, d]) => (only === null || name === only) && [...d.terms.values()].some((t) => t.live()));
     await Promise.all(live.map(async ([name, d]) => {
       const was = JSON.stringify([d.skills, d.mcps]);
-      [d.skills, d.mcps] = await Promise.all([Tools.ask_list(tools, name, "skills", d.skills), Tools.ask_list(tools, name, "claude_mcps", d.mcps)]);
+      [d.skills, d.mcps, d.rules] = await Promise.all([Tools.ask_list(tools, name, "skills", d.skills), Tools.ask_list(tools, name, "claude_mcps", d.mcps), Tools.ask_list(tools, name, "instructions", d.rules)]);
+      const proj = d.paths.length === 0 ? null : await Tools.ask_one(tools, name, "project_instructions", { paths: d.paths });
+      d.proj = proj?.parts ?? d.proj;
+      d.shown = new Set([...d.rules, ...d.proj].map((p) => p.id));
       for (const mcp of d.mcps) {
         Mcp.add(tools.mcp, { ...Tools.claude_conf(name, mcp), device: name, claude: mcp });
       }
@@ -343,6 +389,22 @@ export namespace Tools {
         tools.hooks.change();
       }
     }));
+  }
+
+  // what a device's job answers, as JSON (null: late, failed or not JSON)
+  export async function ask_one(tools: Tools, device: string, job: string, input: object): Promise<any> {
+    const run = Tools.start_job(tools, device, { name: job, input, cwd: "main" }, crypto.randomUUID());
+    if (typeof run === "string") {
+      return null;
+    }
+    const timer = setTimeout(() => run.end({ text: "Late.", fail: true }), LOOK);
+    const out = await run.out;
+    clearTimeout(timer);
+    try {
+      return out.fail ? null : JSON.parse(out.text);
+    } catch {
+      return null;
+    }
   }
 
   // a list a device's job answers; late, what it was; failed, none
@@ -473,7 +535,7 @@ export namespace Tools {
   }
 
   export function list(tools: Tools, who: string): Spec[] {
-    return who === "main" ? [...OWN, ...BOSS, ...kit(who), SKILL, SKILLS_SEARCH] : [...OWN, ...kit(who), SKILL, SKILLS_SEARCH];
+    return who === "main" ? [...OWN, ...BOSS, ...kit(who), SKILL, SKILLS_SEARCH, INSTRUCTIONS] : [...OWN, ...kit(who), SKILL, SKILLS_SEARCH, INSTRUCTIONS];
   }
 
   // whether `who` gets the MCP servers' tools: the master and subagents
@@ -564,9 +626,19 @@ export namespace Tools {
       case "tasks": {
         return Tools.task(tools, name, args, who);
       }
+      case "instructions": {
+        const got = await Tools.project(tools, String(args.device), [String(args.path)], who, signal, false);
+        return { text: got === null ? "No device " + String(args.device) + " open." : got.text || "No instructions for " + String(args.path) + " beyond those under Instructions.", fail: got === null };
+      }
       default: {
         const { device, ...input } = args;
-        return Tools.job(tools, String(device), { name, input, cwd: who }, signal, id);
+        const out = await Tools.job(tools, String(device), { name, input, cwd: who }, signal, id);
+        // a file read or changed brings the instructions that now hold
+        // for it, as Claude Code loads them on demand
+        const paths = name === "read" || name === "write" ? [input.path] : name === "edit" && Array.isArray(input.edits) ? input.edits.map((e: any) => e?.path) : [];
+        const files = paths.filter((p: unknown) => typeof p === "string" && p !== "");
+        const got = out.fail || files.length === 0 ? null : await Tools.project(tools, String(device), files, who, signal, true);
+        return got === null || got.text === "" ? out : { ...out, text: out.text + "\n\n" + got.text };
       }
     }
   }
@@ -639,7 +711,7 @@ export namespace Tools {
     if (own === undefined) {
       Tools.forget(tools, name);
     }
-    const d = tools.devices.get(name) ?? { who, host, terms: new Map(), jobs: new Map(), skills: [], mcps: [] };
+    const d = tools.devices.get(name) ?? { who, host, terms: new Map(), jobs: new Map(), skills: [], mcps: [], rules: [], paths: [], proj: [], shown: new Set<string>() };
     d.terms.set(term, link);
     tools.devices.set(name, d);
     Tools.sync(d, term, () => true);
@@ -891,7 +963,7 @@ export namespace Tools {
     const run = Pick.ask(Tools.pick(tools, agent));
     const own = Memory.file_text(PROMPTS.prompt.file);
     const system = own === "" ? SUB : SUB + "\n\n" + AGENT_PROMPT + "\n\n" + own;
-    const blocks = [Tools.skills(tools), ...agent.view, Tools.devices(tools), log];
+    const blocks = [Tools.instructions(tools), Tools.skills(tools), ...agent.view, Tools.devices(tools), log];
     return { ...run, system, blocks, searches: SEARCHES, server, agent: true };
   }
 
