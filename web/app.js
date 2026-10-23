@@ -917,6 +917,41 @@ var Pick;
   Pick2.load = load;
 })(Pick ||= {});
 
+// TaskDeps.ts
+function after_of(t) {
+  return Array.isArray(t.after) ? t.after : [];
+}
+function by_id(tasks) {
+  return new Map(tasks.map((t) => [t.id, t]));
+}
+function waits(tasks, t, ids = by_id(tasks)) {
+  return after_of(t).filter((id) => ids.get(id)?.state === "open");
+}
+function blocked(tasks, t, ids = by_id(tasks)) {
+  return t.state === "open" && waits(tasks, t, ids).length > 0;
+}
+function blocked_ids(tasks) {
+  const ids = by_id(tasks);
+  return new Set(tasks.filter((t) => blocked(tasks, t, ids)).map((t) => t.id));
+}
+function frees(tasks, t) {
+  if (t.state !== "open") {
+    return 0;
+  }
+  const seen = new Set([t.id]);
+  const todo = [t.id];
+  while (todo.length > 0) {
+    const at = todo.pop();
+    for (const d of tasks) {
+      if (d.state === "open" && !seen.has(d.id) && after_of(d).includes(at)) {
+        seen.add(d.id);
+        todo.push(d.id);
+      }
+    }
+  }
+  return seen.size - 1;
+}
+
 // View.ts
 var PACE = 0.0001;
 var OPENING = 1;
@@ -1140,6 +1175,11 @@ function view_act(v, act) {
         v.notes.push("A pendência " + t.id + " não tem a opção “" + act.answer + "”.");
         return [];
       }
+      const waits2 = waits(v.tasks, t);
+      if (act.state !== "open" && t.state === "open" && waits2.length > 0) {
+        v.notes.push(task_waits_said(t, waits2));
+        return [];
+      }
       const note = act.note?.trim() ?? "";
       return [{ $: "task", task: t.id, state: act.state, ...act.answer === undefined ? {} : { answer: act.answer }, ...note === "" ? {} : { note }, ...act.go ? { go: true } : {} }];
     }
@@ -1148,8 +1188,14 @@ function view_act(v, act) {
     }
   }
 }
+function task_waits_said(t, waits) {
+  return "A pendência " + t.id + " aguarda " + waits.join(", ") + ": resolva " + (waits.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
+}
+function tasks_waiting_said(n) {
+  return n === 0 ? "" : "+" + n + " aguardando outras pendências";
+}
 function view_untold(v) {
-  return v.tasks.filter((t) => !t.told);
+  return v.tasks.filter((t) => !t.told && !t.freed);
 }
 function view_body(v) {
   if (v.page !== null) {
@@ -1571,8 +1617,10 @@ function tasks_html(tasks) {
   const head = (t) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
   const meta = (t, more) => `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more].join(" · ")}</p>`;
   const act = (t, state, text, cls, answer) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
+  const blocked = blocked_ids(tasks);
   const open = (t) => {
-    const who = t.who === "unii" ? ["com o Unii"] : [];
+    const n = frees(tasks, t);
+    const who = [...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...t.who === "unii" ? ["com o Unii"] : []];
     const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${md_parse(t.detail).map(block_html).join("")}</div></details>`;
     const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
     const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}">`;
@@ -1584,7 +1632,13 @@ function tasks_html(tasks) {
     const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii ainda não viu"]];
     return `<li class="task closed" data-task="${esc(t.id)}">${head(t)}${meta(t, how)}<div class="acts">${act(t, "open", "Reabrir", "reopen")}</div></li>`;
   };
-  return { open: tasks.filter((t) => t.state === "open").map(open), closed: tasks.filter((t) => t.state !== "open").map(closed) };
+  const whose = (id) => tasks.find((u) => u.id === id)?.who === "unii" ? id + " (com o Unii)" : id;
+  const waiting = (t) => {
+    const more = [`aguarda ${esc(waits(tasks, t).map(whose).join(", "))}`, ...t.who === "unii" ? ["com o Unii"] : []];
+    return `<li class="task waiting ${esc(t.who)}" data-task="${esc(t.id)}">${head(t)}${meta(t, more)}</li>`;
+  };
+  const opened = tasks.filter((t) => t.state === "open");
+  return { open: opened.filter((t) => !blocked.has(t.id)).map(open), waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
 }
 function account_html(prompts, notify = null) {
   const item = (what, note, act) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
@@ -2088,12 +2142,12 @@ function task_act(el, a) {
   const go = item.querySelector(".go input")?.checked ?? false;
   return { ...a, note, go };
 }
-var TASKS = { of: null, html: { open: [], closed: [] } };
+var TASKS = { of: null, html: { open: [], waiting: [], closed: [] } };
 function tasks_bar() {
   if (TASKS.of !== v.tasks) {
     TASKS = { of: v.tasks, html: tasks_html(v.tasks) };
   }
-  const { open, closed } = TASKS.html;
+  const { open, waiting, closed } = TASKS.html;
   const untold = view_untold(v).length;
   document.body.classList.toggle("tasking", v.tasks.length > 0);
   $(".tasks").hidden = v.tasks.length === 0;
@@ -2101,6 +2155,9 @@ function tasks_bar() {
   $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
   $("#tasks .none").hidden = open.length > 0;
   markup($("#tasks ul.now"), open);
+  markup($("#tasks .waiting ul"), waiting);
+  $("#tasks .waiting").hidden = waiting.length === 0;
+  $("#tasks .waiting summary").textContent = tasks_waiting_said(waiting.length);
   markup($("#tasks .closed ul"), closed);
   $("#tasks .closed").hidden = closed.length === 0;
   $("#tasks .tell").hidden = untold === 0;

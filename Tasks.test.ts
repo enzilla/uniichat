@@ -134,9 +134,9 @@ test("block: changes, then the open ones, the user's first; told once the call e
   const block = T.tasks_block(s, NOW);
   expect(block).toBe([
     "Tasks (your pending list; the user sees it beside the chat and resolves items there):",
-    "Changed by the user since your last turn:",
+    "Changed since your last turn (by the user, or freed):",
     '- P3 done by user: "Abrir PR?" — answer: sim — note: "pode"',
-    "Open (2; the user's first):",
+    "Open (2; those that free others first, then the user's):",
     "- P2 [user] Reiniciar serve (ref uniichat, 5h)",
     "- P1 [unii] Conferir o Job (ref numih-3151, 1d)",
   ].join("\n") + "\n\n");
@@ -169,7 +169,7 @@ test("block with more than 30 open: the newest 30, and how many more", () => {
     add(s, { title: "t" + k }, NOW - (40 - k) * H);
   }
   const lines = T.tasks_block(s, NOW).trim().split("\n");
-  expect(lines[1]).toBe("Open (35; the user's first):");
+  expect(lines[1]).toBe("Open (35; those that free others first, then the user's):");
   expect(lines.length).toBe(2 + 30 + 1);
   expect(lines[2]).toStartWith("- P6 ");
   expect(lines.at(-1)).toBe("+5 older (the tasks tool lists them)");

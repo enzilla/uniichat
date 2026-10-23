@@ -131,7 +131,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/logout",           "",                        "sign this terminal out and quit",               term_logout],
     ]],
     ["Pendências", [
-      ["/p [P7]",           "",                        "a lista de pendências; com um id, o detalhe dela", term_tasks],
+      ["/p [P7|aguardando]", "",                       "a lista de pendências; com um id, o detalhe dela; aguardando: as que esperam outras", term_tasks],
       ["/ok P7 [opção] [comentário]", "",             "conclui a pendência; o Unii a vê no próximo turno", (t, a) => term_task(t, a, "done", false)],
       ["/ok! P7 [opção] [comentário]", "",            "conclui a pendência e avisa o Unii agora",       (t, a) => term_task(t, a, "done", true)],
       ["/descartar P7 [comentário]", "",               "descarta a pendência",                          (t, a) => term_task(t, a, "dropped", false)],
@@ -593,6 +593,10 @@ async function export_sessions(path: string): Promise<Import.Session[]> {
 function term_tasks(t: Term, arg: string): void {
   if (arg === "") {
     term_rows(t, View.entry_rows(null, "note", View.tasks_md(t.v)), false);
+    return;
+  }
+  if (/^aguardando$/i.test(arg.trim())) {
+    term_rows(t, View.entry_rows(null, "note", View.tasks_md(t.v, null, true)), false);
     return;
   }
   const got = View.task_args(t.v, arg, false);

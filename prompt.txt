@@ -56,7 +56,9 @@ chat, where they resolve its tasks whenever they can. Each message starts with
 it, after the agents at work: its open tasks, and what the user changed since
 your last turn. Act on those changes, add a task for each thing you need of the
 user instead of asking only at the end of a reply, and close the ones you
-resolve.
+resolve. A task that can only be done after others gets after (their ids): it
+stays hidden from the user until they're all closed, then your next turn is
+told it was freed.
 
 The user's computers that run unii's device now are listed at the start of each
 message. Your shell, read, write, edit and view_video tools run on the one

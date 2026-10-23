@@ -25,9 +25,19 @@
 // (rev, only ever up), so a block's shown changes are told by version,
 // never by clock: two in one millisecond stay apart. Unii's own edits
 // keep the stamp and whether it was told, unless it changes the state.
+// A task may wait for others (after: their ids, TaskDeps.ts): blocked
+// while any is open, it's out of the user's list (a count of those
+// waiting shows instead) and can't be resolved; the open ones that free
+// others come first, by how many. Freed (its last open one closed), it's
+// a change Unii is told of, as a user's is (freed, a version stamped);
+// waiting again (one reopened) before it was told, that change is moot.
+// An after list is checked as given (ids that exist, not itself, no
+// cycle) and as read from tasks.json (what's wrong left out, said in the
+// log), so a hand edit can't make a list that loops.
 
 import * as fs from "node:fs";
 import { Disk } from "./Disk.ts";
+import * as Deps from "./TaskDeps.ts";
 
 // Types
 // =====
@@ -40,7 +50,8 @@ export type Who   = "user" | "unii";
 // act, who made it ("main", "user"), the answers offered, the one chosen,
 // the comment it was closed with, a free link (a project, an agent, a
 // PR), when made, last changed and closed (ISO), whether Unii saw its
-// last change by the user
+// last change by the user; the ids it waits for (TaskDeps.ts), and
+// whether that last change untold is its being freed
 export type Task = {
   id      : string;
   title   : string;
@@ -57,6 +68,8 @@ export type Task = {
   closed  : string | null;
   told    : boolean;
   rev     : number;
+  after   : string[];
+  freed   : boolean;
 };
 
 // the list of a chat's dir: the next id's number, the last version
@@ -74,6 +87,7 @@ export type Edit = {
   state?   : unknown;
   answer?  : unknown;
   note?    : unknown;
+  after?   : unknown;
 };
 
 // Constants
@@ -183,7 +197,39 @@ export function task_read(x: unknown, now: number): Task | null {
     closed  : state === "open" ? null : time_read(o.closed, changed),
     told    : o.told !== false,
     rev     : count_read(o.rev),
+    after   : after_raw(o.after, "P" + Number(m[1])),
+    freed   : o.freed === true && o.told === false,
   };
+}
+
+// an after list as tasks.json holds it: its ids "P<n>" (none twice, not
+// the task's own), at most AFTER; anything else left out
+function after_raw(x: unknown, self: string): string[] {
+  if (!Array.isArray(x)) {
+    return [];
+  }
+  const ids = x.filter((y) => typeof y === "string" && /^P[1-9]\d{0,8}$/.test(y.trim())).map((y) => (y as string).trim());
+  return [...new Set(ids)].filter((id) => id !== self).slice(0, Deps.AFTER);
+}
+
+// the after lists of tasks read, made sound: ids of no task left out, and
+// those that would close a cycle (each task's in turn, in the list's
+// order, kept only if it waits for no one that waits for it); how many
+// lists changed, from what was read (raw: the items as read, by id)
+function after_sound(tasks: Task[], raw: Map<string, unknown>): number {
+  const ids = new Set(tasks.map((t) => t.id));
+  const kept: Task[] = tasks.map((t) => ({ ...t, after: [] }));
+  let fixed = 0;
+  tasks.forEach((t, k) => {
+    const after = t.after.filter((id) => ids.has(id) && !Deps.reaches(kept, [id], t.id));
+    kept[k].after = after;
+    t.after = after;
+    const was = raw.get(t.id);
+    if (JSON.stringify(was ?? []) !== JSON.stringify(after)) {
+      fixed += 1;
+    }
+  });
+  return fixed;
 }
 
 // the list of a chat's dir, read once (none: empty). Read whole before
@@ -204,6 +250,7 @@ export function tasks_load(dir: string, now = Date.now()): Store {
         throw new Error("no list of tasks");
       }
       const tasks: Task[] = [];
+      const raw = new Map<string, unknown>();
       let left = 0;
       for (const x of got.tasks) {
         const t = task_read(x, now);
@@ -211,10 +258,17 @@ export function tasks_load(dir: string, now = Date.now()): Store {
           left += 1;
         } else {
           tasks.push(t);
+          raw.set(t.id, (x as Record<string, unknown>).after ?? []);
         }
       }
-      if (left > 0) {
-        console.error("unii: " + file + ": " + left + " item(s) left out (no id P<n>, or an id twice); the file as it was kept as " + file + ".bad");
+      const fixed = after_sound(tasks, raw);
+      if (fixed > 0) {
+        console.error("unii: " + file + ": " + fixed + " task(s) with an after list wrong (not a list of ids, an id of no task, the task itself, a cycle): those ids left out");
+      }
+      if (left > 0 || fixed > 0) {
+        if (left > 0) {
+          console.error("unii: " + file + ": " + left + " item(s) left out (no id P<n>, or an id twice); the file as it was kept as " + file + ".bad");
+        }
         fs.copyFileSync(file, file + ".bad");
       }
       s.tasks = tasks;
@@ -254,6 +308,8 @@ export function tasks_archive(s: Store, now: number): Task[] {
   fs.appendFileSync(s.dir + ARCHIVE, old.map((t) => JSON.stringify(t) + "\n").join(""));
   Disk.wrote(s.dir + ARCHIVE);
   s.tasks = s.tasks.filter((t) => !old.includes(t));
+  const gone = new Set(old.map((t) => t.id));
+  s.tasks.forEach((t) => (t.after = t.after.filter((id) => !gone.has(id))));
   return old;
 }
 
@@ -277,6 +333,38 @@ function choices_read(x: unknown): string[] | string {
   return all.length > CHOICES ? "At most " + CHOICES + " choices." : all;
 }
 
+// an after list as given (["P3", "P4"], or "P3, P4"; null: none): ids
+// of tasks of the list, none twice; self: the task's own id, refused, as
+// an id whose own after lists reach it (a cycle); else why not
+function after_read(s: Store, x: unknown, self: string | null): string[] | string {
+  if (x === undefined || x === null || x === "") {
+    return [];
+  }
+  const all = typeof x === "string" ? x.split(/[\s,;]+/).filter((y) => y !== "") : Array.isArray(x) ? x : null;
+  if (all === null || all.some((y) => typeof y !== "string" && typeof y !== "number")) {
+    return "after is a list of task ids, as [\"P3\", \"P4\"].";
+  }
+  const ids = [...new Set(all.map(task_id))];
+  if (ids.length > Deps.AFTER) {
+    return "A task waits for at most " + Deps.AFTER + " others.";
+  }
+  for (const id of ids) {
+    if (id === self) {
+      return "A task can't wait for itself (" + id + ").";
+    }
+    if (task_find(s, id) === null) {
+      return "No task " + id + " to wait for.";
+    }
+  }
+  if (self !== null) {
+    const loop = ids.find((id) => Deps.reaches(s.tasks, [id], self));
+    if (loop !== undefined) {
+      return loop + " waits for " + self + " already (directly or through others): " + self + " can't wait for it, a cycle.";
+    }
+  }
+  return ids;
+}
+
 // a new task made by Unii (by: "main"); else why not
 export function task_new(s: Store, args: Edit, by: string, now: number): Task | string {
   const title = text_line(args.title, TITLE);
@@ -291,6 +379,10 @@ export function task_new(s: Store, args: Edit, by: string, now: number): Task | 
   if (who !== "user" && who !== "unii") {
     return "who is user or unii.";
   }
+  const after = after_read(s, args.after, null);
+  if (typeof after === "string") {
+    return after;
+  }
   const open = s.tasks.filter((t) => t.state === "open");
   const twin = open.find((t) => t.title.toLowerCase() === title.toLowerCase());
   if (twin !== undefined) {
@@ -303,7 +395,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number): Task | 
   const ref = text_line(args.ref, REF);
   const task: Task = {
     id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", who, by, choices, answer: null, note: null,
-    ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0,
+    ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0, after, freed: false,
   };
   s.next += 1;
   s.tasks.push(task);
@@ -351,6 +443,13 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
     const note = text_body(args.note, NOTE);
     next.note = note === "" ? null : note;
   }
+  if (args.after !== undefined) {
+    const after = after_read(s, args.after, task.id);
+    if (typeof after === "string") {
+      return after;
+    }
+    next.after = after;
+  }
   if (args.state !== undefined) {
     const state = String(args.state) as State;
     if (!STATES.includes(state)) {
@@ -388,6 +487,10 @@ export function task_resolve(s: Store, id: unknown, state: unknown, answer: unkn
     return "A pendência " + task.id + " não tem a opção " + JSON.stringify(said) + ".";
   }
   const comment = note === undefined || note === null ? null : text_body(note, NOTE) || null;
+  const waits = Deps.waits(s.tasks, task);
+  if (to !== "open" && task.state === "open" && waits.length > 0) {
+    return "A pendência " + task.id + " aguarda " + waits.join(", ") + ": resolva " + (waits.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
+  }
   if (to === "open") {
     if (task.state === "open") {
       return null;
@@ -406,21 +509,46 @@ export function task_resolve(s: Store, id: unknown, state: unknown, answer: unkn
 // a change kept: stamped (a close: its time); told: true, Unii's own
 // change of state; false, the user's, stamped with the next version;
 // null, Unii's other edits, told and rev as they were. The closed
-// archived, saved
+// archived, saved. Others it frees, or makes wait again: tasks_freed
 function task_put(s: Store, task: Task, next: Task, now: number, told: boolean | null): Task {
   const at = new Date(now).toISOString();
   const closes = next.state !== "open" && task.state === "open";
+  const was = Deps.blocked_ids(s.tasks);
   next.changed = at;
   next.closed = next.state === "open" ? null : closes ? at : (task.closed ?? at);
   next.told = told ?? task.told;
+  next.freed = told === null ? task.freed : false;
   if (told === false) {
     s.rev += 1;
     next.rev = s.rev;
   }
   s.tasks[s.tasks.indexOf(task)] = next;
+  tasks_freed(s, was, next.id);
   tasks_archive(s, now);
   tasks_save(s);
   return next;
+}
+
+// after a change (to the task `by`): each open task that waited (was:
+// the blocked before) and waits no more is freed, a change to tell
+// (stamped with the next version), but by: Unii changed it itself; each
+// that waits again before its being freed was told, that change undone
+function tasks_freed(s: Store, was: Set<string>, by: string): void {
+  const now = Deps.blocked_ids(s.tasks);
+  for (const t of s.tasks) {
+    if (t.state !== "open") {
+      continue;
+    }
+    if (was.has(t.id) && !now.has(t.id) && t.id !== by) {
+      s.rev += 1;
+      t.rev = s.rev;
+      t.told = false;
+      t.freed = true;
+    } else if (!was.has(t.id) && now.has(t.id) && t.freed && !t.told) {
+      t.told = true;
+      t.freed = false;
+    }
+  }
 }
 
 // the user's changes Unii hasn't seen, oldest first
@@ -439,9 +567,11 @@ export function tasks_told(s: Store, shown: Map<string, number> = s.shown): numb
   return told.length;
 }
 
-// every untold change told now (it went in a message)
+// every untold change by the user told now (it went in a message); a
+// freeing isn't the user's: the block of the turn that message starts
+// tells it
 export function tasks_tell(s: Store): Task[] {
-  const all = tasks_untold(s);
+  const all = tasks_untold(s).filter((t) => !t.freed);
   tasks_told(s, new Map(all.map((t) => [t.id, t.rev])));
   return all;
 }
@@ -449,11 +579,16 @@ export function tasks_tell(s: Store): Task[] {
 // Showing
 // =======
 
-// the open ones, the user's first, each by id; then the closed, newest
-// first
+// the open ones free to resolve: those that free others first, most
+// first (TaskDeps.frees), then the user's, each by id; then the open
+// that wait, by id; then the closed, newest first
 export function tasks_sort(tasks: Task[]): Task[] {
   const num = (t: Task) => Number(t.id.slice(1));
-  const open = tasks.filter((t) => t.state === "open").sort((a, b) => (a.who === b.who ? num(a) - num(b) : a.who === "user" ? -1 : 1));
+  const waiting = Deps.blocked_ids(tasks);
+  const frees = new Map(tasks.map((t) => [t.id, Deps.frees(tasks, t)]));
+  const rank = (a: Task, b: Task) => (frees.get(b.id)! - frees.get(a.id)!) || (a.who === b.who ? num(a) - num(b) : a.who === "user" ? -1 : 1);
+  const free = tasks.filter((t) => t.state === "open" && !waiting.has(t.id)).sort(rank);
+  const open = [...free, ...tasks.filter((t) => waiting.has(t.id)).sort((a, b) => num(a) - num(b))];
   const closed = tasks.filter((t) => t.state !== "open").sort((a, b) => (b.closed ?? "").localeCompare(a.closed ?? ""));
   return [...open, ...closed];
 }
@@ -475,14 +610,21 @@ export function ago(iso: string, now: number): string {
 // a resolution as the chat reads it: "Pendência P7 concluída pelo
 // usuário: “título”. Resposta: sim. Comentário: “pode”."
 export function task_said(t: Task): string {
+  if (t.freed && t.state === "open") {
+    return "Pendência " + t.id + " liberada: “" + t.title + "”. As pendências de que dependia (" + t.after.join(", ") + ") foram resolvidas.";
+  }
   const answer = t.answer === null ? "" : " Resposta: " + t.answer + ".";
   const note = t.note === null ? "" : " Comentário: “" + t.note + "”.";
   return "Pendência " + t.id + " " + SAID[t.state] + " pelo usuário: “" + t.title + "”." + answer + note;
 }
 
-// a task as a line of the tasks tool or the block
-export function task_line(t: Task, now: number, whole = false): string {
-  const opts = t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ");
+// a task as a line of the tasks tool or the block (all: the list it's
+// of, for whom it waits and frees; none given, those not said)
+export function task_line(t: Task, now: number, whole = false, all: Task[] | null = null): string {
+  const waits = all === null ? [] : Deps.waits(all, t);
+  const frees = all === null ? [] : Deps.frees_direct(all, t);
+  const deps = (waits.length === 0 ? "" : " waits for " + waits.join(", ")) + (frees.length === 0 ? "" : " frees " + frees.join(", ")) + (all === null && t.after.length > 0 ? " after " + t.after.join(", ") : "");
+  const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ")) + deps;
   const tail = [t.ref === null ? "" : "ref " + t.ref, ago(t.made, now)].filter((x) => x !== "").join(", ");
   const how   = [t.state, t.answer === null ? "" : "answer: " + t.answer, t.note === null ? "" : "note: " + JSON.stringify(t.note)].filter((x) => x !== "");
   const state = t.state === "open" ? "" : " (" + how.join(", ") + ")";
@@ -500,7 +642,14 @@ export function tasks_list(s: Store, args: { all?: unknown; ref?: unknown; id?: 
   const all = args.all === true || args.all === "true";
   const ref = args.ref === undefined ? null : String(args.ref).toLowerCase();
   const shown = (all ? tasks_view(s, now) : tasks_sort(s.tasks).filter((t) => t.state === "open")).filter((t) => ref === null || (t.ref ?? "").toLowerCase().includes(ref));
-  return shown.length === 0 ? (all ? "No tasks." : "No open tasks.") : shown.map((t) => task_line(t, now, true)).join("\n");
+  if (shown.length === 0) {
+    return all ? "No tasks." : "No open tasks.";
+  }
+  const waiting = Deps.blocked_ids(s.tasks);
+  const line = (t: Task) => task_line(t, now, true, s.tasks);
+  const free = shown.filter((t) => !waiting.has(t.id));
+  const wait = shown.filter((t) => waiting.has(t.id));
+  return [...free.map(line), ...(wait.length === 0 ? [] : ["Waiting for other tasks (hidden from the user until freed):", ...wait.map(line)])].join("\n");
 }
 
 // a turn's block: what the user changed since the last turn, then the
@@ -513,17 +662,25 @@ export function tasks_block(s: Store, now: number): string {
   if (changed.length === 0 && open.length === 0) {
     return "";
   }
+  const waiting = Deps.blocked_ids(s.tasks);
   const did = (t: Task) => {
+    if (t.freed && t.state === "open") {
+      return "- " + t.id + " freed: every task it waited for (" + t.after.join(", ") + ") is closed; the user sees it now: " + JSON.stringify(t.title);
+    }
     const what = t.state === "open" ? "reopened" : t.state;
     const answer = t.answer === null ? "" : " — answer: " + t.answer;
     const note = t.note === null ? "" : " — note: " + JSON.stringify(t.note);
     return "- " + t.id + " " + what + " by user: " + JSON.stringify(t.title) + answer + note;
   };
   const newest = tasks_sort([...open].sort((a, b) => b.made.localeCompare(a.made)).slice(0, LINES));
+  const free = newest.filter((t) => !waiting.has(t.id));
+  const wait = newest.filter((t) => waiting.has(t.id));
+  const line = (t: Task) => task_line(t, now, false, s.tasks);
   const lines = [
     "Tasks (your pending list; the user sees it beside the chat and resolves items there):",
-    ...(changed.length === 0 ? [] : ["Changed by the user since your last turn:", ...changed.map(did)]),
-    ...(open.length === 0 ? ["Open: none."] : ["Open (" + open.length + "; the user's first):", ...newest.map((t) => task_line(t, now))]),
+    ...(changed.length === 0 ? [] : ["Changed since your last turn (by the user, or freed):", ...changed.map(did)]),
+    ...(open.length === 0 ? ["Open: none."] : ["Open (" + (open.length - waiting.size) + "; those that free others first, then the user's):", ...free.map(line)]),
+    ...(wait.length === 0 ? [] : ["Waiting for other tasks (" + waiting.size + "; hidden from the user until freed):", ...wait.map(line)]),
     ...(open.length > LINES ? ["+" + (open.length - LINES) + " older (the tasks tool lists them)"] : []),
   ];
   return lines.join("\n") + "\n\n";

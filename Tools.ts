@@ -224,14 +224,15 @@ const BOSS: Spec[] = [
   spec("stop", "Stop a subagent at once, by name, whatever it is doing (mid-call, waiting on a usage limit, running a tool on a device: that job is cancelled). Others keep running. Its report says it was stopped; its chat and work dir stay, so a later tell resumes it.", { name: STR, why: { type: "string", description: "Why, for its report." } }, ["name"]),
   spec("resume", "Wake every call on this server waiting for an AI service's usage limit (your turn, summaries), when the user says a limit was reset early. Each asks again once; one still limited waits again. A subagent at a usage limit ends and reports it instead: tell it to go on.", {}, []),
   // the pending list (Tasks.ts)
-  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with who \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. Title: short, the action or question, in the user's language.", {
+  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with who \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. When one can only be resolved after another (a token before a test, a merge before a deploy), give it after: the user then sees only what they can do now, and the tasks that free others come first. Title: short, the action or question, in the user's language.", {
     title   : STR,
     detail  : { type: "string", description: "Markdown: the context needed to decide, with links." },
     who     : { type: "string", enum: ["user", "unii"], description: "Who must act; by default the user." },
     choices : { type: "array", items: STR, description: "Answers the user picks with one click (\"sim\", \"não\"), at most 9." },
     ref     : { type: "string", description: "What it belongs to: a project, an agent, a PR." },
+    after   : { type: "array", items: STR, description: "Ids of the tasks this one waits for (\"P3\"), the user's or yours: while any is open it's hidden from the user and can't be resolved; once all are closed it shows, and your next turn is told it was freed." },
   }, ["title"]),
-  spec("task_edit", "Change a task of the pending list, by its id (P7): its texts, choices or ref, or its state: close (done, dropped) one that you resolved or that no longer applies, or open one again.", {
+  spec("task_edit", "Change a task of the pending list, by its id (P7): its texts, choices, ref or the tasks it waits for (after), or its state: close (done, dropped) one that you resolved or that no longer applies, or open one again.", {
     id      : STR,
     title   : STR,
     detail  : STR,
@@ -241,6 +242,7 @@ const BOSS: Spec[] = [
     state   : { type: "string", enum: ["open", "done", "dropped"] },
     answer  : STR,
     note    : { type: "string", description: "How it was resolved." },
+    after   : { type: "array", items: STR, description: "The ids it waits for, replacing the list; [] for none. No task that waits for this one (a cycle)." },
   }, ["id"]),
   spec("tasks", "List the pending list: the open tasks with their details; all: those closed in the last 7 days too; ref: only those whose ref contains it; id: that one whole.", { all: { type: "boolean" }, ref: STR, id: STR }, []),
 ];
@@ -558,7 +560,7 @@ export namespace Tools {
       return { text: t, fail: true };
     }
     tools.hooks.change();
-    return { text: (name === "task_add" ? "Added " : "Changed ") + Tasks.task_line(t, now).slice(2), fail: false };
+    return { text: (name === "task_add" ? "Added " : "Changed ") + Tasks.task_line(t, now, false, s.tasks).slice(2), fail: false };
   }
 
   // Devices

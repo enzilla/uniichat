@@ -368,12 +368,14 @@ function task_act(el: HTMLElement, a: View.Act): View.Act {
 
 // the pending list: the header's ✓ (on a wide screen, an aside instead:
 // style.css), its items made again only as the list changes (a state)
-let TASKS: { of: unknown; html: { open: string[]; closed: string[] } } = { of: null, html: { open: [], closed: [] } };
+// (those that wait for others: out of the count, a summary that opens
+// to them)
+let TASKS: { of: unknown; html: { open: string[]; waiting: string[]; closed: string[] } } = { of: null, html: { open: [], waiting: [], closed: [] } };
 function tasks_bar(): void {
   if (TASKS.of !== v.tasks) {
     TASKS = { of: v.tasks, html: Html.tasks_html(v.tasks) };
   }
-  const { open, closed } = TASKS.html;
+  const { open, waiting, closed } = TASKS.html;
   const untold = View.view_untold(v).length;
   document.body.classList.toggle("tasking", v.tasks.length > 0);
   $(".tasks").hidden = v.tasks.length === 0;
@@ -381,6 +383,9 @@ function tasks_bar(): void {
   $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
   $("#tasks .none").hidden = open.length > 0;
   markup($("#tasks ul.now"), open);
+  markup($("#tasks .waiting ul"), waiting);
+  $("#tasks .waiting").hidden = waiting.length === 0;
+  $("#tasks .waiting summary").textContent = View.tasks_waiting_said(waiting.length);
   markup($("#tasks .closed ul"), closed);
   $("#tasks .closed").hidden = closed.length === 0;
   $("#tasks .tell").hidden = untold === 0;

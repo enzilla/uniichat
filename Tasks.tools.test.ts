@@ -43,3 +43,18 @@ test("add, edit, list; each change told to the views; tasks.json kept", async ()
   expect(kept.tasks[0].by).toBe("main");
   expect(Tasks.tasks_untold(Tasks.tasks_load(DIR))).toEqual([]);
 });
+
+test("after through the tools: waits and frees said; a cycle refused, nothing changed", async () => {
+  const a = await call("task_add", { title: "Salvar o token xoxp" });
+  const id = a.text.split(" ")[1];
+  const b = await call("task_add", { title: "Ligar o MCP", who: "unii", after: [id] });
+  expect(b.text).toContain(" waits for " + id);
+  const bid = b.text.split(" ")[1];
+  const n = changes;
+  const loop = await call("task_edit", { id, after: [bid] });
+  expect(loop).toEqual({ text: bid + " waits for " + id + " already (directly or through others): " + id + " can't wait for it, a cycle.", fail: true });
+  expect(changes).toBe(n);
+  const list = (await call("tasks", {})).text;
+  expect(list).toContain(id + " [user] Salvar o token xoxp frees " + bid);
+  expect(list).toContain("Waiting for other tasks (hidden from the user until freed):\n- " + bid + " [unii] Ligar o MCP waits for " + id);
+});
