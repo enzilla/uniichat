@@ -20,14 +20,16 @@ import * as View from "./View.ts";
 
 // focus: the list takes the keys; sel: the task picked; scroll: the
 // chat's lines below the screen (0: it follows); most: how far it may
-// scroll; extra: notes and commands' output, under the chat till the next
-// message; hits: by screen row (1 at the top), the task drawn there and
+// scroll; lines: the chat's at the last frame (lines that came since keep
+// a scrolled reader's place); extra: notes and commands' output, under
+// the chat till the next message; hits: by screen row (1 at the top), the task drawn there and
 // the column its box ends at
 export type Panel = {
   focus  : boolean;
   sel    : string | null;
   scroll : number;
   most   : number;
+  lines  : number;
   extra  : Paint.Line[];
   hits   : Map<number, { id: string; box: number }>;
 };
@@ -66,7 +68,7 @@ const KEYS_OFF = ["Ctrl+P: pendências"];
 // =====
 
 export function panel_new(): Panel {
-  return { focus: false, sel: null, scroll: 0, most: 0, extra: [], hits: new Map() };
+  return { focus: false, sel: null, scroll: 0, most: 0, lines: 0, extra: [], hits: new Map() };
 }
 
 // the column's width for a screen w wide (0: none)
@@ -190,6 +192,8 @@ export function panel_frame(p: Panel, v: View.View, body: Paint.Line[], foot: Pa
   const cw   = w - side;
   const room = Math.max(1, h - foot.length);
   const all  = body.concat(p.extra);
+  p.scroll  += p.scroll > 0 ? Math.max(0, all.length - p.lines) : 0;
+  p.lines    = all.length;
   p.most     = Math.max(0, all.length - room);
   p.scroll   = Math.min(p.scroll, p.most);
   const top  = Math.max(0, all.length - room - p.scroll);

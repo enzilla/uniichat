@@ -109,6 +109,19 @@ test("scrolled up, the chat shows older lines and says how many are below; the w
   expect(p.scroll).toBe(30);
 });
 
+test("scrolled up, lines that come keep the reader's place; at the bottom, they show", () => {
+  const v = view();
+  const p = Panel.panel_new();
+  const body = (n: number) => Array.from({ length: n }, (_, k) => [Paint.Run("linha " + k)]);
+  Panel.panel_frame(p, v, body(50), [], 120, 20);
+  Panel.panel_scroll(p, 10);
+  const first = (n: number) => Panel.panel_frame(p, v, body(n), [], 120, 20)[0].map((r) => r.x).join("");
+  expect(first(50)).toContain("linha 20");
+  expect(first(58)).toContain("linha 20");
+  Panel.panel_scroll(p, -1000);
+  expect(first(60)).toContain("linha 40");
+});
+
 test("a narrow screen has no column", () => {
   const v = view();
   const lines = Panel.panel_frame(Panel.panel_new(), v, [[Paint.Run("oi")]], [], 80, 10);
