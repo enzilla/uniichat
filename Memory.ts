@@ -91,13 +91,15 @@ type End = [number, number];
 type Kept = { parts: Array<[number, number]>; batch: boolean };
 
 // view.json: the chat's view, the compactions' (none: the chat's)
-type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; goal?: string | null; work?: string[]; timers?: Timer[]; off?: string[]; on?: string[] };
+type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; goal?: string | null; work?: string[]; timers?: Timer[]; off?: string[]; on?: string[]; talk?: number | null };
 
 // fds: files read lately, open, oldest first; count: the pages logged
 // whole; open: those after, not whole yet; pick: the chat's, as last set;
 // goal: the user's (/goal; null: none), till met or halted (Server.ts);
 // off: the MCP servers the user turned off in this chat (Mcp.ts); on:
 // those of a device's Claude Code the user turned on (off till then);
+// talk: conversation mode's first message (null: off), talked: the
+// bytes of its lines known for good, by message;
 // work: what ran, as last saved; timers: its schedules, by when due
 // (Server.ts Chat.ring); nodes: the texts of the views' nodes
 // built and of those above them, by slot; agents: their logs' lengths;
@@ -117,6 +119,8 @@ export type Memory = {
   goal   : string | null;
   off    : string[];
   on     : string[];
+  talk   : number | null;
+  talked : Map<number, number>;
   work   : string[];
   timers : Timer[];
   nodes  : Map<number, string>;
@@ -143,10 +147,14 @@ const NODE  = 512;
 export const JOBS = 64;
 const TRIES = 5;
 // a view past its `high` merges to half: the chat's 64-128 KB (96 KB on
-// average), the compactions' 16-32 KB (24 KB)
+// average), the compactions' half to all of config COMPACTOR_CONTEXT (by
+// default 2-4 KB), each call's cut to that much
 const HIGH  = 128000;
-const SEEN  = 32000;
 const BLOCK = 4;
+
+// conversation mode's space: its lines' bytes at most (most of what the
+// chat's view takes), past which it switches itself off (Server.ts)
+export const TALK = 96000;
 const SLOT  = 16;
 const DAY   = 864e5;
 
@@ -165,6 +173,9 @@ const PIECE = 2 ** 20;
 const SCALE = "-".repeat(NODE);
 
 const WAIT = "(not summarized yet: zoom it)";
+
+// the view's line where conversation mode starts
+const TALKING = "Conversation mode is on from message {id}: from there on, the user's and Unii's messages are whole, word for word (zoom on one only to see an image it names); tool calls, their output, notes and reports stay summary lines.";
 
 const IMAGES = "/docs/images/";
 
@@ -196,8 +207,8 @@ export namespace Memory {
 
   export function load(dir: string, share: Memory["share"], acted: Memory["acted"] = () => {}): Memory {
     const mem: Memory = {
-      dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, off: [], on: [], work: [], timers: [], nodes: new Map(), agents: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
-      view: { parts: [], size: 0, batch: false, high: HIGH }, seen: { parts: [], size: 0, batch: false, high: SEEN },
+      dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, off: [], on: [], talk: null, talked: new Map(), work: [], timers: [], nodes: new Map(), agents: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
+      view: { parts: [], size: 0, batch: false, high: HIGH }, seen: { parts: [], size: 0, batch: false, high: config.COMPACTOR_CONTEXT },
       busy: new Map(), sides: new Map(), calls: new Map(), hold: [null, "paused"], done: false, wait: new Set(), share, acted,
     };
     const saved = Memory.saved(dir);
@@ -205,6 +216,7 @@ export namespace Memory {
     mem.goal = saved?.goal ?? null;
     mem.off  = saved?.off ?? [];
     mem.on   = saved?.on ?? [];
+    mem.talk = saved?.talk ?? null;
     mem.work = saved?.work ?? [];
     mem.timers = saved?.timers ?? [];
     mem.ends.main = Memory.index(mem, "main", saved?.main ?? [0, 0]);
@@ -242,7 +254,7 @@ export namespace Memory {
   export function save(mem: Memory): void {
     const file = mem.dir + "/view.json";
     const [chat, seen] = [mem.view, mem.seen].map((view): Kept => ({ parts: view.parts.map((part) => [part.l, part.i]), batch: view.batch }));
-    fs.writeFileSync(file + ".new", JSON.stringify({ ...chat, seen, pick: mem.pick, goal: mem.goal, off: mem.off, on: mem.on, work: mem.work, timers: mem.timers, ...mem.ends }));
+    fs.writeFileSync(file + ".new", JSON.stringify({ ...chat, seen, pick: mem.pick, goal: mem.goal, off: mem.off, on: mem.on, talk: mem.talk, work: mem.work, timers: mem.timers, ...mem.ends }));
     move_over(file + ".new", file);
     Disk.wrote(file);
   }
@@ -719,7 +731,7 @@ export namespace Memory {
   export async function build(mem: Memory, l: number, i: number, text: string): Promise<void> {
     const task = { text: Memory.task(l, i) + text + "\n</input>", mark: false };
     const upto = Math.min(Memory.ctx(l, i), Memory.first(mem, 0, Memory.side(mem, l, i)));
-    const blocks = [...Memory.view(mem, upto, mem.seen.parts), task];
+    const blocks = [...Memory.view(mem, upto, Memory.last(mem, Memory.before(mem.seen.parts, upto), config.COMPACTOR_CONTEXT)), task];
     const lines: string[] = [];
     let end = await Memory.compact(mem, l, i, Memory.ask(mem, l, i, text, blocks));
     while (end.ok && end.text.trim() !== "") {
@@ -818,6 +830,7 @@ ${Memory.cut(line)}| ← LIMIT`;
     const gone: Part[] = [];
     let changed = false;
     const sides = [0, 1].filter((side) => mem.hold[side] === null).map((side) => Memory.first(mem, 0, side));
+    mem.seen.high = config.COMPACTOR_CONTEXT;
     Memory.reach(mem, mem.view, mem.count);
     Memory.reach(mem, mem.seen, Math.min(mem.count, ...sides));
     for (const view of [mem.view, mem.seen]) {
@@ -982,12 +995,26 @@ ${Memory.cut(line)}| ← LIMIT`;
     return view.filter((part) => Memory.span(part)[1] < end);
   }
 
+  // the last of `parts` whose lines, built, take `most` bytes at most
+  export function last(mem: Memory, parts: Part[], most: number): Part[] {
+    let [k, size] = [parts.length, 0];
+    for (; k > 0; k--) {
+      const part = parts[k - 1];
+      const n = Memory.built(mem, part.l, part.i) ? Memory.bytes(Memory.line(part, Memory.text(mem, part))) + 1 : 0;
+      if (size + n > most) {
+        break;
+      }
+      size += n;
+    }
+    return parts.slice(k);
+  }
+
   // the view's lines built before message `end`, in blocks (the last cut
   // short), one marked: the last whole one, else the opening one. One
   // mark only: a request takes four, and Anthropic.ts adds three (the
   // system prompt's, a reply's end's, the top-level)
-  export function view(mem: Memory, end = mem.count, parts = mem.view.parts): Block[] {
-    const lines = Memory.before(parts, end).filter((part) => Memory.built(mem, part.l, part.i)).map((part) => Memory.line(part, Memory.text(mem, part)) + "\n");
+  export function view(mem: Memory, end = mem.count, parts = mem.view.parts, talk: number | null = null): Block[] {
+    const lines = talk === null ? Memory.before(parts, end).filter((part) => Memory.built(mem, part.l, part.i)).map((part) => Memory.line(part, Memory.text(mem, part)) + "\n") : Memory.talking(mem, end, parts, talk);
     const whole = Math.floor(lines.length / BLOCK);
     const blocks: Block[] = [{ text: "<chat>\n", mark: whole === 0 }];
     for (let k = 0; k < whole; k++) {
@@ -995,6 +1022,85 @@ ${Memory.cut(line)}| ← LIMIT`;
     }
     blocks.push({ text: lines.slice(whole * BLOCK).join("") + "</chat>\n", mark: false });
     return blocks;
+  }
+
+  // Conversation mode
+  // -----------------
+  // From message `talk` on, the chat's view (to `end`) has the user's and
+  // Unii's messages whole, each in place of its line, and a leaf's line
+  // for each other message; before it, its lines cover the messages
+  // before `talk` (one holding both split down to those that don't);
+  // a line between says so. The memory is as ever: switched off, the
+  // view is its lines again
+
+  export function talking(mem: Memory, end: number, parts: Part[], talk: number): string[] {
+    const before = parts.flatMap((part) => Memory.upto(mem, part, Math.min(talk, end)));
+    const lines = before.flatMap((part) => {
+      const text = Memory.node(mem, part);
+      return text === null ? [] : [Memory.line(part, text) + "\n"];
+    });
+    const said = Array.from({ length: Math.max(0, end - talk) }, (_, k) => Memory.talk_line(mem, talk + k) + "\n");
+    return [...lines, TALKING.replace("{id}", String(talk)) + "\n", ...said];
+  }
+
+  // the nodes under `part` that tile its messages before `end`: itself
+  // if it does and is built (a message: its line, if built)
+  export function upto(mem: Memory, part: Part, end: number): Part[] {
+    const [a, z] = Memory.span(part);
+    if (a >= end) {
+      return [];
+    }
+    if (z < end && (part.l === 0 || Memory.node(mem, part) !== null)) {
+      return [part];
+    }
+    return Memory.halves(part).flatMap((half) => Memory.upto(mem, half, end));
+  }
+
+  // a message the conversation keeps whole: the user's or Unii's, not
+  // imported
+  export function said(root: Root): boolean {
+    return (root.kind === "user" || root.kind === "unii") && !root.imported;
+  }
+
+  // message i's line in conversation mode: whole (a `</chat>` in it
+  // escaped, so it can't end the view's block), or its leaf's
+  export function talk_line(mem: Memory, i: number): string {
+    const root = Memory.message(mem, i)!;
+    const part = { l: 0, i };
+    return Memory.said(root) ? Memory.ref(part) + "|" + Memory.show(root).replace(/<\/chat>/gi, "<\\/chat>") : Memory.line(part, Memory.node(mem, part) ?? WAIT);
+  }
+
+  // the bytes conversation mode's lines take, to message `end` (none:
+  // off); a line not built yet counted as one at NODE
+  export function talk_size(mem: Memory, end = mem.count): number {
+    let size = 0;
+    for (let i = mem.talk ?? end; i < end; i++) {
+      let n = mem.talked.get(i);
+      if (n === undefined) {
+        const done = Memory.said(Memory.message(mem, i)!) || Memory.node(mem, { l: 0, i }) !== null;
+        n = done ? Memory.bytes(Memory.talk_line(mem, i)) + 1 : NODE + 16;
+        if (done) {
+          mem.talked.set(i, n);
+        }
+      }
+      size += n;
+    }
+    return size;
+  }
+
+  // where conversation mode starts if switched on now: at the last
+  // message it keeps whole (one notices a talk a message late), its
+  // first page; else the next
+  export function talk_from(mem: Memory): number {
+    for (let i = mem.count - 1; i >= 0; i--) {
+      if (Memory.said(Memory.message(mem, i)!)) {
+        while (i > 0 && Memory.message(mem, i - 1)!.more) {
+          i--;
+        }
+        return i;
+      }
+    }
+    return mem.count;
   }
 
   export function part(mem: Memory, id: number, n: number): Part | null {

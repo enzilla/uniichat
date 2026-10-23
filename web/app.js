@@ -992,6 +992,7 @@ function view_new() {
     tasks: [],
     skills: [],
     threads: {},
+    talk: null,
     parts: [],
     turn: Infinity,
     fold: null,
@@ -1096,6 +1097,7 @@ function view_act(v, act) {
       const text = act.text.trim();
       const images = act.images ?? [];
       const word = /^\/[a-z]+(?=\s|$)/i.exec(text)?.[0];
+      const skill = word !== undefined && v.skills.some((s) => "/" + s.name === word);
       const goal = word === "/goal" ? text.slice(word.length).trim() : null;
       if (!view_typing(v)) {
         return [];
@@ -1110,7 +1112,7 @@ function view_act(v, act) {
         v.notes.push("/goal needs one: /goal <message>.");
         return [];
       }
-      if (word !== undefined && goal === null) {
+      if (word !== undefined && goal === null && !skill) {
         v.notes.push(word + " is no command; nothing was sent. The terminal's /help lists its commands; the site's are in its ☰ menu.");
         return [];
       }
@@ -1167,6 +1169,9 @@ function view_act(v, act) {
     }
     case "Unschedule": {
       return [{ $: "unschedule", id: act.id }];
+    }
+    case "Talk": {
+      return [{ $: "talk", on: act.on }];
     }
     case "Plug": {
       const asked = v.out.flatMap((p) => p.msg.$ === "mcp" && p.msg.name === act.name ? [p.msg.on] : []).at(-1);
@@ -1616,13 +1621,26 @@ function images_html(names) {
   });
   return names.length === 0 ? "" : `<div class="pics">${pics.join("")}</div>`;
 }
-function pick_html(fold, on, knobs) {
+var MODES = [
+  ["standard", "Each message is summarized for Unii's memory. Cheapest, good for long working sessions."],
+  ["conversation", "Messages stay word-for-word in Unii's view until you switch back. Use it for discussions. It costs more per turn."]
+];
+function pick_html(fold, on, knobs, talk) {
   const parts = knobs.map((k) => k.choices.length === 0 ? [`<span class="knob" title="${esc(k.hint)}">${esc(k.text)}</span>`] : [
     `<button title="${esc(k.hint)}" data-knob="${k.move}" popovertarget="pick-${k.move}" aria-haspopup="menu">${esc(k.text)}</button>`,
     `<div id="pick-${k.move}" class="choices" popover role="menu" aria-label="${k.move[0].toUpperCase() + k.move.slice(1)}">${k.choices.map(choice_html).join("")}</div>`
   ]);
   const all = fold === null ? [] : [`<button class="all"${act_html({ $: "Fold", on })}>${esc(fold)}</button>`];
-  return [...all, `<span class="rule"></span>`, ...parts.flatMap((part, i) => i === 0 ? part : [`<span class="dot">·</span>`, ...part])];
+  const mode = ([name, hint], k) => {
+    const here = talk != null === (k === 1);
+    return `<button title="${esc(hint)}" aria-pressed="${here}"${act_html({ $: "Talk", on: k === 1 })}>${name}</button>`;
+  };
+  const [now, about] = MODES[talk == null ? 0 : 1];
+  const flip = `<button class="flip" title="${esc(about)} Tap for ${MODES[talk == null ? 1 : 0][0]}."${act_html({ $: "Talk", on: talk == null })}>${now}</button>`;
+  const modes = talk === undefined ? [] : [`<span class="modes" role="group" aria-label="Memory mode">${MODES.map(mode).join("")}</span>`, flip];
+  const used = talk == null ? 0 : Math.round(talk.used * 100);
+  const rule = talk == null ? `<span class="rule"></span>` : `<span class="rule meter" style="--used:${used}%" title="Conversation: ${used}% of space used" role="meter" aria-valuenow="${used}" aria-valuemin="0" aria-valuemax="100" aria-label="Conversation space used"></span>`;
+  return [...all, ...modes, rule, ...parts.flatMap((part, i) => i === 0 ? part : [`<span class="dot">·</span>`, ...part])];
 }
 function choice_html(c) {
   const head = c.vendor === null ? "" : `<p>${esc(c.vendor)}</p>`;
@@ -1729,7 +1747,8 @@ var SETTING = {
   vendors: ["Vendors", "Whose models the server offers."],
   models: ["Models", "The models offered, of those vendors."],
   pick: ["Default model", "What a chat runs on until it picks another."],
-  compactor: ["Compactor model", "What writes the memory's summaries."],
+  compactor: ["Compactor model", "What writes the memory's summaries. Sonnet medium summarizes more faithfully than Haiku, using more of a plan's limits."],
+  compactor_context: ["Compactor context", "How much of the chat each summary sees, in KB (1 to 128). More context lets it copy more into a summary that its message doesn't say. New summaries only."],
   agents: ["Subagent model", "What subagents run on."],
   site: ["Site", "The server's address, for sign-in links and the installer."],
   apple: ["iOS App ID", "The app's team and bundle ID, whose sign-in links it opens."],
@@ -1743,7 +1762,7 @@ var KEY = {
 var VENDOR_KEY = { "claude-api": "anthropic", "openai-api": "openai" };
 var PICKS = ["pick", "compactor", "agents"];
 var GROUPS = [
-  ["Models", ["vendors", "models", "pick", "compactor", "agents"]],
+  ["Models", ["vendors", "models", "pick", "compactor", "compactor_context", "agents"]],
   ["Server", ["site", "apple", "apns"]]
 ];
 function settings_html(page) {
@@ -1795,6 +1814,9 @@ function control_html(r) {
     case "compactor":
     case "agents": {
       return `<input type="hidden" name="${r.key}" value="${esc(r.value)}"><div class="four"></div>`;
+    }
+    case "compactor_context": {
+      return `<input id="set-${r.key}" name="${r.key}" type="number" min="1" max="128" step="1" inputmode="numeric" value="${esc(r.value)}" placeholder="${esc(r.def)}">`;
     }
   }
   return `<input id="set-${r.key}" name="${r.key}" value="${esc(r.value)}" placeholder="${esc(r.def)}" spellcheck="false" autocapitalize="off">`;
@@ -2671,7 +2693,7 @@ function bars() {
   $(".mic").classList.toggle("rec", P.rec !== null);
   $(".composer").classList.toggle("rec", P.rec !== null);
   const knob = document.activeElement?.dataset?.knob;
-  markup($("#pick"), pick_html(view_fold(v), v.fold === null, view_shown(v)));
+  markup($("#pick"), pick_html(view_fold(v), v.fold === null, view_shown(v), v.page === null ? v.talk : undefined));
   if (knob !== undefined) {
     $("#pick [data-knob=" + knob + "]").focus();
   }
