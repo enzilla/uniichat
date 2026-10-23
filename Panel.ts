@@ -61,6 +61,9 @@ const INDENT = 6;
 
 const BOLD = { ...Paint.INK, b: true };
 
+// an agent's id among the items: this, then its name
+const AGENT = "@";
+
 // the list's keys, as its foot shows them (focused, or not)
 const KEYS_ON  = ["␣ marca · 1-9 opção · ! marca e avisa", "d descarta · c comenta · a avisa · Esc sai"];
 const KEYS_OFF = ["Ctrl+P: pendências"];
@@ -90,12 +93,18 @@ function panel_items(v: View.View): Task[] {
   return [...open, ...closed];
 }
 
-// the task picked, kept to one still listed (none: the first)
+// all the keys move along: those tasks, then the agents at work (each
+// "@" and its name)
+function panel_ids(v: View.View): string[] {
+  return [...panel_items(v).map((t) => t.id), ...v.agents.map((name) => AGENT + name)];
+}
+
+// the item picked, kept to one still listed (none: the first); its task,
+// if it is one
 function panel_pick(p: Panel, v: View.View): Task | null {
-  const items = panel_items(v);
-  const found = items.find((t) => t.id === p.sel) ?? items[0] ?? null;
-  p.sel = found?.id ?? null;
-  return found;
+  const ids = panel_ids(v);
+  p.sel = p.sel !== null && ids.includes(p.sel) ? p.sel : ids[0] ?? null;
+  return panel_items(v).find((t) => t.id === p.sel) ?? null;
 }
 
 // Keys
@@ -106,21 +115,26 @@ function panel_pick(p: Panel, v: View.View): Task | null {
 export function panel_key(p: Panel, v: View.View, key: string): Out | null | undefined {
   const t = panel_pick(p, v);
   const items = panel_items(v);
+  const ids = panel_ids(v);
   const at = t === null ? -1 : items.indexOf(t);
+  const here = p.sel === null ? -1 : ids.indexOf(p.sel);
   switch (key) {
     case "Up":
     case "k": {
-      p.sel = items[Math.max(0, at - 1)]?.id ?? null;
+      p.sel = ids[Math.max(0, here - 1)] ?? null;
       return null;
     }
     case "Down":
     case "j": {
-      p.sel = items[Math.min(items.length - 1, at + 1)]?.id ?? null;
+      p.sel = ids[Math.min(ids.length - 1, here + 1)] ?? null;
       return null;
     }
     case "a": {
       return { $: "act", act: { $: "TasksTell" } };
     }
+  }
+  if (p.sel?.startsWith(AGENT)) {
+    return key === "Enter" || key === " " ? { $: "act", act: { $: "Goto", name: p.sel.slice(AGENT.length) } } : undefined;
   }
   if (t === null) {
     return /^[ x!dcr1-9]$|^Enter$/.test(key) ? { $: "note", text: "Nenhuma pendência." } : undefined;
@@ -161,7 +175,8 @@ function panel_act(t: Task, state: Task["state"], go: boolean, answer?: string):
 }
 
 // a mouse event ("Mouse:b:col:row:M"): the wheel scrolls the chat; a
-// press on a task picks it and focuses the list, on its box also marks it
+// press on a task picks it and focuses the list, on its box also marks
+// it; on an agent, opens its tab
 export function panel_mouse(p: Panel, v: View.View, key: string): Out | null {
   const [b, col, row, end] = key.split(":").slice(1);
   if (b === "64" || b === "65") {
@@ -174,7 +189,7 @@ export function panel_mouse(p: Panel, v: View.View, key: string): Out | null {
   }
   p.sel = hit.id;
   p.focus = true;
-  return Number(col) <= hit.box ? panel_key(p, v, " ") ?? null : null;
+  return Number(col) <= hit.box || hit.id.startsWith(AGENT) ? panel_key(p, v, " ") ?? null : null;
 }
 
 // the chat scrolled by n lines (up: more), within what there is
@@ -208,12 +223,14 @@ export function panel_frame(p: Panel, v: View.View, body: Paint.Line[], foot: Pa
 }
 
 // the column, w wide and h tall: its head, the open tasks, those that
-// wait, those closed lately; its keys at its foot. The task picked stays
-// in sight (those above it cut first); where each task is drawn noted in
+// wait, those closed lately, the agents at work (Unii's subagents); its
+// keys at its foot. The item picked stays in sight (those above it cut
+// first; with none picked below, the agents cut first); where each task is drawn noted in
 // hits, for the mouse (x: the screen's columns left of the column's rule)
 function panel_lines(p: Panel, v: View.View, w: number, h: number, x: number): Paint.Line[] {
   const { open, waiting, closed } = View.view_tasks(v);
-  const sel   = panel_pick(p, v);
+  panel_pick(p, v);
+  const sel   = { id: p.sel };
   const blank = [] as Paint.Line;
   const head  = [Paint.Run("Pendências", BOLD), Paint.Run(open.length === 0 ? "" : " (" + open.length + ")", Paint.DIM)];
   const body: { line: Paint.Line; id?: string; box?: boolean }[] = [];
@@ -229,6 +246,10 @@ function panel_lines(p: Panel, v: View.View, w: number, h: number, x: number): P
   if (closed.length > 0) {
     body.push({ line: blank }, { line: [Paint.Run("Resolvidas", Paint.DIM)] });
     closed.forEach((t) => add(t, t.told ? [] : ["o Unii ainda não viu"]));
+  }
+  if (v.agents.length > 0) {
+    body.push({ line: blank }, { line: [Paint.Run("Agentes", BOLD), Paint.Run(" (" + v.agents.length + ")", Paint.DIM)] });
+    v.agents.forEach((name) => agent_lines(v, name, AGENT + name === sel.id ? (p.focus ? "▸" : "›") : " ", w).forEach((line) => body.push({ line, id: AGENT + name })));
   }
   const keys  = (p.focus ? KEYS_ON : KEYS_OFF).flatMap((k) => Paint.runs_wrap([Paint.Run(k, Paint.DIM)], w, false));
   const room  = Math.max(0, h - 2 - keys.length - 1);
@@ -261,6 +282,20 @@ function task_lines(v: View.View, t: Task, mark: string, more: string[], w: numb
   const tail  = runs.length === 0 ? [] : Paint.runs_wrap(runs, Math.max(4, w - INDENT), false).map((l) => [pad, ...l]);
   const opts  = mark === " " || t.state !== "open" ? [] : t.choices.map((c, k) => [pad, Paint.Run(k + 1 + ") ", BOLD), Paint.Run(Paint.text_clean(c))]);
   return [...lines, ...tail, ...opts];
+}
+
+// an agent's lines: the mark, its label (else its name), bold when
+// picked; then dimmed its name (under a label), what it runs on, and the
+// usage limit it waits for, if any
+function agent_lines(v: View.View, name: string, mark: string, w: number): Paint.Line[] {
+  const label = View.agent_label(name);
+  const run   = v.runs[name];
+  const limit = v.limits[name];
+  const head  = Paint.runs_wrap([Paint.Run(mark + " ● ", { ...Paint.INK, c: Theme.ANSI.here }), Paint.Run(Paint.text_clean(label ?? name), mark === " " ? Paint.INK : BOLD)], w, false);
+  const said  = [...(label === undefined ? [] : [name]), ...(run === undefined ? [] : [run.model + " · " + run.effort]), ...(limit === undefined ? [] : [View.limit_show(limit)])].join(" · ");
+  const pad   = Paint.Run(" ".repeat(4));
+  const tail  = said === "" ? [] : Paint.runs_wrap([Paint.Run(Paint.text_clean(said), Paint.DIM)], Math.max(4, w - 4), false).map((l) => [pad, ...l]);
+  return [...head, ...tail];
 }
 
 // a line cut or padded to w columns

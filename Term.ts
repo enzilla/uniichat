@@ -167,7 +167,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/descartar P7 [comentário]", "",               "descarta a pendência",                          (t, a) => term_task(t, a, "dropped", false)],
       ["/reabrir P7",       "",                        "reabre uma pendência resolvida",                 (t, a) => term_task(t, a, "open", false)],
       ["/avisar",           "",                        "avisa o Unii agora das pendências resolvidas que ele ainda não viu", (t) => term_send(t, { $: "tasks_tell" })],
-      ["",                  "Ctrl+P",                  "na tela cheia: o foco vai à coluna de pendências e volta (lá: setas, espaço marca, 1-9 opção, ! marca e avisa, d descarta, c comenta, a avisa, Esc sai; o clique marca)", term_focus],
+      ["",                  "Ctrl+P",                  "na tela cheia: o foco vai à coluna de pendências e agentes e volta (lá: setas, espaço marca, 1-9 opção, ! marca e avisa, d descarta, c comenta, a avisa, Enter num agente abre a aba dele, Esc sai; o clique marca ou abre)", term_focus],
       ["",                  "PageUp, PageDown",        "na tela cheia: rola a conversa (a roda do mouse também; Shift e arrastar seleciona texto)", term_page_key],
     ]],
   ];

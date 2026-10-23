@@ -128,3 +128,19 @@ test("a narrow screen has no column", () => {
   expect(Panel.panel_width(80)).toBe(0);
   expect(lines.every((l) => !l.some((r) => r.x.includes("Pendências")))).toBe(true);
 });
+
+test("the agents at work under the tasks: the keys reach them after the tasks, Enter or a click opens one's tab", () => {
+  const v = view();
+  v.agents = ["ana", "bob"];
+  v.runs = { ana: { vendor: "claude-sub", model: "opus-5.5", effort: "high", speed: "slow" } } as never;
+  const p = Panel.panel_new();
+  const seen = [0, 1, 2, 3, 4, 5].map(() => (Panel.panel_key(p, v, "Down"), p.sel));
+  expect(seen).toEqual(["P3", "P4", "P5", "@ana", "@bob", "@bob"]);
+  expect(Panel.panel_key(p, v, "Enter")).toEqual({ $: "act", act: { $: "Goto", name: "bob" } });
+  expect(Panel.panel_key(p, v, "d")).toBeUndefined();
+  const lines = Panel.panel_frame(p, v, [], [], 120, 40).map((l) => l.map((r) => r.x).join(""));
+  expect(lines.some((l) => l.includes("Agentes (2)"))).toBe(true);
+  expect(lines.some((l) => l.includes("opus-5.5 · high"))).toBe(true);
+  const [row] = [...p.hits].find(([, h]) => h.id === "@ana")!;
+  expect(Panel.panel_mouse(p, v, "Mouse:0:100:" + row + ":M")).toEqual({ $: "act", act: { $: "Goto", name: "ana" } });
+});
