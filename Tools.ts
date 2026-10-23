@@ -61,6 +61,7 @@ export type Link = { send: (msg: object) => void; live: () => boolean; work: str
 // at work, the view its calls get and its replies so far
 export type Agent = {
   name    : string;
+  label   : string | null; // what the user reads it as (Tools.start)
   role    : { effort: string | null; model: string | null };
   call    : Call | null;
   live    : Live[];
@@ -91,6 +92,7 @@ export type Tools = {
   mem     : Memory;
   devices : Map<string, Device>;
   agents  : Map<string, Agent>;
+  labels  : Map<string, string>; // every agent's label it has, by name (Tools.labels)
   mcp     : Servers;
   key     : string;
   url     : string;
@@ -162,11 +164,19 @@ ask. date(id) gives the date and time of message id. zoom("Name") gives
 an agent's whole chat.`;
 
 // an agent's log starts with a note of what it is: SUB_NOTE, and its
-// model and effort if not the configured ones
+// model and effort if not the configured ones, and its label if given
+// (one line, last: older notes, without, read the same)
 const SUB_NOTE   = "subagent";
 const SUB_ON     = " on ";
 const SUB_AT     = " at effort ";
-const SUB_ROLE   = new RegExp("^" + SUB_NOTE + "(?:" + SUB_ON + "(\\S+))?(?:" + SUB_AT + "(\\S+))?$");
+const SUB_AS     = ", labeled ";
+const SUB_ROLE   = new RegExp("^" + SUB_NOTE + "(?:" + SUB_ON + "(\\S+))?(?:" + SUB_AT + "(\\S+))?(?:" + SUB_AS + "(.+))?$", "s"); // s: a label edited by hand with a line break (U+2028...) still reads
+
+// a label's most characters (graphemes: an emoji's parts are never cut
+// apart), and most code points, so marks piled on them can't make it long
+const LABEL = 60;
+const LABEL_POINTS = 2 * LABEL;
+const GRAPHEMES = new Intl.Segmenter("en", { granularity: "grapheme" });
 
 // the models a subagent may be given (Tools.call)
 const MODELS = Pick.models(config.OFFER.vendors, config.OFFER.models).map(([, m]) => m.label);
@@ -200,7 +210,7 @@ const OWN: Spec[] = [
   spec("date", "The date and time of message id.", { id: INT }, ["id"]),
 ];
 const BOSS: Spec[] = [
-  spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees the view and the user's instructions, but knows what you want only from its task.", { tasks: { type: "array", items: STR }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." }, model: { type: "string", enum: MODELS, description: "Their model; by default, the one they'd run on. Set it ONLY when the user asks for that model or vendor in this chat, since another vendor may come with additional costs." } }, ["tasks"]),
+  spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees the view and the user's instructions, but knows what you want only from its task.", { tasks: { type: "array", items: STR }, labels: { type: "array", items: STR, description: "A short label per task, in the tasks' order, that the user reads as that subagent's name instead of its generated one: <project>-<role>, as num-3182-verifier or uniichat-links-impl. Give one for every task. You still name it by its generated name in tell, stop and zoom." }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." }, model: { type: "string", enum: MODELS, description: "Their model; by default, the one they'd run on. Set it ONLY when the user asks for that model or vendor in this chat, since another vendor may come with additional costs." } }, ["tasks"]),
   spec("tell", "Send a message to a subagent, by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
   spec("schedule", "Schedule a message to yourself: at its time it reaches you as a message \"[Timer id]\" from the timer, not the user, starting a turn as a report does, whether or not the user is online. Give `at` to send it once, or `cron` to send it again and again, and the time zone both are read in (the user's). Write the message as the task to do then, whole: by then this turn is far back in the view.", {
     message : STR,
@@ -232,7 +242,7 @@ export namespace Tools {
     const url = Tools.base() + key + "/";
     const run = (device: string, job: Job, signal: AbortSignal) => Tools.job(tools, device, job, signal, crypto.randomUUID());
     const mcp = Mcp.servers((text) => hooks.note(text), config.MCP, run, (device) => typeof Tools.open(tools, device) !== "string");
-    const tools: Tools = { mem, devices: new Map(), agents: new Map(), mcp, key, url, hooks };
+    const tools: Tools = { mem, devices: new Map(), agents: new Map(), labels: Tools.labels(mem), mcp, key, url, hooks };
     CHATS.set(key, tools);
     return tools;
   }
@@ -303,7 +313,7 @@ export namespace Tools {
   // messages: read from their calls, so the list is never kept apart and
   // can't drift from the truth
   export function at_work(tools: Tools): Block {
-    const names = Tools.working(tools).map((a) => a.name);
+    const names = Tools.working(tools).map((a) => Tools.named(tools, a.name));
     return { text: "Agents at work now: " + (names.length === 0 ? "none." : names.join(", ") + ".") + "\n\n", mark: false };
   }
 
@@ -442,7 +452,8 @@ export namespace Tools {
         if (model !== null && !MODELS.includes(model)) {
           return { text: "No model " + model + "; one of " + MODELS.join(", ") + ".", fail: true };
         }
-        return { text: await Tools.spawn(tools, (args.tasks ?? []).map(String), effort, model), fail: false };
+        const labels = Array.isArray(args.labels) ? args.labels.map((l: unknown) => (typeof l === "string" ? l : "")) : [];
+        return { text: await Tools.spawn(tools, (args.tasks ?? []).map(String), effort, model, labels), fail: false };
       }
       case "tell": {
         return { text: await Tools.tell(tools, String(args.name), String(args.message)), fail: false };
@@ -607,13 +618,13 @@ export namespace Tools {
   // Agents
   // ------
 
-  export async function spawn(tools: Tools, tasks: string[], effort: string | null, model: string | null = null): Promise<string> {
+  export async function spawn(tools: Tools, tasks: string[], effort: string | null, model: string | null = null, labels: string[] = []): Promise<string> {
     const view = tasks.length === 0 ? "No tasks." : await Tools.view(tools);
     if (typeof view === "string") {
       return view;
     }
-    const names = tasks.map((task) => Tools.start(tools, { effort, model }, task, view));
-    return "Started " + names.join(", ") + ". Each one's report will reach you as a message when it finishes.";
+    const names = tasks.map((task, k) => Tools.start(tools, { effort, model }, task, view, labels[k] ?? ""));
+    return "Started " + names.map((name) => Tools.named(tools, name)).join(", ") + ". Each one's report will reach you as a message when it finishes.";
   }
 
   // what the work a restart cut is told as it goes on (Server.ts
@@ -646,11 +657,15 @@ export namespace Tools {
     return "Sent. " + name + "'s reply will reach you as a message.";
   }
 
-  export function start(tools: Tools, role: Agent["role"], task: string, view: Block[]): string {
+  export function start(tools: Tools, role: Agent["role"], task: string, view: Block[], label = ""): string {
     const name = Memory.agent_new(tools.mem);
-    const agent = { name, role, call: null, live: [], calls: {}, stop: false, why: null, view, replies: [] };
+    const shown = Tools.label_clean(label);
+    const agent = { name, label: shown, role, call: null, live: [], calls: {}, stop: false, why: null, view, replies: [] };
     tools.agents.set(name, agent);
-    tools.hooks.push(agent, "note", SUB_NOTE + (role.model === null ? "" : SUB_ON + role.model) + (role.effort === null ? "" : SUB_AT + role.effort));
+    if (shown !== null) {
+      tools.labels.set(name, shown);
+    }
+    tools.hooks.push(agent, "note", SUB_NOTE + (role.model === null ? "" : SUB_ON + role.model) + (role.effort === null ? "" : SUB_AT + role.effort) + (shown === null ? "" : SUB_AS + shown));
     tools.hooks.push(agent, "user", task);
     Tools.run(tools, agent);
     return name;
@@ -662,9 +677,48 @@ export namespace Tools {
     const note = log !== null && log.length > 0 && log[0].kind === "note" ? log[0].text : "";
     const sub = SUB_ROLE.exec(note);
     if (sub !== null) {
-      tools.agents.set(name, { name, role: { effort: sub[2] ?? null, model: sub[1] ?? null }, call: null, live: [], calls: {}, stop: false, why: null, view: [], replies: [] });
+      tools.agents.set(name, { name, label: Tools.label_clean(sub[3] ?? ""), role: { effort: sub[2] ?? null, model: sub[1] ?? null }, call: null, live: [], calls: {}, stop: false, why: null, view: [], replies: [] });
     }
     return tools.agents.get(name) ?? null;
+  }
+
+  // a label as given, on one line, at most LABEL graphemes (LABEL_POINTS
+  // code points); null: none. The spawn's and a note's alike (a note may
+  // be edited by hand)
+  export function label_clean(label: string): string | null {
+    const one = label.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim();
+    let cut = "";
+    let n = 0;
+    let points = 0;
+    for (const { segment } of GRAPHEMES.segment(one)) {
+      const size = Array.from(segment).length;
+      if (n === LABEL || points + size > LABEL_POINTS) {
+        break;
+      }
+      cut += segment;
+      n += 1;
+      points += size;
+    }
+    cut = cut.trim();
+    return cut === "" ? null : cut;
+  }
+
+  // every agent's label, by name, from its log's note (Memory.agent_heads)
+  export function labels(mem: Memory): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const [name, note] of Memory.agent_heads(mem)) {
+      const label = Tools.label_clean(SUB_ROLE.exec(note)?.[3] ?? "");
+      if (label !== null) {
+        out.set(name, label);
+      }
+    }
+    return out;
+  }
+
+  // an agent as Unii reads it: its name, its label after it if it has one
+  export function named(tools: Tools, name: string): string {
+    const label = tools.labels.get(name);
+    return label === undefined ? name : name + " (" + label + ")";
   }
 
   // calls while a message waits in its log (told too late for the call

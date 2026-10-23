@@ -233,9 +233,9 @@ function msg_lines(kind: Kind, who: string, body: Md.Block[], w: number): Line[]
   }
   if (Theme.FRAMED.includes(kind)) {
     const edge = kind === "user" ? { ...INK, c: Theme.ANSI.you } : INK;
-    return frame_lines(blocks_lines(body, w - 4, ink), w - 4, edge, who === "" ? [] : [Run(" " + who + " ", { ...edge, b: true })]);
+    return frame_lines(blocks_lines(body, w - 4, ink), w - 4, edge, who === "" ? [] : [Run(" " + text_clean(who) + " ", { ...edge, b: true })]);
   }
-  const name = who === "" ? [] : [[Run(who, { ...DIM, b: true })]];
+  const name = who === "" ? [] : [[Run(text_clean(who), { ...DIM, b: true })]];
   return [...name, ...blocks_lines(body, w, ink)];
 }
 
@@ -397,7 +397,9 @@ function span_run(s: Md.Span, ink: Ink): Run[] {
       return [Run(x, ink)];
     }
     case "Name": {
-      return [Run("[" + x + "]", { ...ink, b: true, u: true })];
+      const label = View.agent_label(s.x);
+      const look = { ...ink, b: true, u: true };
+      return label === undefined ? [Run("[" + x + "]", look)] : [Run("[" + text_clean(label) + " ", look), Run(x, { ...look, b: false, d: true }), Run("]", look)];
     }
   }
 }
@@ -419,8 +421,8 @@ export function rule_text(text: string, w: number): Line {
 // the last line, w wide: a tab for UniiChat and each agent at work, the
 // shown bold; with agents, the key that moves along them, if it fits
 export function tabs_line(v: View.View, w: number): Line {
-  const tabs = View.view_tabs(v).map((tab) => Run(tab.text, tab.here ? { ...INK, b: true } : DIM));
-  const line = tabs.flatMap((r, k) => (k === 0 ? [r] : [Run("  "), r]));
+  const tabs = View.view_tabs(v).map((tab) => [Run(text_clean(tab.text), tab.here ? { ...INK, b: true } : DIM), ...(tab.sub === undefined ? [] : [Run(" " + tab.sub, DIM)])]);
+  const line = tabs.flatMap((r, k) => (k === 0 ? r : [Run("  "), ...r]));
   const hint = [Run("  · Tab to cycle", DIM)];
   return tabs.length > 1 && line_width([...line, ...hint]) <= w ? [...line, ...hint] : line;
 }

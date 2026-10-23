@@ -376,17 +376,30 @@ async function term_image(t: Term, arg: string): Promise<void> {
 
 // stops all that runs, or the agent named
 function term_stop(t: Term, arg: string): void {
+  if (arg === "") {
+    return term_send(t, { $: "stop" });
+  }
   const name = term_agent(t, arg);
-  if (arg !== "" && !t.v.agents.includes(name)) {
+  if (name === null) {
+    return;
+  }
+  if (!t.v.agents.includes(name)) {
     term_note(t, "No agent " + arg + " at work.");
     return;
   }
-  term_send(t, arg === "" ? { $: "stop" } : { $: "stop", name });
+  term_send(t, { $: "stop", name });
+  term_note(t, "Parando " + Paint.text_clean(View.agent_shown(name)) + ".");
 }
 
-// an agent at work whose name starts with arg, else arg
-function term_agent(t: Term, arg: string): string {
-  return t.v.agents.find((a) => a.toLowerCase().startsWith(arg.toLowerCase())) ?? arg;
+// the agent arg means (View.agent_find); null if several fit, listed for
+// the person to say which
+function term_agent(t: Term, arg: string): string | null {
+  const found = View.agent_find(t.v, arg);
+  if ("name" in found) {
+    return found.name;
+  }
+  term_note(t, Paint.text_clean(View.agents_many(arg, found.many)));
+  return null;
 }
 
 // the person's choice for block #id or #id+n (its name, View.block_name),
@@ -441,14 +454,17 @@ function term_fold(t: Term): void {
   }
 }
 
-// shows an agent's chat, by the start of its name, or UniiChat's; no
+// shows an agent's chat, by the start of its name or label, or UniiChat's; no
 // name lists the tabs
 function term_tab(t: Term, arg: string): void {
   const main = arg.toLowerCase() === View.MAIN.toLowerCase();
   if (arg === "") {
-    return term_note(t, "Tabs: " + View.view_tabs(t.v).map((tab) => tab.text).join("  "));
+    return term_note(t, "Tabs: " + View.view_tabs(t.v).map((tab) => tab.text + (tab.sub === undefined ? "" : " (" + tab.sub + ")")).join("  "));
   }
-  term_act(t, { $: "Goto", name: main ? null : term_agent(t, arg) });
+  const name = main ? null : term_agent(t, arg);
+  if (main || name !== null) {
+    term_act(t, { $: "Goto", name });
+  }
 }
 
 // moves the pick one step (a key)

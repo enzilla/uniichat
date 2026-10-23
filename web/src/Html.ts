@@ -156,7 +156,9 @@ export function mcp_html(plugs: View.Plug[]): string[] {
 export function tabs_html(tabs: View.Tab[]): string[] {
   return tabs.map((tab) => {
     const here = tab.here ? ` class="here"` : "";
-    return `<button${here}${act_html({ $: "Goto", name: tab.name })}>${esc(tab.text)}</button>`;
+    const sub = tab.sub === undefined ? "" : ` <small>${esc(tab.sub)}</small>`;
+    const title = tab.sub === undefined ? "" : ` title="${esc(tab.sub)}"`;
+    return `<button${here}${title}${act_html({ $: "Goto", name: tab.name })}>${esc(tab.text)}${sub}</button>`;
   });
 }
 
@@ -491,7 +493,9 @@ function span_html(s: Md.Span): string {
       return `<a href="${esc(s.k)}" target="_blank" rel="noopener">${spans_html(s.x)}</a>`;
     }
     case "Name": {
-      return `<button class="name"${act_html({ $: "Goto", name: s.x })}>[${esc(s.x)}]</button>`;
+      const label = View.agent_label(s.x);
+      const shown = label === undefined ? esc(s.x) : `${esc(label)} <small>${esc(s.x)}</small>`;
+      return `<button class="name" title="${esc(s.x)}"${act_html({ $: "Goto", name: s.x })}>[${shown}]</button>`;
     }
   }
 }

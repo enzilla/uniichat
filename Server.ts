@@ -965,7 +965,8 @@ export namespace Chat {
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, why, msgs: batch.b - batch.a, open: batch.open };
     const timers = chat.mem.timers.map((t) => ({ ...t, text: t.text.length > TIMER_TEXT ? t.text.slice(0, TIMER_TEXT) + "…" : t.text }));
     const mcp = config.MCP.map(({ name }) => ({ name, on: !chat.mem.off.includes(name) }));
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp };
+    const labels = Object.fromEntries(chat.tools.labels);
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp };
   }
 
   export function waits(chat: Chat): Wait {

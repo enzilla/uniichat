@@ -58,6 +58,7 @@ export type State = {
   busy      : boolean;
   wait      : Wait;
   agents    : string[];
+  labels?   : Record<string, string>; // the agents' labels, by name (Tools.start)
   pick      : Pick | null;
   vendors   : Vendor[];
   models    : string[];
@@ -171,7 +172,7 @@ export type Row =
   | { $: "Msg"; id: number | null; kind: Kind; who: string; text: string; body: Md.Block[]; call: Call.Call | null; images: string[] } // a message whole: 0x (who: its speaker or "↳ result", named on its block; call: a tool call's, drawn as Call.ts reads it)
   | { $: "Cap"; text: string }                                                                  // a line about the page
 
-export type Tab = { name: string | null; here: boolean; text: string };
+export type Tab = { name: string | null; here: boolean; text: string; sub?: string }; // sub: a labeled agent's name, shown after its label
 
 // hint: the knob's value, named (a tooltip; the site's note when it
 // changes); choices: its menu (the site's)
@@ -327,6 +328,8 @@ export function view_hear(v: View, msg: Server): Client[] {
     case "state": {
       const { $, ...state } = msg;
       Object.assign(v, state);
+      AGENT_LABELS.clear();
+      Object.entries(v.labels ?? {}).forEach(([name, label]) => AGENT_LABELS.set(name, label));
       return [];
     }
     case "agent": {
@@ -524,10 +527,57 @@ export function view_tabs(v: View): Tab[] {
   const at    = v.page === null ? null : v.page.name;
   const names = at === null || v.agents.includes(at) ? v.agents : [...v.agents, at];
   return [null, ...names].map((name) => {
-    const here = name === at;
-    const text = (here ? GLYPH.here : GLYPH.tab) + " " + (name ?? MAIN);
-    return { name, here, text };
+    const here  = name === at;
+    const label = name === null ? undefined : AGENT_LABELS.get(name);
+    const text  = (here ? GLYPH.here : GLYPH.tab) + " " + (label ?? name ?? MAIN);
+    return label === undefined ? { name, here, text } : { name, here, text, sub: name! };
   });
+}
+
+// Agents
+// ======
+
+// the agents' labels, by name, as the last state told (State.labels):
+// one for whatever names an agent, as a message's [Name] (Paint.ts,
+// Html.ts)
+const AGENT_LABELS = new Map<string, string>();
+
+export function agent_label(name: string): string | undefined {
+  return AGENT_LABELS.get(name);
+}
+
+// the agent a person means by arg (Term.ts /stop, /tab), any case: one
+// whose name is arg; else the one whose label is arg (of several, the one
+// at work); else the one at work whose name or label starts with arg; else
+// the one done whose label does. Several that fit: them all, to choose
+// from (none acted on); none: arg itself
+export function agent_find(v: View, arg: string): { name: string } | { many: string[] } {
+  const low   = arg.toLowerCase();
+  const known = [...new Set([...v.agents, ...Object.keys(v.labels ?? {})])];
+  const label = (a: string) => (AGENT_LABELS.get(a) ?? "").toLowerCase();
+  const one   = (names: string[]) => (names.length === 0 ? null : names.length === 1 ? { name: names[0] } : { many: names });
+  const named = known.find((a) => a.toLowerCase() === low);
+  if (named !== undefined) {
+    return { name: named };
+  }
+  const exact = known.filter((a) => label(a) === low);
+  const exact_work = exact.filter((a) => v.agents.includes(a));
+  const found = exact.length > 1 && exact_work.length === 1 ? { name: exact_work[0] } : one(exact);
+  const work = v.agents.filter((a) => a.toLowerCase().startsWith(low) || (label(a) !== "" && label(a).startsWith(low)));
+  const done = known.filter((a) => !v.agents.includes(a) && label(a) !== "" && label(a).startsWith(low));
+  return found ?? one(work) ?? one(done) ?? { name: arg };
+}
+
+// what a person reads when arg fits several agents (View.agent_find)
+export function agents_many(arg: string, many: string[]): string {
+  return "Mais de um agente corresponde a \"" + arg + "\": " + many.map(agent_shown).join(", ") + ". Digite mais do nome ou do rótulo.";
+}
+
+// an agent as people read it in plain text: its label, then its name;
+// its name alone if it has none
+export function agent_shown(name: string): string {
+  const label = AGENT_LABELS.get(name);
+  return label === undefined ? name : label + " (" + name + ")";
 }
 
 export function view_fold(v: View): string | null {
@@ -773,7 +823,7 @@ function sum_rows(id: number, n: number, node: Node = { text: WAIT, to: "" }): R
 
 // an agent's page, its log (once it comes) from message `from` on
 export function page_rows(v: View, page: Page, from = 0): Row[] {
-  const head = Cap(page.name + (v.agents.includes(page.name) ? " · at work" : " · done"));
+  const head = Cap(agent_shown(page.name) + (v.agents.includes(page.name) ? " · at work" : " · done"));
   return [head, ...(page.log ?? []).slice(from).flatMap((e) => whole_rows(null, e))];
 }
 
@@ -826,7 +876,7 @@ export function entry_rows(id: number | null, kind: Kind, text: string, images: 
   const call = kind === "tool" ? Call.call_parse(text) : null;
   const report = kind === "work" ? Call.report_read(text) : null;
   const body = call === null ? entry_body(kind, report?.text ?? text) : [];
-  const who = report?.name ?? WHO[kind] ?? "";
+  const who = report === null ? WHO[kind] ?? "" : agent_shown(report.name);
   return call === null && body.length === 0 && images.length === 0 ? [] : [{ $: "Msg", id, kind, who, text, body, call, images }];
 }
 

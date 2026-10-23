@@ -350,7 +350,7 @@ var READS = new Map([
   ["edit", (x) => Array.isArray(x.edits) ? { head: edits_files(x.edits), blocks: [] } : input_shown(x)],
   ["zoom", (x) => ({ head: msg_show(x.id, x.n) + (x.at === undefined ? "" : " from char " + x.at), blocks: [] })],
   ["date", (x) => ({ head: msg_show(x.id, 1), blocks: [] })],
-  ["spawn", (x) => ({ head: tasks_show(x.tasks, x.model, x.effort), blocks: (Array.isArray(x.tasks) ? x.tasks : []).flatMap(text_block) })],
+  ["spawn", (x) => ({ head: tasks_show(x.tasks, x.model, x.effort, x.labels), blocks: (Array.isArray(x.tasks) ? x.tasks : []).flatMap(text_block) })],
   ["tell", (x) => ({ head: String(x.name ?? ""), blocks: text_block(x.message) })],
   ["computer", (x) => ({ head: "", blocks: text_block(x.task) })],
   ["schedule", (x) => ({ head: (x.cron === undefined ? String(x.at ?? "") : "cron " + x.cron) + " " + String(x.zone ?? ""), blocks: text_block(x.message) })]
@@ -403,10 +403,11 @@ function msg_show(id, n) {
   const many = typeof n === "number" && n > 1 ? "+" + n : "";
   return typeof id === "number" ? "#" + id + many : String(id ?? "");
 }
-function tasks_show(tasks, model, effort) {
+function tasks_show(tasks, model, effort, labels) {
   const n = Array.isArray(tasks) ? tasks.length : 0;
+  const named = Array.isArray(labels) ? labels.filter((l) => typeof l === "string" && l.trim() !== "") : [];
   const knobs = [model, effort].filter((k) => typeof k === "string").map((k) => " · " + k).join("");
-  return n + (n === 1 ? " agent" : " agents") + knobs;
+  return n + (n === 1 ? " agent" : " agents") + (named.length === 0 ? "" : ": " + named.join(", ")) + knobs;
 }
 function lines_show(offset, limit) {
   const from = typeof offset === "number" ? offset : 1;
@@ -1011,6 +1012,8 @@ function view_hear(v, msg) {
     case "state": {
       const { $, ...state } = msg;
       Object.assign(v, state);
+      AGENT_LABELS.clear();
+      Object.entries(v.labels ?? {}).forEach(([name, label]) => AGENT_LABELS.set(name, label));
       return [];
     }
     case "agent": {
@@ -1180,9 +1183,18 @@ function view_tabs(v) {
   const names = at === null || v.agents.includes(at) ? v.agents : [...v.agents, at];
   return [null, ...names].map((name) => {
     const here = name === at;
-    const text = (here ? GLYPH.here : GLYPH.tab) + " " + (name ?? MAIN);
-    return { name, here, text };
+    const label = name === null ? undefined : AGENT_LABELS.get(name);
+    const text = (here ? GLYPH.here : GLYPH.tab) + " " + (label ?? name ?? MAIN);
+    return label === undefined ? { name, here, text } : { name, here, text, sub: name };
   });
+}
+var AGENT_LABELS = new Map;
+function agent_label(name) {
+  return AGENT_LABELS.get(name);
+}
+function agent_shown(name) {
+  const label = AGENT_LABELS.get(name);
+  return label === undefined ? name : label + " (" + name + ")";
 }
 function view_fold(v) {
   if (v.page !== null) {
@@ -1357,7 +1369,7 @@ function sum_rows(id, n, node = { text: WAIT, to: "" }) {
   return rows;
 }
 function page_rows(v, page, from = 0) {
-  const head = Cap(page.name + (v.agents.includes(page.name) ? " · at work" : " · done"));
+  const head = Cap(agent_shown(page.name) + (v.agents.includes(page.name) ? " · at work" : " · done"));
   return [head, ...(page.log ?? []).slice(from).flatMap((e) => whole_rows(null, e))];
 }
 function live_push(live, kind, text, fresh = false) {
@@ -1382,7 +1394,7 @@ function entry_rows(id, kind, text, images = []) {
   const call = kind === "tool" ? call_parse(text) : null;
   const report = kind === "work" ? report_read(text) : null;
   const body = call === null ? entry_body(kind, report?.text ?? text) : [];
-  const who = report?.name ?? WHO[kind] ?? "";
+  const who = report === null ? WHO[kind] ?? "" : agent_shown(report.name);
   return call === null && body.length === 0 && images.length === 0 ? [] : [{ $: "Msg", id, kind, who, text, body, call, images }];
 }
 function entry_body(kind, text) {
@@ -1523,7 +1535,9 @@ function mcp_html(plugs) {
 function tabs_html(tabs) {
   return tabs.map((tab) => {
     const here = tab.here ? ` class="here"` : "";
-    return `<button${here}${act_html({ $: "Goto", name: tab.name })}>${esc(tab.text)}</button>`;
+    const sub = tab.sub === undefined ? "" : ` <small>${esc(tab.sub)}</small>`;
+    const title = tab.sub === undefined ? "" : ` title="${esc(tab.sub)}"`;
+    return `<button${here}${title}${act_html({ $: "Goto", name: tab.name })}>${esc(tab.text)}${sub}</button>`;
   });
 }
 function timers_html(timers) {
@@ -1772,7 +1786,9 @@ function span_html(s) {
       return `<a href="${esc(s.k)}" target="_blank" rel="noopener">${spans_html(s.x)}</a>`;
     }
     case "Name": {
-      return `<button class="name"${act_html({ $: "Goto", name: s.x })}>[${esc(s.x)}]</button>`;
+      const label = agent_label(s.x);
+      const shown = label === undefined ? esc(s.x) : `${esc(label)} <small>${esc(s.x)}</small>`;
+      return `<button class="name" title="${esc(s.x)}"${act_html({ $: "Goto", name: s.x })}>[${shown}]</button>`;
     }
   }
 }
@@ -2121,7 +2137,7 @@ async function lost(up) {
 }
 function hear(msg) {
   const was = view_pick(v);
-  const agents = v.agents.join();
+  const agents = v.agents.join() + JSON.stringify(v.labels ?? {});
   for (const out of view_hear(v, msg)) {
     link_send(v, out);
   }
@@ -2129,7 +2145,7 @@ function hear(msg) {
   if (now.length > 0) {
     toast("Now " + now.map((k) => k.hint).join("; ") + ".");
   }
-  P.rows ||= msg.$ === "state" ? v.agents.join() !== agents : msg.$ !== "delta" && msg.$ !== "live";
+  P.rows ||= msg.$ === "state" ? v.agents.join() + JSON.stringify(v.labels ?? {}) !== agents : msg.$ !== "delta" && msg.$ !== "live";
   import_welcome();
   draw(true);
 }
