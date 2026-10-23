@@ -499,12 +499,12 @@ function threads_put(): void {
 // style.css), its items made again only as the list changes (a state)
 // (those that wait for others: out of the count, a summary that opens
 // to them)
-let TASKS: { of: unknown; html: { open: string[]; waiting: string[]; closed: string[] } } = { of: null, html: { open: [], waiting: [], closed: [] } };
+let TASKS: { of: unknown; html: { open: string[]; now: string[]; waiting: string[]; closed: string[] } } = { of: null, html: { open: [], now: [], waiting: [], closed: [] } };
 function tasks_bar(): void {
   if (TASKS.of !== v.tasks) {
     TASKS = { of: v.tasks, html: Html.tasks_html(v.tasks) };
   }
-  const { open, waiting, closed } = TASKS.html;
+  const { open, now, waiting, closed } = TASKS.html;
   const untold = View.view_untold(v).length;
   document.body.classList.toggle("tasking", v.tasks.length > 0);
   $(".tasks").hidden = v.tasks.length === 0;
@@ -513,7 +513,7 @@ function tasks_bar(): void {
   $("#tasks .none").hidden = open.length > 0;
   $("#tasks .none").textContent = View.tasks_none_said(waiting.length);
   const kept = keep_take();
-  markup($("#tasks ul.now"), open);
+  markup($("#tasks ul.now"), now);
   keep_put(kept);
   threads_put();
   markup($("#tasks .waiting ul"), waiting);

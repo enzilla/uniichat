@@ -102,6 +102,34 @@ test.skipIf(WIN || Bun.which("setsid") === null)("a process that left the group 
   expect(out.fail).toBe(true);
 }, 15_000);
 
+test.skipIf(WIN || Bun.which("setsid") === null)("past the limit, no signal goes to a group that is no longer the shell's (its id may be reused)", async () => {
+  const sent: number[] = [];
+  const real = Machine.kill;
+  (Machine as any).kill = (pid: number, sig?: NodeJS.Signals) => {
+    sent.push(pid);
+    real(pid, sig);
+  };
+  try {
+    const out = await run("setsid sh -c 'echo pid=$$; sleep 100' & sleep 0.2; echo shell", 1);
+    expect(out.text).toContain("(timed out after 1 s: killed");
+    expect(sent.filter((pid) => pid < 0)).toEqual([]);
+  } finally {
+    (Machine as any).kill = real;
+  }
+}, 15_000);
+
+test.skipIf(WIN)("a stop in the TERM grace answers stopped with its time, not the timeout's advice", async () => {
+  const stop = new AbortController();
+  setTimeout(() => stop.abort(), 2000);
+  const out = await run("trap '' TERM; echo pid=$$; sleep 100 & echo pid=$!; wait", 1, stop.signal);
+  expect(out.secs).toBeLessThan(3.5);
+  expect(out.text).toMatch(/\(stopped in \d+\.\d s\)$/);
+  expect(out.text).not.toContain("Give a larger timeout");
+  for (const pid of out.pids) {
+    expect(await gone(pid)).toBe(true);
+  }
+}, 15_000);
+
 test.skipIf(WIN)("a stop still answers stopped, at once", async () => {
   const stop = new AbortController();
   setTimeout(() => stop.abort(), 300);

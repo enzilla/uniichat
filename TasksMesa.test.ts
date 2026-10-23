@@ -122,7 +122,7 @@ test("the ✓ never says a bare 0 when some wait; the list says none to resolve 
   T.task_edit(s, { id: "P1", detail: "x" }, NOW);
   const v = View.view_new();
   v.tasks = T.tasks_view(s, NOW).filter((t) => t.id === "P2").concat(T.tasks_view(s, NOW).filter((t) => t.id === "P1"));
-  expect(View.tasks_md(v)).toContain("**Pendências abertas (1)**");
+  expect(View.tasks_md(v)).toContain("**Pendências com o Unii (1)**");
   const only = View.view_new();
   only.tasks = [{ ...T.task_find(s, "P2")!, after: ["P9"] }, { ...T.task_find(s, "P1")!, id: "P9", after: ["P2"], state: "open" }];
   expect(View.tasks_md(only)).toContain("Nenhuma pendência para resolver agora.");
@@ -313,6 +313,27 @@ test("terminal words: fields by id or number, choices by text or number, sim/nã
   expect(args("P2 a=b c")).toEqual([undefined, undefined, "a=b c"]);
   const given = View.fields_args(v.tasks[0], "2= obs=");
   expect(given).toEqual({ fields: { dias: [], obs: "" }, rest: " " });
+});
+
+test("terminal words: a quote left open or text stuck after the closing one is refused, nothing done", () => {
+  const s = T.tasks_load(dir);
+  add(s, { title: "Reiniciar", fields: FIELDS, choices: ["agora", "depois"] });
+  const v = View.view_new();
+  v.tasks = T.tasks_view(s, NOW);
+  const open = "O valor de “obs” tem uma aspa sem par: feche as aspas e separe o resto com um espaço. Nada foi alterado.";
+  const stuck = "O valor de “obs” tem texto colado depois da aspa de fechamento: feche as aspas e separe o resto com um espaço. Nada foi alterado.";
+  expect(View.task_args(v, "P1 obs=\"sem fechar", true)).toBe(open);
+  expect(View.task_args(v, "P1 agora obs=\"sem fechar aspas e mais", true)).toBe(open);
+  expect(View.task_args(v, "P1 obs=“curva sem fechar", true)).toBe(open);
+  expect(View.task_args(v, "P1 obs=\"", true)).toBe(open);
+  expect(View.task_args(v, "P1 obs=\"a\"b", true)).toBe(stuck);
+  expect(View.task_args(v, "P1 obs=\"a b\"c d", true)).toBe(open);
+  expect(View.task_args(v, "P1 3=“a”b", true)).toContain("O valor de “3” tem texto colado");
+  // closed ones still pass, also empty and at the end
+  const ok = View.task_args(v, "P1 obs=\"\" amb=hom fim", true);
+  expect(typeof ok === "string" ? ok : [ok.fields, ok.note]).toEqual([{ obs: "", amb: "hom" }, "fim"]);
+  const end = View.task_args(v, "P1 obs=\"a b\"", true);
+  expect(typeof end === "string" ? end : end.fields).toEqual({ obs: "a b" });
 });
 
 test("views: acts for a draft and a talk; /p shows fields and the thread", () => {

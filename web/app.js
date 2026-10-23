@@ -1224,6 +1224,17 @@ function view_untold(v) {
 function task_talk_said(t) {
   return t.talk === "unii" ? "aguardando o Unii" : t.talk === "user" ? "sua vez" : "";
 }
+function assignee_said(t) {
+  return t.assignee === "user" ? "com você" : t.assignee === "unii" ? "com o Unii" : "com " + t.assignee;
+}
+function origin_said(t) {
+  const o = t.origin ?? "";
+  return o.startsWith("agent:") ? "agente " + o.slice(6) : { chat: "chat", timer: "agendamento", slack: "Slack", github: "GitHub" }[o] ?? "";
+}
+function tasks_by_assignee(open) {
+  const keys = [...new Set(["user", ...open.map((t) => t.assignee)])];
+  return keys.map((k) => [k, open.filter((t) => t.assignee === k)]).filter(([, ts]) => ts.length > 0);
+}
 function view_body(v) {
   if (v.page !== null) {
     return page_rows(v, v.page);
@@ -1642,32 +1653,45 @@ function timers_html(timers) {
 function tasks_html(tasks) {
   const when = (iso) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   const head = (t) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
-  const meta = (t, more) => `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more].join(" · ")}</p>`;
+  const origin = (t) => {
+    const said = origin_said(t);
+    if (said === "") {
+      return [];
+    }
+    const url = t.origin_url !== null && /^https?:\/\//i.test(t.origin_url) ? t.origin_url : null;
+    return [url === null ? `<span class="origin" title="Origem">${esc(said)}</span>` : `<a class="origin" title="Origem" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(said)}</a>`];
+  };
+  const meta = (t, more) => `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more, ...origin(t)].join(" · ")}</p>`;
   const act = (t, state, text, cls, answer) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
   const blocked = blocked_ids(tasks);
   const open = (t) => {
     const n = frees(tasks, t);
-    const who = [...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...t.who === "unii" ? ["com o Unii"] : []];
+    const mine = t.assignee === "user";
+    const who = [...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...mine ? [] : [esc(assignee_said(t))]];
     const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${md_parse(t.detail).map(block_html).join("")}</div></details>`;
     const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
     const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
     const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
-    const acts = `<div class="acts">${go}${act(t, "done", "Concluir", "done")}${act(t, "dropped", "Descartar", "drop")}</div>`;
+    const acts = `<div class="acts">${go}${act(t, "done", "Concluir", mine ? "done" : "done quiet")}${act(t, "dropped", "Descartar", "drop")}</div>`;
     const talk = task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`];
-    const cls = "task " + t.who + (t.talk === null ? "" : " talk-" + t.talk);
+    const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
     return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head(t)}${meta(t, [...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t)}${opts}${note}${acts}${thread_html(t)}</li>`;
   };
   const closed = (t) => {
     const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii ainda não viu"]];
     return `<li class="task closed" data-task="${esc(t.id)}">${head(t)}${meta(t, how)}<div class="acts">${act(t, "open", "Reabrir", "reopen")}</div></li>`;
   };
-  const whose = (id) => tasks.find((u) => u.id === id)?.who === "unii" ? id + " (com o Unii)" : id;
+  const whose = (u) => u === undefined || u.assignee === "user" ? "" : " (" + assignee_said(u) + ")";
   const waiting = (t) => {
-    const more = [`aguarda ${esc(waits(tasks, t).map(whose).join(", "))}`, ...t.who === "unii" ? ["com o Unii"] : []];
-    return `<li class="task waiting ${esc(t.who)}" data-task="${esc(t.id)}">${head(t)}${meta(t, more)}</li>`;
+    const more = [`aguarda ${esc(waits(tasks, t).map((id) => id + whose(tasks.find((u) => u.id === id))).join(", "))}`, ...t.assignee === "user" ? [] : [esc(assignee_said(t))]];
+    return `<li class="task waiting ${esc(t.assignee === "user" ? "user" : "other " + t.assignee)}" data-task="${esc(t.id)}">${head(t)}${meta(t, more)}</li>`;
   };
   const opened = tasks.filter((t) => t.state === "open");
-  return { open: opened.filter((t) => !blocked.has(t.id)).map(open), waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
+  const groups = tasks_by_assignee(opened.filter((t) => !blocked.has(t.id)));
+  const heading = (a, ts) => `<li class="group" data-assignee="${esc(a)}">${esc(assignee_said(ts[0]).replace(/^c/, "C"))} <span class="n">(${ts.length})</span></li>`;
+  const titled = groups.length > 1 || groups.length === 1 && groups[0][0] !== "user";
+  const now = groups.flatMap(([a, ts]) => [...titled ? [heading(a, ts)] : [], ...ts.map(open)]);
+  return { open: groups.flatMap(([, ts]) => ts.map(open)), now, waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
 }
 function fields_html(t) {
   const fields = t.fields ?? [];
@@ -2312,12 +2336,12 @@ function threads_put() {
     }
   }
 }
-var TASKS = { of: null, html: { open: [], waiting: [], closed: [] } };
+var TASKS = { of: null, html: { open: [], now: [], waiting: [], closed: [] } };
 function tasks_bar() {
   if (TASKS.of !== v.tasks) {
     TASKS = { of: v.tasks, html: tasks_html(v.tasks) };
   }
-  const { open, waiting, closed } = TASKS.html;
+  const { open, now, waiting, closed } = TASKS.html;
   const untold = view_untold(v).length;
   document.body.classList.toggle("tasking", v.tasks.length > 0);
   $(".tasks").hidden = v.tasks.length === 0;
@@ -2326,7 +2350,7 @@ function tasks_bar() {
   $("#tasks .none").hidden = open.length > 0;
   $("#tasks .none").textContent = tasks_none_said(waiting.length);
   const kept = keep_take();
-  markup($("#tasks ul.now"), open);
+  markup($("#tasks ul.now"), now);
   keep_put(kept);
   threads_put();
   markup($("#tasks .waiting ul"), waiting);

@@ -98,6 +98,7 @@ export type Tools = {
   key     : string;
   url     : string;
   hooks   : Hooks;
+  origin? : string; // where the master's turn now came from (Tasks.Origin; Server.ts Chat.call)
 };
 
 // Constants
@@ -223,6 +224,9 @@ const FIELDS_SPEC = {
   items: { type: "object", properties: { id: STR, label: STR, kind: { type: "string", enum: ["choice", "multi", "text", "yesno"] }, choices: { type: "array", items: STR }, required: { type: "boolean" } }, required: ["id", "label", "kind"] },
 };
 
+// where a task came from, and its source's link (Tasks.ts)
+const ORIGIN_SPEC = { type: "string", description: "Where it came from: chat, timer, agent:<name>, slack or github. By default, where this turn came from: a schedule's message (timer), a subagent's report (agent:<name>), else chat." };
+const ORIGIN_URL_SPEC = { type: "string", description: "A link (http/https) to its source, such as the Slack message or the GitHub issue." };
 const BOSS: Spec[] = [
   spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees the view and the user's instructions, but knows what you want only from its task.", { tasks: { type: "array", items: STR }, labels: { type: "array", items: STR, description: "A short label per task, in the tasks' order, that the user reads as that subagent's name instead of its generated one: <project>-<role>, as num-3182-verifier or uniichat-links-impl. Give one for every task. You still name it by its generated name in tell, stop and zoom." }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." }, model: { type: "string", enum: MODELS, description: "Their model; by default, the one they'd run on. Set it ONLY when the user asks for that model or vendor in this chat, since another vendor may come with additional costs." } }, ["tasks"]),
   spec("tell", "Send a message to a subagent, by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
@@ -237,10 +241,12 @@ const BOSS: Spec[] = [
   spec("stop", "Stop a subagent at once, by name, whatever it is doing (mid-call, waiting on a usage limit, running a tool on a device: that job is cancelled). Others keep running. Its report says it was stopped; its chat and work dir stay, so a later tell resumes it.", { name: STR, why: { type: "string", description: "Why, for its report." } }, ["name"]),
   spec("resume", "Wake every call on this server waiting for an AI service's usage limit (your turn, summaries), when the user says a limit was reset early. Each asks again once; one still limited waits again. A subagent at a usage limit ends and reports it instead: tell it to go on.", {}, []),
   // the pending list (Tasks.ts)
-  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with who \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. When one can only be resolved after another (a token before a test, a merge before a deploy), give it after: the user then sees only what they can do now, and the tasks that free others come first. Several questions or decisions on one subject go in one task as fields (each answered apart, kept as a draft, all sent when the user concludes, in your next turn's block). The user may also talk with you in a task's thread without resolving it: their message reaches you marked \"[Pendência P7: …]\"; reply with task_reply. Title: short, the action or question, in the user's language.", {
+  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with assignee \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. When one can only be resolved after another (a token before a test, a merge before a deploy), give it after: the user then sees only what they can do now, and the tasks that free others come first. Several questions or decisions on one subject go in one task as fields (each answered apart, kept as a draft, all sent when the user concludes, in your next turn's block). The user may also talk with you in a task's thread without resolving it: their message reaches you marked \"[Pendência P7: …]\"; reply with task_reply. Title: short, the action or question, in the user's language.", {
     title   : STR,
     detail  : { type: "string", description: "Markdown: the context needed to decide, with links." },
-    who     : { type: "string", enum: ["user", "unii"], description: "Who must act; by default the user." },
+    assignee   : { type: "string", enum: ["user", "unii"], description: "Who is responsible, who must act; by default the user. (who: its older name, still read.)" },
+    origin     : ORIGIN_SPEC,
+    origin_url : ORIGIN_URL_SPEC,
     choices : { type: "array", items: STR, description: "Answers the user picks with one click (\"sim\", \"não\"), at most 9." },
     ref     : { type: "string", description: "What it belongs to: a project, an agent, a PR." },
     after   : { type: "array", items: STR, description: "Ids of the tasks this one waits for (\"P3\"), the user's or yours: while any is open it's hidden from the user and can't be resolved; once all are closed it shows, and your next turn is told it was freed." },
@@ -250,7 +256,9 @@ const BOSS: Spec[] = [
     id      : STR,
     title   : STR,
     detail  : STR,
-    who     : { type: "string", enum: ["user", "unii"] },
+    assignee   : { type: "string", enum: ["user", "unii"], description: "Who is responsible. (who: its older name, still read.)" },
+    origin     : { type: "string", description: "Where it came from: chat, timer, agent:<name>, slack or github." },
+    origin_url : { ...ORIGIN_URL_SPEC, description: "A link to its source; \"\" for none." },
     choices : { type: "array", items: STR },
     ref     : STR,
     state   : { type: "string", enum: ["open", "done", "dropped"] },
@@ -572,7 +580,7 @@ export namespace Tools {
     if (name === "tasks") {
       return { text: Tasks.tasks_list(s, args, now), fail: false };
     }
-    const t = name === "task_add" ? Tasks.task_new(s, args, who, now) : name === "task_reply" ? Tasks.task_reply(s, args.id, args.text, now) : Tasks.task_edit(s, args, now);
+    const t = name === "task_add" ? Tasks.task_new(s, args, who, now, tools.origin ?? "chat") : name === "task_reply" ? Tasks.task_reply(s, args.id, args.text, now) : Tasks.task_edit(s, args, now);
     if (typeof t === "string") {
       return { text: t, fail: true };
     }
