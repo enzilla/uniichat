@@ -29,6 +29,16 @@ Features
   and Codex sessions (or the websites' exports).
 - **Web, phone and terminal.** The server hosts the web app (installable,
   with push notifications); `unii` is the same chat in a terminal.
+- **Pending list (pendências).** Unii keeps what it needs of you beside
+  the chat: approvals, decisions, steps only you can do. A task may wait
+  for others (shown once they're closed), ask several things at once
+  (fields: one choice, many, a text, yes or no; each answer kept as a
+  draft till you conclude), and have a thread: talk with Unii about it
+  without resolving it (your message is a message of the chat, marked
+  `[Pendência P7: …]`; it shows "aguardando o Unii", then "sua vez").
+  Terminal: `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
+  `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
+  `/descartar`, `/reabrir`, `/avisar`.
 
 What this fork adds:
 
@@ -132,6 +142,18 @@ the journal on Linux, `~/.unii/logs/` on Windows and macOS. On Linux,
 `loginctl enable-linger` starts it at boot and keeps it up after you log
 out. A service by its name (`unii-serve`, `unii-device`) that you made
 yourself is left as it is: remove it to use `-d`.
+
+   A shell call has a time limit: `timeout` seconds, 600 by default, 3600
+   at most. Past it, its process group gets SIGTERM, then SIGKILL 5 s
+   later, and the call answers its output so far, ending `(timed out
+   after N s: killed)`. A process that left the group (`setsid`) lives on
+   till a stop or the device ends, but can't keep the call waiting.
+   `view_video` is cut at 300 s; `read`, `write` and `edit` refuse a
+   FIFO, device or socket, which would block the device. The server ends
+   a job on its own 30 s past a shell's or view_video's limit (120 s for
+   `read`, `write`, `edit`, `skill`) and tells the device to kill it: so
+   a device running an older unii, which keeps no limit, is covered too,
+   though its output so far is lost.
 
 The server's settings are in `~/.unii/config.json` (most are on the
 Settings page). Each may also be set as `UNII_<KEY>`, which wins. Besides

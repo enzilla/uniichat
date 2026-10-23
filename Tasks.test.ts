@@ -41,7 +41,7 @@ test("create: ids in order, kept on disk, read again", () => {
   const b = add(s, { title: "Decidir o PR", choices: ["sim", "não", "sim"], who: "user", detail: "Ver **ressalva** 1." });
   expect([a.id, b.id]).toEqual(["P1", "P2"]);
   expect(b.choices).toEqual(["sim", "não"]);
-  expect(a.who).toBe("user");
+  expect(a.assignee).toBe("user");
   expect(a.told).toBe(true);
   T.tasks_forget();
   const again = T.tasks_load(dir);
@@ -55,7 +55,7 @@ test("create refuses: no title, a twin open, a bad who, too many choices, the op
   expect(T.task_new(s, { title: "  " }, "main", NOW)).toBe("A task needs a title.");
   add(s, { title: "Uma" });
   expect(T.task_new(s, { title: "uma" }, "main", NOW)).toContain("P1 is open");
-  expect(T.task_new(s, { title: "x", who: "boss" }, "main", NOW)).toBe("who is user or unii.");
+  expect(T.task_new(s, { title: "x", who: "boss" }, "main", NOW)).toBe("assignee is one of: user, unii.");
   expect(T.task_new(s, { title: "x", choices: "sim" }, "main", NOW)).toBe("choices is a list of strings.");
   expect(T.task_new(s, { title: "x", choices: Array.from({ length: 10 }, (_, k) => "c" + k) }, "main", NOW)).toContain("At most 9");
   for (let k = 1; k < T.OPEN; k++) {
@@ -254,7 +254,7 @@ const OK = { id: "P1", title: "Boa", detail: "", state: "open", who: "user", by:
 
 test("hand-edited tasks.json: an item without choices is completed; block, views and list work", () => {
   const s = hand({ next: 3, tasks: [{ id: "P1", title: "Sem opções", state: "done", told: false }, { id: "P2", title: "Aberta" }] });
-  expect(s.tasks.map((t) => [t.id, t.choices, t.who, t.by, t.answer, t.told])).toEqual([["P1", [], "user", "main", null, false], ["P2", [], "user", "main", null, true]]);
+  expect(s.tasks.map((t) => [t.id, t.choices, t.assignee, t.by, t.answer, t.told])).toEqual([["P1", [], "user", "main", null, false], ["P2", [], "user", "main", null, true]]);
   expect(T.tasks_block(s, NOW)).toContain("P1 done by user");
   expect(T.tasks_block(s, NOW)).toContain("- P2 [user] Aberta");
   expect(T.tasks_list(s, { all: true }, NOW)).toContain("P1");
@@ -278,7 +278,7 @@ test("hand-edited tasks.json: items without an id, or with id Pabc, left out; th
 test("hand-edited tasks.json: wrong types become defaults; bad dates, states and answers are fixed", () => {
   const s = hand({ next: 2, tasks: [{ id: "P1", title: 42, detail: { x: 1 }, state: "later", who: "boss", by: [], choices: "sim", answer: 3, note: 5, ref: false, made: "ontem", changed: 1, closed: "x", told: "no", rev: -3 }] });
   const t = s.tasks[0];
-  expect([t.title, t.detail, t.state, t.who, t.by, t.choices, t.answer, t.note, t.ref, t.closed, t.told, t.rev]).toEqual(["(sem título)", "", "open", "user", "main", [], null, null, null, null, true, 0]);
+  expect([t.title, t.detail, t.state, t.assignee, t.by, t.choices, t.answer, t.note, t.ref, t.closed, t.told, t.rev]).toEqual(["(sem título)", "", "open", "user", "main", [], null, null, null, null, true, 0]);
   expect(t.made).toBe(new Date(NOW).toISOString());
   expect(t.changed).toBe(t.made);
   const d = hand.call(null, "{}");
@@ -310,7 +310,7 @@ test("tasks.json without a list of tasks, or null: kept aside, the list empty an
 // told and versions (SmokyRadish's ressalvas 1 and 2)
 // ===================================================
 
-test("Unii editing a task the user resolved, unseen, keeps it to tell; a change of state by Unii tells it", () => {
+test("Unii editing a task the user resolved, unseen, keeps it to tell, a change of state too (said as made since)", () => {
   const s = T.tasks_load(dir);
   add(s, { title: "Abrir PR?", choices: ["sim", "não"] });
   add(s, { title: "Outra" });
@@ -324,8 +324,13 @@ test("Unii editing a task the user resolved, unseen, keeps it to tell; a change 
   expect(T.tasks_told(s)).toBe(1);
   T.task_resolve(s, "P2", "dropped", null, null, NOW + 5);
   const o = T.task_edit(s, { id: "P2", state: "open" }, NOW + 6) as T.Task;
-  expect(o.told).toBe(true);
+  expect(o.told).toBe(false);
+  expect(T.tasks_block(s, NOW + 7)).toContain("- P2 dropped by user: \"Outra\" — since then you made it open");
+  expect(T.tasks_told(s)).toBe(1);
   expect(T.tasks_untold(s)).toEqual([]);
+  // told, a change of state by Unii is its own: nothing to tell
+  const d = T.task_edit(s, { id: "P2", state: "dropped" }, NOW + 8) as T.Task;
+  expect([d.told, d.heard]).toEqual([true, null]);
 });
 
 test("two changes by the user in one millisecond: the one after the block stays to tell", () => {

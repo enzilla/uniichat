@@ -13,6 +13,7 @@ import * as config from "./Config.ts";
 import { Memory } from "./Memory.ts";
 import { Chat } from "./Server.ts";
 import * as Tasks from "./Tasks.ts";
+import { Tools } from "./Tools.ts";
 import * as View from "./View.ts";
 
 if (!config.DIR.startsWith("/tmp/")) {
@@ -23,10 +24,13 @@ afterAll(() => fs.rmSync(config.DIR, { recursive: true, force: true }));
 // what each turn's call was asked; the next call's end
 const ASKED: Ask[] = [];
 let END: End = { ok: true, text: "", left: [] };
+// what a turn does as it's asked (Unii's reply logged, a tool called)
+let DOING: (() => void) | null = null;
 (AskAI as any).ask = (ask: Ask) => {
   const turn = ask.blocks.some((b) => b.text.startsWith("Turn: "));
   if (turn) {
     ASKED.push(ask);
+    DOING?.();
   }
   const done = Promise.resolve(turn ? END : { ok: true, text: "a summary", left: [] });
   return { send: () => {}, stop: () => {}, wake: () => {}, done };
@@ -201,4 +205,70 @@ test("a resolution that frees another: the freeing is in the next turn's block, 
   await act({ $: "task", task: a.id, state: "done" });
   const block = Tasks.tasks_block(s, Date.now());
   expect(block).toContain("- " + b.id + " freed: every task it waited for (" + a.id + ") is closed");
+});
+
+// the Mesa's phase 1: a task's thread and fields
+// ==============================================
+
+test("a talk in a task's thread: a marked message of the chat, a turn; Unii's reply back in the thread", async () => {
+  const t = Tasks.task_new(s, { title: "Mesclar o #40?" }, "main", Date.now()) as Tasks.Task;
+  const before = ASKED.length;
+  let during: Tasks.Task | null = null;
+  DOING = () => {
+    during = { ...Tasks.task_find(s, t.id)! };
+    Chat.push(chat, null, "unii", "Ainda não: falta a tag.");
+  };
+  expect(await act({ $: "task_say", task: t.id, text: "  Posso mesclar?  " }, "say-1")).toEqual({});
+  await idle();
+  DOING = null;
+  expect(ASKED.length).toBe(before + 1);
+  const ask = ASKED.at(-1)!;
+  expect(ask.blocks.at(-1)!.text).toContain("[Pendência " + t.id + ": “Mesclar o #40?”]\n\nPosso mesclar?");
+  expect(ask.blocks.map((b) => b.text).join("")).toContain("Mesclar o #40? [the user wrote in its thread: reply with task_reply]");
+  expect(during!.talk).toBe("unii");
+  const after = Tasks.task_find(s, t.id)!;
+  expect(after.talk).toBe("user");
+  expect(after.thread.map((m) => [m.who, m.text])).toEqual([["user", "Posso mesclar?"], ["unii", "Ainda não: falta a tag."]]);
+  expect((Chat.state(chat) as any).tasks.find((x: Tasks.Task) => x.id === t.id).talk).toBe("user");
+  // the same act again (a lost answer): logged once
+  const count = chat.mem.count;
+  expect(await act({ $: "task_say", task: t.id, text: "Posso mesclar?" }, "say-1")).toEqual({});
+  expect(chat.mem.count).toBe(count);
+  // no reply of Unii's (a failed call): said so in the thread, the user's turn
+  END = { ok: false, text: "down", left: [] };
+  await act({ $: "task_say", task: t.id, text: "E agora?" });
+  await idle();
+  END = { ok: true, text: "", left: [] };
+  expect(Tasks.task_find(s, t.id)!.thread.at(-1)!.text).toBe("O Unii não respondeu aqui; veja a conversa principal.");
+  expect(Tasks.task_find(s, t.id)!.talk).toBe("user");
+});
+
+test("Unii's task_reply in the turn: the thread has it once, the turn's last reply not copied", async () => {
+  const t = Tasks.task_new(s, { title: "Qual porta?" }, "main", Date.now()) as Tasks.Task;
+  DOING = () => {
+    Tools.task(chat.tools, "task_reply", { id: t.id, text: "A 8811." }, "main");
+    Chat.push(chat, null, "unii", "Respondi na pendência.");
+  };
+  await act({ $: "task_say", task: t.id, text: "Qual?" });
+  await idle();
+  DOING = null;
+  expect(Tasks.task_find(s, t.id)!.thread.map((m) => m.text)).toEqual(["Qual?", "A 8811."]);
+  expect(await act({ $: "task_say", task: t.id, text: "  " })).toEqual({ error: "Escreva uma mensagem." });
+  await act({ $: "task", task: t.id, state: "dropped" });
+  expect(await act({ $: "task_say", task: t.id, text: "x" })).toEqual({ error: "A pendência " + t.id + " já foi resolvida: reabra-a para conversar sobre ela." });
+});
+
+test("fields: a draft is no turn and no note; done refused till the required are answered; then said with the answers", async () => {
+  const t = Tasks.task_new(s, { title: "Reiniciar o serve?", fields: [{ id: "quando", label: "Quando", kind: "choice", choices: ["agora", "à noite"] }, { id: "obs", label: "Obs", kind: "text", required: false }] }, "main", Date.now()) as Tasks.Task;
+  const before = ASKED.length;
+  const count = chat.mem.count;
+  expect(await act({ $: "task_draft", task: t.id, fields: { obs: "sem pressa" } })).toEqual({});
+  await idle();
+  expect([ASKED.length, chat.mem.count]).toEqual([before, count]);
+  expect((Chat.state(chat) as any).tasks.find((x: Tasks.Task) => x.id === t.id).draft).toEqual({ obs: "sem pressa" });
+  expect(await act({ $: "task_draft", task: t.id, fields: { quando: "amanhã" } })).toEqual({ error: "O campo “Quando” não tem a opção “amanhã”. Opções: agora, à noite." });
+  expect(await act({ $: "task", task: t.id, state: "done" })).toEqual({ error: "Responda o campo obrigatório da pendência " + t.id + " antes de concluir: “Quando”. Nada foi alterado." });
+  expect(await act({ $: "task", task: t.id, state: "done", fields: { quando: "à noite" }, go: true })).toEqual({});
+  await idle();
+  expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain("[Pendências] Pendência " + t.id + " concluída pelo usuário: “Reiniciar o serve?”. Respostas: Quando: à noite; Obs: “sem pressa”.");
 });

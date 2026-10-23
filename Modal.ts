@@ -162,7 +162,7 @@ export function modal_lines(m: Modal, v: View.View, w: number): Paint.Line[] {
   const head = Paint.runs_wrap([Paint.Run(t.id + " ", { ...BOLD, c: Theme.ANSI.id }), Paint.Run(Paint.text_clean(t.title), BOLD)], w, false);
   const waits = Deps.waits(v.tasks, t);
   const frees = View.task_frees_said(v, t);
-  const meta = [STATE[t.state], t.who === "user" ? "com você" : "com o Unii", ...(t.ref === null ? [] : [t.ref]), ...(t.state === "open" && waits.length > 0 ? ["aguarda " + waits.join(", ")] : []), ...(frees === "" ? [] : [frees])];
+  const meta = [STATE[t.state], t.assignee === "user" ? "com você" : "com o Unii", ...(t.ref === null ? [] : [t.ref]), ...(t.state === "open" && waits.length > 0 ? ["aguarda " + waits.join(", ")] : []), ...(frees === "" ? [] : [frees])];
   const said = [...(t.answer === null ? [] : ["Resposta: " + t.answer]), ...(t.note === null ? [] : ["Comentário: “" + t.note + "”"])];
   const md = (text: string) => Paint.rows_lines(View.entry_rows(null, "unii", text), w);
   const detail = t.detail === "" ? [] : [[], ...md(t.detail)];

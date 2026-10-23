@@ -144,7 +144,7 @@ test("views: footer and /p leave the waiting out but their count; /p aguardando 
   expect(View.tasks_footer(v, 40)).toBe("Pendências: 1 · +2 aguardando · /p");
   expect(View.tasks_footer(v, 20)).toBe("Pendências: 1 · /p");
   const md = View.tasks_md(v);
-  expect(md).toContain("**Pendências abertas (1)**\n\n- **P1** Token · **libera 2**");
+  expect(md).toContain("**Suas pendências (1)**\n\n- **P1** Token · **libera 2**");
   expect(md).toContain("_+2 aguardando outras pendências_ · `/p aguardando` mostra quais");
   expect(md).not.toContain("Agendar");
   expect(View.tasks_md(v, null, true)).toBe("**Aguardando outras pendências (2)**\n\n- P2 Ligar (com o Unii) — aguarda P1\n- P3 Agendar — aguarda P2 (com o Unii)");
