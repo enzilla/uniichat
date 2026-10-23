@@ -28,7 +28,7 @@ import { Agent, type Out } from "./Agent.ts";
 import { report_text } from "./Call.ts";
 import { clip_page } from "./Clip.ts";
 import * as config from "./Config.ts";
-import { INT, STR, TOOLS, spec, type Job, type Skill, type Spec } from "./Machine.ts";
+import { INT, Machine, STR, TOOLS, VIDEO_LIMIT, spec, type Job, type Skill, type Spec } from "./Machine.ts";
 import { Mcp, type Server, type Servers } from "./Mcp.ts";
 import { Memory } from "./Memory.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
@@ -108,6 +108,12 @@ export const SEARCHES = 10;
 
 // how long the stop tool waits for its agent to end (ms)
 const HALT = 5000;
+
+// how long past a device's own limit for a shell or view_video job the
+// server waits before ending it (ms), and how long it waits on a quick
+// job (read, write, edit, skill) (Tools.job_limit)
+const SPARE = 30_000;
+const QUICK = 120_000;
 
 // the chats' tools, by their secret; the server, once one is
 const CHATS = new Map<string, Tools>();
@@ -626,7 +632,31 @@ export namespace Tools {
     }
     const stop = () => run.end({ text: "Stopped.", fail: true });
     signal.aborted ? stop() : signal.addEventListener("abort", stop, { once: true });
+    const most = Tools.job_limit(run.job);
+    if (most !== null) {
+      const late = "(timed out after " + Math.round(most / 1000) + " s: the device didn't answer in time, and was told to kill the job. The output so far is lost.)";
+      const timer = setTimeout(() => run.end({ text: late, fail: true }), most);
+      run.out.finally(() => clearTimeout(timer));
+    }
     return run.out;
+  }
+
+  // how long the server waits on a job (ms) before ending it, which tells
+  // its device to kill it (null: no limit here; an MCP call has its own).
+  // The device ends a shell or view_video job itself at its limit
+  // (Machine.ts); this is a backstop past it, for a device whose unii
+  // keeps none (older), or that hangs; read, write, edit and skill are
+  // quick, but a hung file system could keep them
+  export function job_limit(job: Job): number | null {
+    switch (job.name) {
+      case "shell":      return Machine.limit(job.input?.timeout) * 1000 + SPARE;
+      case "view_video": return VIDEO_LIMIT + SPARE;
+      case "read":
+      case "write":
+      case "edit":
+      case "skill":      return QUICK;
+      default:           return null;
+    }
   }
 
   // a job started on a device's link (the last live one), told to it;
