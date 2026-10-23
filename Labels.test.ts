@@ -152,3 +152,88 @@ test("the spawn call shows its labels", () => {
   expect(c.head).toBe("2 agents: x-impl, y-verif · opus-5.5");
   expect(Call.call_parse('spawn {"tasks":["a"]}').head).toBe("1 agent");
 });
+
+// Correções após a verificação de 9364973 (CleverBagel)
+// ------------------------------------------------------
+
+// a view whose agents are given: name -> label ("" none), at work or done
+function view_of(work: Record<string, string>, done: Record<string, string> = {}): View.View {
+  const v = View.view_new();
+  const labels = Object.fromEntries(Object.entries({ ...work, ...done }).filter(([, l]) => l !== ""));
+  View.view_hear(v, JSON.parse(JSON.stringify({ ...Chat.state(chat), agents: Object.keys(work), labels })));
+  return v;
+}
+
+test("agent_find: a shared prefix acts on none and lists them; exact name or unique label acts", () => {
+  const v = view_of({ FooCat: "uniichat-avaliacao-pr37", BarDog: "uniichat-implementacao-nomes", BazEel: "num-3182-verificador" }, { OldOwl: "uniichat-verificador-pendencias" });
+  expect(View.agent_find(v, "uniichat")).toEqual({ many: ["FooCat", "BarDog"] });
+  expect(View.agents_many("uniichat", ["FooCat", "BarDog"])).toContain("uniichat-avaliacao-pr37 (FooCat), uniichat-implementacao-nomes (BarDog)");
+  expect(View.agent_find(v, "uniichat-impl")).toEqual({ name: "BarDog" });
+  expect(View.agent_find(v, "UNIICHAT-AVALIACAO-PR37")).toEqual({ name: "FooCat" });
+  expect(View.agent_find(v, "bazeel")).toEqual({ name: "BazEel" });
+  expect(View.agent_find(v, "num")).toEqual({ name: "BazEel" });
+  expect(View.agent_find(v, "uniichat-verificador-pendencias")).toEqual({ name: "OldOwl" });
+  expect(View.agent_find(v, "OldOwl")).toEqual({ name: "OldOwl" });
+  expect(View.agent_find(v, "nada")).toEqual({ name: "nada" });
+});
+
+test("agent_find: names at work sharing a prefix are ambiguous too; a done one never beats one at work", () => {
+  const v = view_of({ SmokyRadish: "", SmokyPepper: "x" }, { DoneDog: "smoky-velho", Done2: "smoky-velho-2" });
+  expect(View.agent_find(v, "smoky")).toEqual({ many: ["SmokyRadish", "SmokyPepper"] });
+  expect(View.agent_find(v, "smokyr")).toEqual({ name: "SmokyRadish" });
+  expect(View.agent_find(v, "smoky-v")).toEqual({ many: ["DoneDog", "Done2"] });
+  expect(View.agent_find(v, "smoky-velho")).toEqual({ name: "DoneDog" });
+});
+
+test("agent_find: a label repeated: the one at work; several at work: listed", () => {
+  const v = view_of({ AaA: "igual", BbB: "outro" }, { CcC: "igual" });
+  expect(View.agent_find(v, "igual")).toEqual({ name: "AaA" });
+  const w = view_of({ AaA: "igual", BbB: "igual" });
+  expect(View.agent_find(w, "igual")).toEqual({ many: ["AaA", "BbB"] });
+});
+
+test("labels that aren't text are none", async () => {
+  const out = await call("spawn", { tasks: ["n1", "n2", "n3", "n4"], labels: [null, 7, { a: 1 }, "ok-label"] });
+  const m = /^Started (\w+), (\w+), (\w+), (\w+) \(ok-label\)\. /.exec(out.text);
+  expect(m).not.toBeNull();
+  for (const k of [1, 2, 3]) {
+    expect(tools.agents.get(m![k])!.label).toBeNull();
+    expect(Memory.agent(chat.mem, m![k])![0].text).toBe("subagent");
+  }
+  expect(out.text).not.toMatch(/null|\[object|\(7\)/);
+});
+
+test("a note edited by hand: its label cleaned on reading (escapes, U+2028), cut to 60; the frame's title clean", () => {
+  const dir = chat.mem.dir + "/docs/agent/";
+  const note = (text: string) => JSON.stringify(Memory.root(0, { kind: "note", text })) + "\n";
+  fs.writeFileSync(dir + "EscEel.jsonl", note("subagent on opus-5.5, labeled a\x1b]8;;http://x.com\x1b\\b\x1b[2Jc"));
+  fs.writeFileSync(dir + "SepSeal.jsonl", note("subagent on opus-5.5 at effort high, labeled lin\u2028ha\u2029fim"));
+  fs.writeFileSync(dir + "LongLynx.jsonl", note("subagent, labeled " + "y".repeat(500)));
+  const again = Tools.labels(chat.mem);
+  expect(again.get("EscEel")).not.toContain("\x1b");
+  expect(again.get("SepSeal")).toBe("lin ha fim");
+  expect(again.get("LongLynx")).toBe("y".repeat(60));
+  const other = { ...tools, agents: new Map(), labels: again };
+  const sep = Tools.agent(other, "SepSeal")!;
+  expect(sep).not.toBeNull();
+  expect(sep.label).toBe("lin ha fim");
+  expect(sep.role).toEqual({ effort: "high", model: "opus-5.5" });
+  expect(Tools.agent(other, "LongLynx")!.label).toBe("y".repeat(60));
+  expect(Tools.agent(other, "EscEel")!.label).toBe(again.get("EscEel"));
+  // the frame of a report, even from a state not cleaned (an older server)
+  const v = View.view_new();
+  View.view_hear(v, JSON.parse(JSON.stringify({ ...Chat.state(chat), labels: { EscEel: "a\x1b]8;;http://x.com\x1b\\b\x1b[2Jc" } })));
+  const ansi = Paint.rows_lines(View.entry_rows(9, "work", Call.report_text("EscEel", "feito")), 80).map((l) => Paint.line_ansi(l)).join("\n");
+  expect(ansi).not.toContain("\x1b[2J");
+  expect(ansi).not.toContain("\x1b]8");
+  expect(ansi).toContain("a]8;;http://x.com\\b[2Jc (EscEel)"); // inert text
+  viewed(); // back to the true labels
+});
+
+test("label_clean cuts by grapheme: an emoji with ZWJ is never split; piled marks stay short", () => {
+  const family = "👨‍👩‍👧‍👦";
+  expect(Tools.label_clean("x".repeat(59) + family + family)).toBe("x".repeat(59) + family);
+  expect(Tools.label_clean("x".repeat(58) + "🇧🇷🇧🇷🇧🇷")).toBe("x".repeat(58) + "🇧🇷🇧🇷");
+  const zalgo = Tools.label_clean(("a" + "́".repeat(30)).repeat(60))!;
+  expect(Array.from(zalgo).length).toBeLessThanOrEqual(120);
+});

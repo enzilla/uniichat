@@ -170,10 +170,13 @@ const SUB_NOTE   = "subagent";
 const SUB_ON     = " on ";
 const SUB_AT     = " at effort ";
 const SUB_AS     = ", labeled ";
-const SUB_ROLE   = new RegExp("^" + SUB_NOTE + "(?:" + SUB_ON + "(\\S+))?(?:" + SUB_AT + "(\\S+))?(?:" + SUB_AS + "(.+))?$");
+const SUB_ROLE   = new RegExp("^" + SUB_NOTE + "(?:" + SUB_ON + "(\\S+))?(?:" + SUB_AT + "(\\S+))?(?:" + SUB_AS + "(.+))?$", "s"); // s: a label edited by hand with a line break (U+2028...) still reads
 
-// a label's most characters
+// a label's most characters (graphemes: an emoji's parts are never cut
+// apart), and most code points, so marks piled on them can't make it long
 const LABEL = 60;
+const LABEL_POINTS = 2 * LABEL;
+const GRAPHEMES = new Intl.Segmenter("en", { granularity: "grapheme" });
 
 // the models a subagent may be given (Tools.call)
 const MODELS = Pick.models(config.OFFER.vendors, config.OFFER.models).map(([, m]) => m.label);
@@ -449,7 +452,7 @@ export namespace Tools {
         if (model !== null && !MODELS.includes(model)) {
           return { text: "No model " + model + "; one of " + MODELS.join(", ") + ".", fail: true };
         }
-        const labels = Array.isArray(args.labels) ? args.labels.map(String) : [];
+        const labels = Array.isArray(args.labels) ? args.labels.map((l: unknown) => (typeof l === "string" ? l : "")) : [];
         return { text: await Tools.spawn(tools, (args.tasks ?? []).map(String), effort, model, labels), fail: false };
       }
       case "tell": {
@@ -674,15 +677,29 @@ export namespace Tools {
     const note = log !== null && log.length > 0 && log[0].kind === "note" ? log[0].text : "";
     const sub = SUB_ROLE.exec(note);
     if (sub !== null) {
-      tools.agents.set(name, { name, label: sub[3] ?? null, role: { effort: sub[2] ?? null, model: sub[1] ?? null }, call: null, live: [], calls: {}, stop: false, why: null, view: [], replies: [] });
+      tools.agents.set(name, { name, label: Tools.label_clean(sub[3] ?? ""), role: { effort: sub[2] ?? null, model: sub[1] ?? null }, call: null, live: [], calls: {}, stop: false, why: null, view: [], replies: [] });
     }
     return tools.agents.get(name) ?? null;
   }
 
-  // a label as given, on one line, at most LABEL characters; null: none
+  // a label as given, on one line, at most LABEL graphemes (LABEL_POINTS
+  // code points); null: none. The spawn's and a note's alike (a note may
+  // be edited by hand)
   export function label_clean(label: string): string | null {
     const one = label.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim();
-    const cut = Array.from(one).slice(0, LABEL).join("").trim();
+    let cut = "";
+    let n = 0;
+    let points = 0;
+    for (const { segment } of GRAPHEMES.segment(one)) {
+      const size = Array.from(segment).length;
+      if (n === LABEL || points + size > LABEL_POINTS) {
+        break;
+      }
+      cut += segment;
+      n += 1;
+      points += size;
+    }
+    cut = cut.trim();
     return cut === "" ? null : cut;
   }
 
@@ -690,8 +707,8 @@ export namespace Tools {
   export function labels(mem: Memory): Map<string, string> {
     const out = new Map<string, string>();
     for (const [name, note] of Memory.agent_heads(mem)) {
-      const label = SUB_ROLE.exec(note)?.[3];
-      if (label !== undefined) {
+      const label = Tools.label_clean(SUB_ROLE.exec(note)?.[3] ?? "");
+      if (label !== null) {
         out.set(name, label);
       }
     }

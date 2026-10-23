@@ -546,6 +546,33 @@ export function agent_label(name: string): string | undefined {
   return AGENT_LABELS.get(name);
 }
 
+// the agent a person means by arg (Term.ts /stop, /tab), any case: one
+// whose name is arg; else the one whose label is arg (of several, the one
+// at work); else the one at work whose name or label starts with arg; else
+// the one done whose label does. Several that fit: them all, to choose
+// from (none acted on); none: arg itself
+export function agent_find(v: View, arg: string): { name: string } | { many: string[] } {
+  const low   = arg.toLowerCase();
+  const known = [...new Set([...v.agents, ...Object.keys(v.labels ?? {})])];
+  const label = (a: string) => (AGENT_LABELS.get(a) ?? "").toLowerCase();
+  const one   = (names: string[]) => (names.length === 0 ? null : names.length === 1 ? { name: names[0] } : { many: names });
+  const named = known.find((a) => a.toLowerCase() === low);
+  if (named !== undefined) {
+    return { name: named };
+  }
+  const exact = known.filter((a) => label(a) === low);
+  const exact_work = exact.filter((a) => v.agents.includes(a));
+  const found = exact.length > 1 && exact_work.length === 1 ? { name: exact_work[0] } : one(exact);
+  const work = v.agents.filter((a) => a.toLowerCase().startsWith(low) || (label(a) !== "" && label(a).startsWith(low)));
+  const done = known.filter((a) => !v.agents.includes(a) && label(a) !== "" && label(a).startsWith(low));
+  return found ?? one(work) ?? one(done) ?? { name: arg };
+}
+
+// what a person reads when arg fits several agents (View.agent_find)
+export function agents_many(arg: string, many: string[]): string {
+  return "Mais de um agente corresponde a \"" + arg + "\": " + many.map(agent_shown).join(", ") + ". Digite mais do nome ou do rótulo.";
+}
+
 // an agent as people read it in plain text: its label, then its name;
 // its name alone if it has none
 export function agent_shown(name: string): string {

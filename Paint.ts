@@ -233,9 +233,9 @@ function msg_lines(kind: Kind, who: string, body: Md.Block[], w: number): Line[]
   }
   if (Theme.FRAMED.includes(kind)) {
     const edge = kind === "user" ? { ...INK, c: Theme.ANSI.you } : INK;
-    return frame_lines(blocks_lines(body, w - 4, ink), w - 4, edge, who === "" ? [] : [Run(" " + who + " ", { ...edge, b: true })]);
+    return frame_lines(blocks_lines(body, w - 4, ink), w - 4, edge, who === "" ? [] : [Run(" " + text_clean(who) + " ", { ...edge, b: true })]);
   }
-  const name = who === "" ? [] : [[Run(who, { ...DIM, b: true })]];
+  const name = who === "" ? [] : [[Run(text_clean(who), { ...DIM, b: true })]];
   return [...name, ...blocks_lines(body, w, ink)];
 }
 

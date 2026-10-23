@@ -376,20 +376,30 @@ async function term_image(t: Term, arg: string): Promise<void> {
 
 // stops all that runs, or the agent named
 function term_stop(t: Term, arg: string): void {
+  if (arg === "") {
+    return term_send(t, { $: "stop" });
+  }
   const name = term_agent(t, arg);
-  if (arg !== "" && !t.v.agents.includes(name)) {
+  if (name === null) {
+    return;
+  }
+  if (!t.v.agents.includes(name)) {
     term_note(t, "No agent " + arg + " at work.");
     return;
   }
-  term_send(t, arg === "" ? { $: "stop" } : { $: "stop", name });
+  term_send(t, { $: "stop", name });
+  term_note(t, "Parando " + Paint.text_clean(View.agent_shown(name)) + ".");
 }
 
-// an agent at work whose name or label starts with arg, else the one
-// agent done whose label does, else arg
-function term_agent(t: Term, arg: string): string {
-  const starts = (s: string | undefined) => s !== undefined && s.toLowerCase().startsWith(arg.toLowerCase());
-  const done = Object.keys(t.v.labels ?? {}).filter((a) => starts(View.agent_label(a)));
-  return t.v.agents.find((a) => starts(a)) ?? t.v.agents.find((a) => starts(View.agent_label(a))) ?? (done.length === 1 ? done[0] : arg);
+// the agent arg means (View.agent_find); null if several fit, listed for
+// the person to say which
+function term_agent(t: Term, arg: string): string | null {
+  const found = View.agent_find(t.v, arg);
+  if ("name" in found) {
+    return found.name;
+  }
+  term_note(t, Paint.text_clean(View.agents_many(arg, found.many)));
+  return null;
 }
 
 // the person's choice for block #id or #id+n (its name, View.block_name),
@@ -451,7 +461,10 @@ function term_tab(t: Term, arg: string): void {
   if (arg === "") {
     return term_note(t, "Tabs: " + View.view_tabs(t.v).map((tab) => tab.text + (tab.sub === undefined ? "" : " (" + tab.sub + ")")).join("  "));
   }
-  term_act(t, { $: "Goto", name: main ? null : term_agent(t, arg) });
+  const name = main ? null : term_agent(t, arg);
+  if (main || name !== null) {
+    term_act(t, { $: "Goto", name });
+  }
 }
 
 // moves the pick one step (a key)
