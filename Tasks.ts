@@ -802,11 +802,20 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
 export const INBOX_ORIGINS = ["slack", "github"];
 const INBOX_KEYS = ["title", "detail", "origin", "origin_url", "ref", "choices"];
 
+// the marks that turn text's direction (U+202A-U+202E, U+2066-U+2069,
+// U+200E, U+200F): from outside (anyone on Slack), so a title can't read
+// backwards in the Mesa or the terminal
+const BIDI = /[\u202a-\u202e\u2066-\u2069\u200e\u200f]/g;
+
+export function bidi_strip(x: unknown): unknown {
+  return typeof x === "string" ? x.replace(BIDI, "") : Array.isArray(x) ? x.map(bidi_strip) : x;
+}
+
 export function task_inbox(s: Store, x: unknown, now: number): { task: Task; made: boolean } | string {
   if (typeof x !== "object" || x === null || Array.isArray(x)) {
     return "task is an object {title, detail, origin, origin_url, ref, choices}.";
   }
-  const o = x as Record<string, unknown>;
+  const o = Object.fromEntries(Object.entries(x as Record<string, unknown>).map(([k, v]) => [k, bidi_strip(v)]));
   const odd = Object.keys(o).filter((k) => !INBOX_KEYS.includes(k));
   if (odd.length > 0) {
     return "Unknown key(s): " + odd.slice(0, 5).map((k) => text_line(k, 40)).join(", ") + ".";
@@ -828,8 +837,11 @@ export function task_inbox(s: Store, x: unknown, now: number): { task: Task; mad
     return "A task needs a title.";
   }
   const url = o.origin_url === undefined || o.origin_url === "" ? null : url_read(o.origin_url);
-  if (o.origin_url !== undefined && o.origin_url !== "" && url === null) {
-    return "origin_url is an http(s) link of at most " + ORIGIN_URL + " characters, without spaces, quotes or angle brackets.";
+  if (o.origin_url !== undefined && o.origin_url !== "" && (url === null || !/^https:/i.test(url))) {
+    return "origin_url is an https link of at most " + ORIGIN_URL + " characters, without spaces, quotes or angle brackets.";
+  }
+  if (Array.isArray(o.choices) && o.choices.some((c) => typeof c !== "string")) {
+    return "choices is a list of strings.";
   }
   const choices = choices_read(o.choices);
   if (typeof choices === "string") {
