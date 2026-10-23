@@ -235,8 +235,10 @@ export namespace Machine {
     const out = clip();
     SHELLS.set(proc, agent);
     const readers = [proc.stdout, ...(WIN ? [proc.stderr as typeof proc.stdout] : [])].map((s) => s.pipeThrough(new TextDecoderStream()).getReader());
+    // the group signalled only while it is still this shell's: once the
+    // shell and its group are gone, the id may name another's
     const kill = () => {
-      if (!WIN || Machine.group(proc)) {
+      if (Machine.group(proc)) {
         Machine.kill(-proc.pid);
       }
       readers.forEach((r) => r.cancel().catch(() => {}));
@@ -248,12 +250,15 @@ export namespace Machine {
       if (WIN) {
         return kill();
       }
+      if (!Machine.group(proc)) {
+        return kill();
+      }
       Machine.kill(-proc.pid, "SIGTERM");
       const until = Date.now() + TERM;
-      while (Machine.alive(-proc.pid) && Date.now() < until && !signal.aborted) {
+      while (Machine.group(proc) && Date.now() < until && !signal.aborted) {
         await Bun.sleep(50);
       }
-      if (Machine.alive(-proc.pid)) {
+      if (!signal.aborted && Machine.group(proc)) {
         timed = "killed, SIGKILL after SIGTERM didn't end it";
       }
       kill();
@@ -274,7 +279,7 @@ export namespace Machine {
     const code = await proc.exited;
     const time = ((performance.now() - start) / 1000).toFixed(1) + " s";
     const exit = signal.aborted ? "stopped" : timed !== null ? "timed out after " + +secs.toFixed(3) + " s: " + timed : proc.signalCode ? "killed by " + proc.signalCode : "exit " + code;
-    const tail = timed !== null ? ")\nGive a larger timeout (at most " + TIMEOUT_MAX + " s) or run it in the background with its own output file." : " in " + time + ")";
+    const tail = !signal.aborted && timed !== null ? ")\nGive a larger timeout (at most " + TIMEOUT_MAX + " s) or run it in the background with its own output file." : " in " + time + ")";
     const text = (WIN ? out.text().replace(/\r\n/g, "\n") : out.text()).replace(/\n$/, "");
     return { text: (text === "" ? "" : text + "\n") + "(" + exit + tail, fail: exit !== "exit 0" };
   }

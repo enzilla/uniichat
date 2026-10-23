@@ -315,6 +315,27 @@ test("terminal words: fields by id or number, choices by text or number, sim/nã
   expect(given).toEqual({ fields: { dias: [], obs: "" }, rest: " " });
 });
 
+test("terminal words: a quote left open or text stuck after the closing one is refused, nothing done", () => {
+  const s = T.tasks_load(dir);
+  add(s, { title: "Reiniciar", fields: FIELDS, choices: ["agora", "depois"] });
+  const v = View.view_new();
+  v.tasks = T.tasks_view(s, NOW);
+  const open = "O valor de “obs” tem uma aspa sem par: feche as aspas e separe o resto com um espaço. Nada foi alterado.";
+  const stuck = "O valor de “obs” tem texto colado depois da aspa de fechamento: feche as aspas e separe o resto com um espaço. Nada foi alterado.";
+  expect(View.task_args(v, "P1 obs=\"sem fechar", true)).toBe(open);
+  expect(View.task_args(v, "P1 agora obs=\"sem fechar aspas e mais", true)).toBe(open);
+  expect(View.task_args(v, "P1 obs=“curva sem fechar", true)).toBe(open);
+  expect(View.task_args(v, "P1 obs=\"", true)).toBe(open);
+  expect(View.task_args(v, "P1 obs=\"a\"b", true)).toBe(stuck);
+  expect(View.task_args(v, "P1 obs=\"a b\"c d", true)).toBe(open);
+  expect(View.task_args(v, "P1 3=“a”b", true)).toContain("O valor de “3” tem texto colado");
+  // closed ones still pass, also empty and at the end
+  const ok = View.task_args(v, "P1 obs=\"\" amb=hom fim", true);
+  expect(typeof ok === "string" ? ok : [ok.fields, ok.note]).toEqual([{ obs: "", amb: "hom" }, "fim"]);
+  const end = View.task_args(v, "P1 obs=\"a b\"", true);
+  expect(typeof end === "string" ? end : end.fields).toEqual({ obs: "a b" });
+});
+
 test("views: acts for a draft and a talk; /p shows fields and the thread", () => {
   const s = T.tasks_load(dir);
   add(s, { title: "Reiniciar", fields: FIELDS });

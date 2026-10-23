@@ -623,14 +623,20 @@ export function field_value(f: Field, typed: string): string | string[] | { erro
 
 // the answers typed in a command's words (campo=valor, a value in
 // quotes if it has spaces; a field by id or number), taken out of them;
-// none for a task without fields; else why not
+// none for a task without fields; else why not. A quote left open
+// (obs="sem fechar) or text stuck after the closing one (obs="a"b) is
+// refused, rather than the answer cut where it seems to end
 export function fields_args(t: Task, words: string): { fields: Record<string, unknown>; rest: string } | string {
   const fields: Record<string, unknown> = {};
   if ((t.fields ?? []).length === 0) {
     return { fields, rest: words };
   }
   let why: string | null = null;
-  const rest = words.replace(/(^|\s)([A-Za-z0-9][A-Za-z0-9_-]*)=("[^"]*"|“[^”]*”|\S*)/g, (all, pre: string, ref: string, raw: string) => {
+  const rest = words.replace(/(^|\s)([A-Za-z0-9][A-Za-z0-9_-]*)=("[^"]*"(?=\s|$)|“[^”]*”(?=\s|$)|\S*)/g, (all, pre: string, ref: string, raw: string) => {
+    if (/^["“]/.test(raw) && !/^("[^"]*"|“[^”]*”)$/.test(raw)) {
+      why = why ?? "O valor de “" + ref + "” tem " + (/^("[^"]*"|“[^”]*”)./.test(raw) ? "texto colado depois da aspa de fechamento" : "uma aspa sem par") + ": feche as aspas e separe o resto com um espaço. Nada foi alterado.";
+      return all;
+    }
     const f = field_ref(t, ref);
     if (f === null) {
       why = why ?? "A pendência " + t.id + " não tem o campo “" + ref + "”. Campos: " + t.fields.map((x, k) => k + 1 + ") " + x.id).join(", ") + ". Nada foi alterado.";
