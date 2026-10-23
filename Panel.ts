@@ -108,9 +108,9 @@ function panel_pick(p: Panel, v: View.View): Task | null {
 }
 
 // the questions Unii asked since seen: the open tasks of the user's with
-// choices that none waits on and seen hasn't, added to it
+// choices or fields that none waits on and seen hasn't, added to it
 export function panel_asks(v: View.View, seen: Set<string>): Task[] {
-  const fresh = View.view_tasks(v).open.filter((t) => t.assignee === "user" && t.choices.length > 0 && !seen.has(t.id));
+  const fresh = View.view_tasks(v).open.filter((t) => t.assignee === "user" && (t.choices.length > 0 || t.fields.length > 0) && !seen.has(t.id));
   fresh.forEach((t) => seen.add(t.id));
   return fresh;
 }
@@ -288,7 +288,7 @@ function task_lines(v: View.View, t: Task, mark: string, more: string[], w: numb
   const pad   = Paint.Run(" ".repeat(INDENT));
   const lines = text.map((l, k) => (k === 0 ? [Paint.Run(mark + " ", mark === " " ? Paint.DIM : BOLD), Paint.Run(BOX[t.state], box), Paint.Run(" "), ...l] : [pad, ...l]));
   const frees = View.task_frees_said(v, t);
-  const said  = [...(t.assignee === "unii" ? ["com o Unii"] : []), ...(t.ref === null ? [] : [t.ref]), ...(t.answer === null ? [] : ["resposta: " + t.answer]), ...more].map(Paint.text_clean).join(" · ");
+  const said  = [...(View.task_talk_said(t) === "" ? [] : [View.task_talk_said(t)]), ...(t.assignee === "unii" ? ["com o Unii"] : []), ...(t.ref === null ? [] : [t.ref]), ...(t.answer === null ? [] : ["resposta: " + t.answer]), ...more].map(Paint.text_clean).join(" · ");
   const runs  = [...(frees === "" ? [] : [Paint.Run(frees, { ...Paint.INK, c: Theme.ANSI.frees })]), ...(frees !== "" && said !== "" ? [Paint.Run(" · ", Paint.DIM)] : []), ...(said === "" ? [] : [Paint.Run(said, Paint.DIM)])];
   const tail  = runs.length === 0 ? [] : Paint.runs_wrap(runs, Math.max(4, w - INDENT), false).map((l) => [pad, ...l]);
   const opts  = mark === " " || t.state !== "open" ? [] : t.choices.map((c, k) => [pad, Paint.Run(k + 1 + ") ", BOLD), Paint.Run(Paint.text_clean(c))]);

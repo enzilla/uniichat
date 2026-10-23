@@ -173,7 +173,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ]],
     ["Pendências", [
       ["/p [P7|aguardando]", "",                       "a lista de pendências; com um id, o detalhe dela; aguardando: as que esperam outras", term_tasks],
-      ["/abrir P7",         "",                        "na tela cheia: abre a pendência numa janela, com o detalhe, as opções com o que cada uma significa e a conversa sobre ela (lá: 1-9 escolhe e pede a justificativa, Enter conclui, ! conclui e avisa, d descarta, r reabre, Tab escreve sobre ela, Esc fecha)", term_open_arg],
+      ["/abrir P7",         "",                        "na tela cheia: abre a pendência numa janela, com o detalhe, as opções, os campos (respondidos como rascunho) e a conversa sobre ela (lá: ↑↓ escolhe a pergunta, 1-9 responde, s ou n no sim ou não, Enter num texto o escreve; Enter conclui pedindo a justificativa, ! conclui e avisa, d descarta, r reabre, Tab escreve sobre ela, Esc fecha)", term_open_arg],
       ["/ok P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência (com as respostas dos campos: 1=a 2=\"um texto\"); o Unii a vê no próximo turno", (t, a) => term_task(t, a, "done", false)],
       ["/ok! P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência e avisa o Unii agora",     (t, a) => term_task(t, a, "done", true)],
       ["/rascunho P7 campo=valor", "",                 "responde campos da pendência sem concluir (salvo como rascunho)", term_draft],
@@ -514,11 +514,11 @@ function term_close(t: Term): void {
 }
 
 // a key while a task's window is open: the acts' keys (Modal.modal_key),
-// or, writing a comment or a message in the input, Enter, Esc, Tab and
-// Ctrl+C; PageUp, PageDown scroll it. True if taken
+// or, writing a comment, a field's text or a message in the input,
+// Enter, Esc, Tab and Ctrl+C; PageUp, PageDown scroll it. True if taken
 function term_modal(t: Term, m: Modal.Modal, key: string): boolean {
   const out = m.focus === "acts" ? Modal.modal_key(m, t.v, key)
-    : key === "Enter" ? Modal.modal_enter(m, Screen.ed_take(t.scr.ed))
+    : key === "Enter" ? Modal.modal_enter(m, t.v, Screen.ed_take(t.scr.ed))
     : key === "Esc" || key === "Ctrl+C" || (key === "Tab" && m.focus === "talk") ? Modal.modal_back(m, key === "Ctrl+C" ? "Ctrl+C" : "Esc")
     : undefined;
   if (out === undefined) {
@@ -531,11 +531,10 @@ function term_modal(t: Term, m: Modal.Modal, key: string): boolean {
     term_close(t);
   } else if (out?.$ === "note") {
     term_note(t, out.text);
+  } else if (out?.$ === "fill") {
+    Screen.ed_type(t.scr.ed, out.text);
   } else if (out?.$ === "act") {
     term_act(t, out.act);
-    if (t.panel !== null && out.act.$ === "Send") {
-      t.panel.scroll = 0;
-    }
   }
   t.scr.grab = t.modal !== null && t.modal.focus === "acts";
   return true;
