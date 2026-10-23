@@ -122,7 +122,7 @@ test("the ✓ never says a bare 0 when some wait; the list says none to resolve 
   T.task_edit(s, { id: "P1", detail: "x" }, NOW);
   const v = View.view_new();
   v.tasks = T.tasks_view(s, NOW).filter((t) => t.id === "P2").concat(T.tasks_view(s, NOW).filter((t) => t.id === "P1"));
-  expect(View.tasks_md(v)).toContain("**Pendências abertas (1)**");
+  expect(View.tasks_md(v)).toContain("**Pendências com o Unii (1)**");
   const only = View.view_new();
   only.tasks = [{ ...T.task_find(s, "P2")!, after: ["P9"] }, { ...T.task_find(s, "P1")!, id: "P9", after: ["P2"], state: "open" }];
   expect(View.tasks_md(only)).toContain("Nenhuma pendência para resolver agora.");

@@ -64,7 +64,9 @@ type Sock = ServerWebSocket<{ who: string; tab: string; wire: string | null; hos
 type Body = { fh: fs.promises.FileHandle; size: number };
 
 // a message logged: its pages [id, end)
-type Msg = { id: number; end: number };
+// (origin: where it came from, for the tasks a turn adds (Tasks.Origin):
+// a schedule's, a subagent's report; none, the user's)
+type Msg = { id: number; end: number; origin?: string };
 
 // what the agent saw at its last call: the view before message `from`,
 // then every message from it on
@@ -340,6 +342,7 @@ export namespace Chat {
     const mem = chat.mem;
     if (chat.call !== null && Memory.whole(mem, msg.id) === msg.id) {
       chat.sent.push(msg);
+      chat.tools.origin = Tasks.turn_origin([chat.tools.origin, msg.origin]);
       chat.call.send(Memory.say(mem, msg.id, msg.end));
       return;
     }
@@ -402,6 +405,7 @@ export namespace Chat {
       }
     }
     const msgs = (chat.sent = chat.wait.splice(0));
+    chat.tools.origin = Tasks.turn_origin(msgs.map((m) => m.origin));
     const says = msgs.filter((m) => m.end > from).map((m) => Memory.say(mem, Math.max(m.id, from), m.end));
     const view = Memory.view(mem, from);
     // the MCP servers' notes the chat showed are in the view: the call's
@@ -630,7 +634,7 @@ export namespace Chat {
     Chat.unanswered(chat, agent);
     Chat.live(chat, agent, []);
     Chat.hold(chat, () => {
-      const msg = Chat.push(chat, null, "work", text);
+      const msg = { ...Chat.push(chat, null, "work", text), origin: "agent:" + agent.name };
       if (!stopped) {
         Chat.take(chat, msg);
       }
@@ -917,7 +921,7 @@ export namespace Chat {
         }
         if (dues.length > 0) {
           const fresh = dues.filter((t) => Owner.act_get("timer " + t.id + " " + t.at) === null);
-          const msgs = fresh.map((t) => Chat.push(chat, null, "work", Timer.timer_say(t, at), [], false, "timer " + t.id + " " + t.at));
+          const msgs = fresh.map((t) => ({ ...Chat.push(chat, null, "work", Timer.timer_say(t, at), [], false, "timer " + t.id + " " + t.at), origin: "timer" }));
           mem.timers = mem.timers.flatMap((t) => (dues.includes(t) ? (Timer.timer_after(t, at) ?? []) : [t]));
           Memory.save(mem);
           msgs.forEach((msg) => Chat.take(chat, msg));

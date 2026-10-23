@@ -675,11 +675,30 @@ export function tasks_footer(v: View, w: number): string {
   return [long, mid, short].find((x) => x.length <= w) ?? "";
 }
 
+// whose a task is, as the views say it: "com você", "com o Unii", "com X"
+export function assignee_said(t: Task): string {
+  return t.assignee === "user" ? "com você" : t.assignee === "unii" ? "com o Unii" : "com " + t.assignee;
+}
+
+// where a task came from, as its badge says it ("" not known): chat,
+// agendamento, agente X, Slack, GitHub
+export function origin_said(t: Task): string {
+  const o = t.origin ?? "";
+  return o.startsWith("agent:") ? "agente " + o.slice(6) : ({ chat: "chat", timer: "agendamento", slack: "Slack", github: "GitHub" } as Record<string, string>)[o] ?? "";
+}
+
+// the open tasks free to resolve, the user's first, then each other
+// assignee's, in the order given: [assignee, its tasks]
+export function tasks_by_assignee(open: Task[]): [string, Task[]][] {
+  const keys = [...new Set(["user", ...open.map((t) => t.assignee)])];
+  return keys.map((k) => [k, open.filter((t) => t.assignee === k)] as [string, Task[]]).filter(([, ts]) => ts.length > 0);
+}
+
 // the pending list as Markdown, for the terminal's /p (one: its whole;
 // waiting: those that wait for others, listed, the rest left out)
 export function tasks_md(v: View, one: Task | null = null, waiting = false): string {
   const STATE = { open: "aberta", done: "concluída", dropped: "descartada" };
-  const tag = (t: Task) => (t.ref === null ? "" : " · " + t.ref);
+  const tag = (t: Task) => (t.ref === null ? "" : " · " + t.ref) + (origin_said(t) === "" ? "" : " · origem: " + origin_said(t));
   const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c).join("  "));
   if (one !== null) {
     const said = [one.answer === null ? "" : "Resposta: " + one.answer + ".", one.note === null ? "" : "Comentário: " + one.note].filter((x) => x !== "").join(" ");
@@ -687,21 +706,23 @@ export function tasks_md(v: View, one: Task | null = null, waiting = false): str
     const frees = task_frees_said(v, one);
     const deps = (one.state === "open" && waits.length > 0 ? " · aguarda " + waits.join(", ") : "") + (frees === "" ? "" : " · " + frees);
     const talk = task_talk_said(one) === "" ? "" : " · " + task_talk_said(one);
-    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + (one.who === "user" ? "com você" : "com o Unii") + tag(one) + deps + talk + opts(one);
+    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + assignee_said(one) + tag(one) + deps + talk + opts(one);
     return [head, said, one.detail, fields_md(one), thread_md(one)].filter((x) => x !== "").join("\n\n");
   }
   const { open, waiting: wait, closed } = view_tasks(v);
   const frees = (t: Task) => (task_frees_said(v, t) === "" ? "" : " · **" + task_frees_said(v, t) + "**");
   const extra = (t: Task) => ((t.fields ?? []).length === 0 ? "" : " · " + t.fields.length + (t.fields.length === 1 ? " campo" : " campos")) + (task_talk_said(t) === "" ? "" : " · **" + task_talk_said(t) + "**");
-  const line = (t: Task) => "- **" + t.id + "** " + t.title + (t.who === "unii" ? " (com o Unii)" : "") + frees(t) + tag(t) + opts(t) + extra(t);
-  const who = (id: string) => (v.tasks.find((t) => t.id === id)?.who === "unii" ? id + " (com o Unii)" : id);
-  const waits = (t: Task) => "- " + t.id + " " + t.title + (t.who === "unii" ? " (com o Unii)" : "") + " — aguarda " + Deps.waits(v.tasks, t).map(who).join(", ");
+  const line = (t: Task) => "- **" + t.id + "** " + t.title + frees(t) + tag(t) + opts(t) + extra(t);
+  const whose = (t: Task | undefined) => (t === undefined || t.assignee === "user" ? "" : " (" + assignee_said(t) + ")");
+  const who = (id: string) => id + whose(v.tasks.find((t) => t.id === id));
+  const waits = (t: Task) => "- " + t.id + " " + t.title + whose(t) + " — aguarda " + Deps.waits(v.tasks, t).map(who).join(", ");
+  const group = ([a, ts]: [string, Task[]]) => "**" + (a === "user" ? "Suas pendências" : "Pendências " + assignee_said(ts[0])) + " (" + ts.length + ")**\n\n" + ts.map(line).join("\n");
   if (waiting) {
     return wait.length === 0 ? "Nenhuma pendência aguardando outras." : "**Aguardando outras pendências (" + wait.length + ")**\n\n" + wait.map(waits).join("\n");
   }
   const done = (t: Task) => "- " + t.id + " " + STATE[t.state] + ": " + t.title + (t.answer === null ? "" : " — resposta: " + t.answer);
   const parts = [
-    open.length === 0 ? tasks_none_said(wait.length) : "**Pendências abertas (" + open.length + ")**\n\n" + open.map(line).join("\n"),
+    open.length === 0 ? tasks_none_said(wait.length) : tasks_by_assignee(open).map(group).join("\n\n"),
     wait.length === 0 ? "" : "_" + tasks_waiting_said(wait.length) + "_ · `/p aguardando` mostra quais",
     closed.length === 0 ? "" : "**Resolvidas recentemente**\n\n" + closed.slice(0, 10).map(done).join("\n"),
     "`/p P7` detalha · `/ok P7 [opção] [campo=valor] [comentário]` conclui · `/ok!` conclui e avisa o Unii · `/rascunho P7 campo=valor` · `/conversa P7 mensagem` · `/descartar P7` · `/reabrir P7` · `/avisar`",

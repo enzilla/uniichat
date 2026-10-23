@@ -385,7 +385,13 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 #tasks .meta { margin: 2px 0 4px; font-size: 12.5px; color: var(--mid); overflow-wrap: anywhere; }
 #tasks .meta:empty { display: none; }
 #tasks .ref { padding: 0 6px; border-radius: 6px; background: var(--block); }
-#tasks li.unii .title, #tasks li.closed .title { color: var(--mid); }
+#tasks li.other .title, #tasks li.closed .title { color: var(--mid); }
+/* the open ones by assignee: each group's heading; a task not the
+   user's has no Concluir in relief; where one came from, a quiet badge */
+#tasks li.group { padding: 12px 0 2px; border-top: 0; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--mid); }
+#tasks li.group .n { font-weight: 400; }
+#tasks .origin { padding: 0 6px; border: 1px solid var(--hair); border-radius: 6px; font-size: 11.5px; color: var(--mid); text-decoration: none; }
+#tasks a.origin:hover { color: var(--ink); }
 #tasks details { margin: 4px 0; font-size: 13.5px; }
 #tasks summary { cursor: pointer; color: var(--mid); font-size: 13px; }
 #tasks .md { overflow-wrap: anywhere; }
@@ -396,6 +402,8 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 #tasks :is(.opts, .acts) button:hover { background: var(--hover); }
 #tasks .acts .done { background: var(--ink); color: var(--paper); }
 #tasks .acts .done:hover { background: var(--ink); opacity: .85; }
+#tasks .acts .done.quiet { background: var(--block); color: var(--mid); }
+#tasks .acts .done.quiet:hover { background: var(--hover); opacity: 1; }
 #tasks .go { margin-right: auto; display: flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--mid); cursor: pointer; }
 #tasks .note { width: 100%; margin-top: 6px; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); }
 #tasks .tell { margin: 8px 0 0; text-align: center; background: var(--block); font-size: 13.5px; }

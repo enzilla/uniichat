@@ -58,9 +58,19 @@ import * as Deps from "./TaskDeps.ts";
 export type State = "open" | "done" | "dropped";
 export type Who   = "user" | "unii";
 
+// who is responsible for a task: one of ASSIGNEES ("user", "unii"; a
+// string, so others may come); where it came from: one of ORIGINS
+// ("chat": the user's message; "timer": a schedule's turn; "agent:<name>":
+// a subagent's report; "slack", "github" for later), with a link to its
+// source if any
+export type Assignee = string;
+export type Origin   = string;
+
 // a pending item (rev: the list's version at the last change by the
 // user, Store.rev): id ("P7"), title, detail (Markdown), state, who must
-// act, who made it ("main", "user"), the answers offered, the one chosen,
+// act (assignee; tasks.json and the tools' `who` of older versions read
+// as it), where it came from (origin, null: not known) and its source's
+// link, who made it ("main", "user"), the answers offered, the one chosen,
 // the comment it was closed with, a free link (a project, an agent, a
 // PR), when made, last changed and closed (ISO), whether Unii saw its
 // last change by the user; the ids it waits for (TaskDeps.ts), and
@@ -74,7 +84,9 @@ export type Task = {
   title   : string;
   detail  : string;
   state   : State;
-  who     : Who;
+  assignee   : Assignee;
+  origin     : Origin | null;
+  origin_url : string | null;
   by      : string;
   choices : string[];
   answer  : string | null;
@@ -122,6 +134,9 @@ export type Edit = {
   title?   : unknown;
   detail?  : unknown;
   who?     : unknown;
+  assignee?   : unknown;
+  origin?     : unknown;
+  origin_url? : unknown;
   choices? : unknown;
   ref?     : unknown;
   state?   : unknown;
@@ -141,6 +156,12 @@ export const NOTE    = 1000;
 export const CHOICE  = 80;
 export const CHOICES = 9;
 export const REF     = 100;
+
+// those a task may be assigned to; its origins, an agent's by name; the
+// longest origin and source link
+export const ASSIGNEES = ["user", "unii"];
+const ORIGIN = /^(chat|timer|slack|github|agent:[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$/;
+export const ORIGIN_URL = 500;
 
 // the most fields of a task, a label's length, a text answer's (NOTE);
 // a thread message's length, the most a thread keeps, the most views get
@@ -251,7 +272,9 @@ export function task_read(x: unknown, now: number): Task | null {
     title   : text(o.title, TITLE, text_line) || "(sem título)",
     detail  : text(o.detail, DETAIL, text_body),
     state,
-    who     : o.who === "unii" ? "unii" : "user",
+    assignee   : assignee_read(o.assignee) ?? assignee_read(o.who) ?? "user",
+    origin     : origin_read(o.origin),
+    origin_url : origin_read(o.origin) === null ? null : url_read(o.origin_url),
     by      : text(o.by, 40, text_line) || "main",
     choices,
     answer  : state === "done" && choices.includes(answer) ? answer : null,
@@ -271,6 +294,79 @@ export function task_read(x: unknown, now: number): Task | null {
     thread  : thread_read(o.thread),
     talk    : state === "open" && (o.talk === "unii" || o.talk === "user") ? o.talk : null,
   };
+}
+
+// an assignee as given (one of ASSIGNEES, any case, spaces around);
+// else null
+export function assignee_read(x: unknown): Assignee | null {
+  const a = typeof x === "string" ? x.trim().toLowerCase() : "";
+  return ASSIGNEES.includes(a) ? a : null;
+}
+
+// an origin as given ("chat", "timer", "agent:Name", ...); else null
+export function origin_read(x: unknown): Origin | null {
+  const o = typeof x === "string" ? x.trim() : "";
+  const kind = o.split(":")[0].toLowerCase();
+  const as = kind === "agent" ? "agent:" + o.slice(6) : kind;
+  return ORIGIN.test(as) ? as : null;
+}
+
+// a source's link as given: http(s), no spaces, quotes, angle brackets
+// or control characters, at most ORIGIN_URL; else null
+export function url_read(x: unknown): string | null {
+  const u = typeof x === "string" ? x.trim() : "";
+  if (u.length > ORIGIN_URL || !/^https?:\/\/[^\s"'<>`\\\x00-\x1f\x7f-\x9f\u2028\u2029]+$/i.test(u)) {
+    return null;
+  }
+  try {
+    return new URL(u).protocol.startsWith("http") ? u : null;
+  } catch {
+    return null;
+  }
+}
+
+// where a turn came from, by its messages' origins (a message of the
+// user's has none): the user's among them, chat; else the first's
+export function turn_origin(origins: (string | undefined)[]): Origin {
+  return origins.length === 0 || origins.some((o) => o === undefined) ? "chat" : origin_read(origins[0]) ?? "chat";
+}
+
+// a task's assignee, origin and link as given by a tool (assignee, or the
+// older who; origin_url only with an origin, its own or the task's); each
+// absent undefined; else why not
+function whose_args(args: Edit, origin: Origin | null): { assignee?: Assignee; origin?: Origin; origin_url?: string | null } | string {
+  const out: { assignee?: Assignee; origin?: Origin; origin_url?: string | null } = {};
+  const given = (x: unknown) => x !== undefined && x !== null;
+  if (given(args.assignee) || given(args.who)) {
+    const a = given(args.assignee) ? assignee_read(args.assignee) : null;
+    const w = given(args.who) ? assignee_read(args.who) : null;
+    if ((given(args.assignee) && a === null) || (given(args.who) && w === null)) {
+      return "assignee is one of: " + ASSIGNEES.join(", ") + ".";
+    }
+    if (a !== null && w !== null && a !== w) {
+      return "assignee and who differ: give assignee only (who is its older name).";
+    }
+    out.assignee = (a ?? w)!;
+  }
+  if (given(args.origin)) {
+    const o = origin_read(args.origin);
+    if (o === null) {
+      return "origin is chat, timer, slack, github or agent:<name> (letters, digits, . _ -).";
+    }
+    out.origin = o;
+  }
+  if (args.origin_url !== undefined) {
+    const raw = args.origin_url === null ? "" : String(args.origin_url).trim();
+    const u = raw === "" ? null : url_read(raw);
+    if (raw !== "" && u === null) {
+      return "origin_url is an http(s) link of at most " + ORIGIN_URL + " characters, without spaces, quotes or angle brackets.";
+    }
+    if (u !== null && (out.origin ?? origin) === null) {
+      return "origin_url needs an origin.";
+    }
+    out.origin_url = u;
+  }
+  return out;
 }
 
 // a thread as read: its messages that are one (whose, a text), cleaned,
@@ -411,10 +507,12 @@ export function tasks_forget(): void {
 }
 
 // written whole, then moved in place; flushed soon (Disk.ts)
+// (each with who too, its assignee as an older version reads it: going
+// back a version keeps whose each is)
 export function tasks_save(s: Store): void {
   const file = s.dir + FILE;
   fs.mkdirSync(s.dir, { recursive: true });
-  fs.writeFileSync(file + ".new", JSON.stringify({ next: s.next, rev: s.rev, tasks: s.tasks }));
+  fs.writeFileSync(file + ".new", JSON.stringify({ next: s.next, rev: s.rev, tasks: s.tasks.map((t) => ({ ...t, who: t.assignee === "unii" ? "unii" : "user" })) }));
   fs.renameSync(file + ".new", file);
   Disk.wrote(file);
 }
@@ -644,18 +742,19 @@ function after_read(s: Store, x: unknown, self: string | null): string[] | strin
 }
 
 // a new task made by Unii (by: "main"); else why not
-export function task_new(s: Store, args: Edit, by: string, now: number): Task | string {
+// (origin: where the turn came from, unless args give one)
+export function task_new(s: Store, args: Edit, by: string, now: number, origin: Origin | null = null): Task | string {
   const title = text_line(args.title, TITLE);
   const choices = choices_read(args.choices);
-  const who = args.who === undefined || args.who === null ? "user" : String(args.who);
   if (title === "") {
     return "A task needs a title.";
   }
   if (typeof choices === "string") {
     return choices;
   }
-  if (who !== "user" && who !== "unii") {
-    return "who is user or unii.";
+  const whose = whose_args(args, origin_read(origin));
+  if (typeof whose === "string") {
+    return whose;
   }
   const after = after_read(s, args.after, null);
   if (typeof after === "string") {
@@ -679,7 +778,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number): Task | 
   const at = new Date(now).toISOString();
   const ref = text_line(args.ref, REF);
   const task: Task = {
-    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", who, by, choices, answer: null, note: null,
+    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, by, choices, answer: null, note: null,
     ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
     fields: fields.fields, draft: {}, answers: null, thread: [], talk: null,
   };
@@ -710,11 +809,13 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
   if (args.detail !== undefined) {
     next.detail = text_body(args.detail, DETAIL);
   }
-  if (args.who !== undefined) {
-    if (args.who !== "user" && args.who !== "unii") {
-      return "who is user or unii.";
-    }
-    next.who = args.who;
+  const whose = whose_args(args, task.origin);
+  if (typeof whose === "string") {
+    return whose;
+  }
+  Object.assign(next, whose);
+  if (whose.origin !== undefined && whose.origin !== task.origin && whose.origin_url === undefined) {
+    next.origin_url = null;
   }
   if (args.choices !== undefined) {
     const choices = choices_read(args.choices);
@@ -982,7 +1083,7 @@ export function tasks_sort(tasks: Task[]): Task[] {
   const num = (t: Task) => Number(t.id.slice(1));
   const waiting = Deps.blocked_ids(tasks);
   const frees = new Map(tasks.map((t) => [t.id, Deps.frees(tasks, t)]));
-  const rank = (a: Task, b: Task) => (frees.get(b.id)! - frees.get(a.id)!) || (a.who === b.who ? num(a) - num(b) : a.who === "user" ? -1 : 1);
+  const rank = (a: Task, b: Task) => (frees.get(b.id)! - frees.get(a.id)!) || (a.assignee === b.assignee ? num(a) - num(b) : a.assignee === "user" ? -1 : b.assignee === "user" ? 1 : a.assignee.localeCompare(b.assignee));
   const free = tasks.filter((t) => t.state === "open" && !waiting.has(t.id)).sort(rank);
   const open = [...free, ...tasks.filter((t) => waiting.has(t.id)).sort((a, b) => num(a) - num(b))];
   const closed = tasks.filter((t) => t.state !== "open").sort((a, b) => (b.closed ?? "").localeCompare(a.closed ?? ""));
@@ -1025,10 +1126,10 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const fields = t.fields.length === 0 ? "" : " fields: " + t.fields.map((f) => f.id + (f.required ? "*" : "") + " " + JSON.stringify(f.label) + " (" + kind(f) + ")").join("; ");
   const talk = t.talk === "unii" ? " [the user wrote in its thread: reply with task_reply]" : "";
   const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ")) + fields + deps + talk;
-  const tail = [t.ref === null ? "" : "ref " + t.ref, ago(t.made, now)].filter((x) => x !== "").join(", ");
+  const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), ago(t.made, now)].filter((x) => x !== "").join(", ");
   const how   = [t.state, t.answer === null ? "" : "answer: " + t.answer, t.note === null ? "" : "note: " + JSON.stringify(t.note)].filter((x) => x !== "");
   const state = t.state === "open" ? "" : " (" + how.join(", ") + ")";
-  const head = "- " + t.id + " [" + t.who + "] " + t.title + state + opts + " (" + tail + ")";
+  const head = "- " + t.id + " [" + t.assignee + "] " + t.title + state + opts + " (" + tail + ")";
   if (!whole) {
     return head;
   }
