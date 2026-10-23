@@ -57,6 +57,13 @@
   <button class="tell" type="button" data-act='{"$":"TasksTell"}' hidden>Avisar o Unii agora (<span></span>)</button>
   <details class="closed" hidden><summary>Resolvidas recentemente</summary><ul></ul></details>
 </aside>
+<!-- a task's window (main.ts task_open): its item, whole: the detail,
+     the choices and fields (answered as a draft), the comment, the acts,
+     its thread and a box to write about it -->
+<dialog id="task" aria-labelledby="task-title">
+  <button class="x" type="button" data-close aria-label="Fechar">✕</button>
+  <div class="body"></div>
+</dialog>
 <div id="menu" popover>
   <button data-go="/settings">Settings</button>
   <a href="/tree">Memory</a>

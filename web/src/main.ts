@@ -186,15 +186,20 @@ function chat(): void {
     }
   };
   document.onclick = click;
-  $("#tasks").addEventListener("change", task_draft);
-  $("#tasks").addEventListener("toggle", thread_toggle, true);
-  $("#tasks").addEventListener("keydown", (ev) => {
-    const el = ev.target as HTMLElement;
-    if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
-      ev.preventDefault();
-      task_say(el.closest<HTMLElement>("li[data-task]")!.dataset.task!);
-    }
-  });
+  // the list's items and a task's window (the same item, whole) take
+  // the same acts: a field answered, a thread opened, Ctrl+Enter sends
+  for (const box of [$("#tasks"), $("#task")]) {
+    box.addEventListener("change", task_draft);
+    box.addEventListener("toggle", thread_toggle, true);
+    box.addEventListener("keydown", (ev) => {
+      const el = ev.target as HTMLElement;
+      if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+        ev.preventDefault();
+        task_say(el.closest<HTMLElement>("li[data-task]")!.dataset.task!, el);
+      }
+    });
+  }
+  $("#task").addEventListener("close", () => (TASK = null));
   // a phone's keyboard up or down: the box's last line stays in sight, if
   // the caret is there; the page's bottom, if at it
   visualViewport!.onresize = () => {
@@ -292,7 +297,7 @@ function act(a: View.Act): void {
 // a click on a View.Act, a Copy button, a page (go), a knob or its
 // menu's row (Html.ts), unless it ends a selection dragged in its element
 function click(ev: MouseEvent): void {
-  const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], .choices > button");
+  const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], [data-open], [data-close], .choices > button");
   const sel = getSelection();
   if (el === null || (sel !== null && !sel.isCollapsed && el.contains(sel.focusNode))) {
     return;
@@ -300,6 +305,12 @@ function click(ev: MouseEvent): void {
   if (el.dataset.knob !== undefined) {
     place(el);
     return;
+  }
+  if (el.dataset.open !== undefined) {
+    return task_open(el.dataset.open);
+  }
+  if (el.dataset.close !== undefined) {
+    return $<HTMLDialogElement>("#task").close();
   }
   el.closest<HTMLElement>(".choices")?.hidePopover();
   const { act: a, copy: text, go: path } = el.dataset;
@@ -314,7 +325,7 @@ function click(ev: MouseEvent): void {
   if (a !== undefined) {
     const made = JSON.parse(a) as View.Act;
     if (made.$ === "TaskSay") {
-      task_say(made.task);
+      task_say(made.task, el);
     } else {
       act(task_act(el, made));
     }
@@ -405,7 +416,7 @@ function task_fields(item: Element): Record<string, unknown> {
 
 // a field changed (a radio, a box, a text left): kept as a draft
 function task_draft(ev: Event): void {
-  const set = (ev.target as HTMLElement).closest<HTMLElement>("#tasks fieldset.field");
+  const set = (ev.target as HTMLElement).closest<HTMLElement>(":is(#tasks, #task) fieldset.field");
   const item = set?.closest<HTMLElement>("li[data-task]");
   if (set === null || set === undefined || item === null || item === undefined) {
     return;
@@ -413,10 +424,12 @@ function task_draft(ev: Event): void {
   act({ $: "TaskDraft", task: item.dataset.task!, fields: { [set.dataset.field!]: field_value(set) } });
 }
 
-// a message in a task's thread (its box's text): the box emptied, its
-// text back in it if the server refuses (and it's still empty)
-function task_say(task: string): void {
-  const box = () => document.querySelector<HTMLTextAreaElement>(`#tasks li[data-task="${CSS.escape(task)}"] textarea.say`);
+// a message in a task's thread (the box of the item at: the list's or
+// its window's): the box emptied, its text back in it if the server
+// refuses (and it's still empty)
+function task_say(task: string, at: Element): void {
+  const where = at.closest("#task") !== null ? "#task" : "#tasks";
+  const box = () => document.querySelector<HTMLTextAreaElement>(`${where} li[data-task="${CSS.escape(task)}"] textarea.say`);
   const text = box()?.value ?? "";
   for (const msg of View.view_act(v, { $: "TaskSay", task, text })) {
     const was = box();
@@ -437,14 +450,15 @@ function task_say(task: string): void {
   draw(false);
 }
 
-// what's typed in the list and not sent (data-keep: a comment, a text
-// field, a thread's box, a box checked), and where the focus is, taken
-// before its items are made again and put back in the new ones
+// what's typed in the list or a task's window and not sent (data-keep: a
+// comment, a text field, a thread's box, a box checked), and where the
+// focus is, taken before its items are made again and put back in the
+// new ones (by where it is, task and name)
 type Kept = { el: Element; value: string | null; checked: boolean | null; focus: boolean; start: number | null; end: number | null };
 function keep_take(): Map<string, Kept> {
   const kept = new Map<string, Kept>();
-  for (const el of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("#tasks li[data-task] :is(input, textarea)[data-keep]")) {
-    const key = el.closest<HTMLElement>("li[data-task]")!.dataset.task + "/" + el.dataset.keep;
+  for (const el of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(":is(#tasks, #task) li[data-task] :is(input, textarea)[data-keep]")) {
+    const key = el.closest(":is(#tasks, #task)")!.id + "/" + el.closest<HTMLElement>("li[data-task]")!.dataset.task + "/" + el.dataset.keep;
     const box = el instanceof HTMLInputElement && el.type === "checkbox";
     const focus = document.activeElement === el;
     const value = !box && el.value !== el.defaultValue ? el.value : null;
@@ -457,8 +471,8 @@ function keep_take(): Map<string, Kept> {
 }
 function keep_put(kept: Map<string, Kept>): void {
   for (const [key, k] of kept) {
-    const [task, name] = key.split("/");
-    const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#tasks li[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
+    const [where, task, name] = key.split("/");
+    const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${where} li[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
     if (el === null || el === k.el) {
       continue;
     }
@@ -517,6 +531,7 @@ function tasks_bar(): void {
   $("#tasks .none").textContent = View.tasks_none_said(waiting.length);
   const kept = keep_take();
   markup($("#tasks ul.now"), now);
+  task_render();
   keep_put(kept);
   threads_put();
   markup($("#tasks .waiting ul"), waiting);
@@ -529,6 +544,29 @@ function tasks_bar(): void {
   if (v.tasks.length === 0 && $("#tasks").matches(":popover-open")) {
     $("#tasks").hidePopover();
   }
+}
+
+// a task's window (Html.task_window_html): a native modal dialog over the
+// page (focus kept in it, Esc closes it), made again with the list
+let TASK: string | null = null;
+let WINDOW: { of: unknown; id: string | null } = { of: null, id: null };
+function task_open(id: string): void {
+  TASK = id;
+  WINDOW = { of: null, id: null };
+  task_render();
+  const box = $<HTMLDialogElement>("#task");
+  if (!box.open) {
+    box.showModal();
+  }
+  box.querySelector<HTMLElement>("textarea.say, .x")?.focus();
+}
+function task_render(): void {
+  if (TASK === null || (WINDOW.of === v.tasks && WINDOW.id === TASK)) {
+    return;
+  }
+  WINDOW = { of: v.tasks, id: TASK };
+  $("#task").dataset.task = TASK;
+  $("#task .body").innerHTML = Html.task_window_html(v.tasks, TASK);
 }
 
 function copied(button: HTMLElement): void {
