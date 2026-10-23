@@ -36,6 +36,9 @@ export const FILE = config.DIR + "/unii.db";
 
 const COOKIE = "unii";
 
+// the sessions requests were given (Owner.adopt)
+const ADOPTED = new WeakMap<Request, string>();
+
 // a session cookie's attributes: Secure only on an https site, as Safari
 // drops a Secure cookie an http one (a server on 127.0.0.1) sets
 const KEEP = "; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000" + (config.SITE.startsWith("https:") ? "; Secure" : "");
@@ -116,10 +119,25 @@ export namespace Owner {
   }
 
   export function token(req: Request): string {
+    const adopted = ADOPTED.get(req);
+    if (adopted !== undefined) {
+      return adopted;
+    }
     const auth = (req.headers.get("authorization") ?? "").replace(/^Bearer /, "");
     const cookies = (req.headers.get("cookie") ?? "").split(/;\s*/);
     const cookie = cookies.find((c) => c.startsWith(COOKIE + "=")) ?? "";
     return auth || decodeURIComponent(cookie.slice(COOKIE.length + 1));
+  }
+
+  // a request given a session it didn't carry (Tailnet.adopt: one of the
+  // owner's tailnet nodes): its token from now on
+  export function adopt(req: Request, token: string): void {
+    ADOPTED.set(req, token);
+  }
+
+  // the cookie that keeps a browser's session
+  export function cookie(token: string): string {
+    return COOKIE + "=" + token + KEEP;
   }
 
   // whether a request is the owner's (a session kept)

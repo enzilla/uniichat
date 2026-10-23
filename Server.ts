@@ -34,6 +34,7 @@ import { Reap } from "./Reap.ts";
 import { Settings } from "./Settings.ts";
 import { INSTALL, INSTALL_PS1 } from "./Update.ts";
 import { move_over, write_whole } from "./Write.ts";
+import * as Tailnet from "./Tailnet.ts";
 import * as Timer from "./Timer.ts";
 import * as Tasks from "./Tasks.ts";
 import { PROMPTS, SEARCHES, Tools, type Agent, type Live } from "./Tools.ts";
@@ -1652,26 +1653,38 @@ export namespace Main {
       return new Response("not from another site", { status: 403 });
     }
     try {
-      const own = await Owner.http(req);
-      if (own !== null) {
-        return own;
+      // one of the owner's tailnet nodes, with no session: given its own
+      // (Tailnet.ts); a browser keeps it as its cookie
+      const adopted = await Tailnet.adopt(req, server.requestIP(req)?.address ?? null);
+      const res = await Main.route(req, server, p);
+      if (adopted !== null && res !== undefined && req.headers.get("authorization") === null) {
+        res.headers.append("set-cookie", Owner.cookie(adopted));
       }
-      if (!OWN.includes(p) && !p.startsWith("/image/") && !p.startsWith("/api/")) {
-        return Main.file(p);
-      }
-      if (!Owner.is(req)) {
-        return new Response("sign in first", { status: 401 });
-      }
-      if (p === "/ws") {
-        const q    = new URL(req.url).searchParams;
-        const who  = Owner.hash(Owner.token(req));
-        const data = { who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), work: q.get("work") ?? "~/.unii/work", shell: q.get("shell") === "PowerShell" ? "PowerShell" : null, device: null, seen: new Set<string>() };
-        return server.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
-      }
-      return await Main.page(Main.chat, p, req);
+      return res;
     } catch (err: any) {
       return Response.json({ error: err.message }, { status: 500 });
     }
+  }
+
+  // a request past the other site's check and the tailnet's sign-in
+  export async function route(req: Request, server: Bun.Server<Sock["data"]>, p: string): Promise<Response | undefined> {
+    const own = await Owner.http(req);
+    if (own !== null) {
+      return own;
+    }
+    if (!OWN.includes(p) && !p.startsWith("/image/") && !p.startsWith("/api/")) {
+      return Main.file(p);
+    }
+    if (!Owner.is(req)) {
+      return new Response("sign in first", { status: 401 });
+    }
+    if (p === "/ws") {
+      const q    = new URL(req.url).searchParams;
+      const who  = Owner.hash(Owner.token(req));
+      const data = { who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), work: q.get("work") ?? "~/.unii/work", shell: q.get("shell") === "PowerShell" ? "PowerShell" : null, device: null, seen: new Set<string>() };
+      return server.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
+    }
+    return await Main.page(Main.chat, p, req);
   }
 
   // work a socket asks (opened, closed): one that throws fails alone,

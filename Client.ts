@@ -50,14 +50,14 @@ export function auth(token: string | undefined): Record<string, string> {
   return token ? { authorization: "Bearer " + token } : {};
 }
 
-// whether a token is signed in: the server doesn't refuse it (one it
-// can't reach may be: the client waits for it)
+// whether a token (or none: one of the owner's tailnet nodes) is signed
+// in: the server doesn't refuse it (one it can't reach may be, if a token
+// is kept: the client waits for it)
 export async function signed(url: string, token: string | undefined): Promise<boolean> {
-  if (!token) {
-    return false;
-  }
+  // with none, still asked: the server signs in the owner's tailnet nodes
+  // by themselves (Tailnet.ts)
   const res = await fetch(url + "/api/me", { headers: auth(token) }).catch(() => null);
-  return res === null || res.status !== 401;
+  return res === null ? Boolean(token) : res.status !== 401;
 }
 
 // signs in, as `what` ("the terminal on host"): a token made here, which

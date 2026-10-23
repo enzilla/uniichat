@@ -85,6 +85,7 @@ export const SETTINGS: Setting[] = [
   { key: "apple",     def: "",                                  apply: "restart", web: true  },
   { key: "apns",      def: "",                                  apply: "restart", web: true  },
   { key: "after",     def: "",                                  apply: "now",     web: false },
+  { key: "tailnet_owner", def: "",                              apply: "restart", web: false },
 ];
 
 // the keys, by name, and the variable each is read from
@@ -103,6 +104,10 @@ const MADE = config_make(FILE);
 export const STARTED: Record<string, string> = Object.fromEntries(SETTINGS.map((s) => [s.key, config_value(FILE, s.key)]));
 
 export const SITE    = config_value(FILE, "site").replace(/\/$/, "");
+
+// the owner's Tailscale login (Tailnet.ts): their nodes need no sign-in
+// ("": every client signs in)
+export const TAILNET_OWNER = config_value(FILE, "tailnet_owner").trim();
 export const OFFER: Offer = MADE.offer;
 
 export let   AFTER      = MADE.after;
