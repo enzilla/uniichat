@@ -49,7 +49,9 @@ type Made = {
 // args, its env: all it gets beside the few of this one's variables
 // Mcp.ts passes on, its dir) or a URL (streamable HTTP, with headers);
 // how long a tool call may take, in seconds; device: the device that
-// runs the program instead (Mcp.device; "": here)
+// runs the program instead (Mcp.device; "": here); claude: one of that
+// device's Claude Code (Machine.claude_mcps), by its name there: the
+// device reads its command, args and env, which never reach the server
 export type McpServer = {
   name    : string;
   device  : string;
@@ -60,6 +62,7 @@ export type McpServer = {
   url     : string;
   headers : Record<string, string>;
   timeout : number;
+  claude? : string;
 };
 
 // Constants

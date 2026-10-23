@@ -45,13 +45,15 @@ export type { Live };
 
 // a device: its sign-in (a session's hash), the host it said it is
 // (its name may be host-2...), its links by tab (none: closed), jobs by
-// id, and its skills as last looked at (Tools.look)
+// id, its skills and its Claude Code's MCP servers' names as last looked
+// at (Tools.look)
 type Device = {
   who    : string;
   host   : string;
   terms  : Map<string, Link>;
   jobs   : Map<string, Running>;
   skills : Skill[];
+  mcps   : string[];
 };
 
 // a job: the link it runs on, what it runs, its output, what ends it
@@ -308,35 +310,60 @@ export namespace Tools {
     return { text: lines.length === 0 ? "" : SKILLS + "\n" + lines.join("\n") + "\n\n", mark: false };
   }
 
-  // each open device's skills, asked as a job; one that fails (a unii
-  // from before skills) has none. A change is the chat's (its state lists
-  // them: the terminal completes their names)
+  // each open device's skills and its Claude Code's MCP servers (each
+  // then one of the chat's, Tools.claude), asked as jobs; one that fails
+  // (a unii from before them) has none. A change is the chat's (its state
+  // lists them: the terminal completes the skills' names, /mcp the servers)
   export async function look(tools: Tools, only: string | null = null): Promise<void> {
     const live = Tools.opened(tools).filter(([name, d]) => (only === null || name === only) && [...d.terms.values()].some((t) => t.live()));
     await Promise.all(live.map(async ([name, d]) => {
-      const run = Tools.start_job(tools, name, { name: "skills", input: {}, cwd: "main" }, crypto.randomUUID());
-      if (typeof run === "string") {
-        return;
+      const was = JSON.stringify([d.skills, d.mcps]);
+      [d.skills, d.mcps] = await Promise.all([Tools.ask_list(tools, name, "skills", d.skills), Tools.ask_list(tools, name, "claude_mcps", d.mcps)]);
+      for (const mcp of d.mcps) {
+        Mcp.add(tools.mcp, { ...Tools.claude_conf(name, mcp), device: name, claude: mcp });
       }
-      let late = false;
-      const timer = setTimeout(() => {
-        late = true;
-        run.end({ text: "Late.", fail: true });
-      }, LOOK);
-      const out = await run.out;
-      clearTimeout(timer);
-      if (!late) {
-        const was = JSON.stringify(d.skills);
-        try {
-          d.skills = out.fail ? [] : JSON.parse(out.text);
-        } catch {
-          d.skills = [];
-        }
-        if (JSON.stringify(d.skills) !== was) {
-          tools.hooks.change();
-        }
+      if (JSON.stringify([d.skills, d.mcps]) !== was) {
+        tools.hooks.change();
       }
     }));
+  }
+
+  // a list a device's job answers; late, what it was; failed, none
+  export async function ask_list<T>(tools: Tools, device: string, job: string, was: T[]): Promise<T[]> {
+    const run = Tools.start_job(tools, device, { name: job, input: {}, cwd: "main" }, crypto.randomUUID());
+    if (typeof run === "string") {
+      return was;
+    }
+    let late = false;
+    const timer = setTimeout(() => {
+      late = true;
+      run.end({ text: "Late.", fail: true });
+    }, LOOK);
+    const out = await run.out;
+    clearTimeout(timer);
+    if (late) {
+      return was;
+    }
+    try {
+      const got = out.fail ? [] : JSON.parse(out.text);
+      return Array.isArray(got) ? got : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // a device's Claude Code MCP server as one of the chat's: named
+  // "<device>-<name>" in the letters a server's name takes (Config.ts), run
+  // on that device, its program read there (Mcp.here)
+  export function claude_conf(device: string, name: string): config.McpServer {
+    const safe = (device + "-" + name).replace(/[^A-Za-z0-9_-]/g, "-").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+    return { name: safe, device, command: "", args: [], env: {}, cwd: "", url: "", headers: {}, timeout: 600 };
+  }
+
+  // the MCP servers of the open devices' Claude Code, by the chat's name
+  // (one a config server's name took is left out)
+  export function claude(tools: Tools): string[] {
+    return Tools.opened(tools).flatMap(([device, d]) => d.mcps.map((m) => Tools.claude_conf(device, m).name)).filter((n) => tools.mcp.all.get(n)?.conf.claude !== undefined);
   }
 
   // the master's agents at work now, at the start of each of its calls'
@@ -437,9 +464,11 @@ export namespace Tools {
     return who === "main" || tools.agents.has(who);
   }
 
-  // the MCP servers the chat turned off
+  // the MCP servers the chat turned off, and the devices' Claude Code ones
+  // it didn't turn on
   export function off(tools: Tools): string[] {
-    return tools.mem.off ?? [];
+    const claude = [...tools.mcp.all.values()].filter((s) => s.conf.claude !== undefined && !(tools.mem.on ?? []).includes(s.conf.name));
+    return [...(tools.mem.off ?? []), ...claude.map((s) => s.conf.name)];
   }
 
   // the MCP server of `who`'s tool `name`, if it is on (named for it: it
@@ -589,11 +618,13 @@ export namespace Tools {
     if (own === undefined) {
       Tools.forget(tools, name);
     }
-    const d = tools.devices.get(name) ?? { who, host, terms: new Map(), jobs: new Map(), skills: [] };
+    const d = tools.devices.get(name) ?? { who, host, terms: new Map(), jobs: new Map(), skills: [], mcps: [] };
     d.terms.set(term, link);
     tools.devices.set(name, d);
     Tools.sync(d, term, () => true);
-    Tools.look(tools, name);
+    // told once looked at, even unchanged: its leave told the chat it had
+    // none (Chat.leave), and a reconnect keeps what it had
+    Tools.look(tools, name).then(() => tools.hooks.change());
     return name;
   }
 

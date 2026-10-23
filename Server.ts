@@ -984,7 +984,7 @@ export namespace Chat {
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, why, msgs: batch.b - batch.a, open: batch.open };
     const timers = chat.mem.timers.map((t) => ({ ...t, text: t.text.length > TIMER_TEXT ? t.text.slice(0, TIMER_TEXT) + "…" : t.text }));
-    const mcp = config.MCP.map(({ name }) => ({ name, on: !chat.mem.off.includes(name) }));
+    const mcp = [...config.MCP.map(({ name }) => name), ...Tools.claude(chat.tools)].map((name) => ({ name, on: !Tools.off(chat.tools).includes(name) }));
     const labels = Object.fromEntries(chat.tools.labels);
     const tasks = Tasks.tasks_view(Tasks.tasks_load(chat.mem.dir), Date.now());
     const skills = Tools.opened(chat.tools).flatMap(([device, d]) => d.skills.map((s) => ({ name: s.name, description: s.description, device })));
@@ -1194,15 +1194,21 @@ export namespace Chat {
         // an MCP server on or off in this chat: one off ends, its calls
         // running failed; the chat is told, so the AI knows its tools
         // changed
+        // (a device's Claude Code one is off till turned on: mem.on)
         const name = String(msg.name);
         const on = msg.on === true || msg.on === "true";
-        if (!config.MCP.some((s) => s.name === name)) {
+        const claude = Tools.claude(chat.tools).includes(name);
+        if (!claude && !config.MCP.some((s) => s.name === name)) {
           return { error: "No MCP server " + name + "." };
         }
-        if (chat.mem.off.includes(name) !== on) {
+        if (Tools.off(chat.tools).includes(name) !== on) {
           return {};
         }
-        chat.mem.off = on ? chat.mem.off.filter((n) => n !== name) : [...chat.mem.off, name];
+        if (claude) {
+          chat.mem.on = on ? [...chat.mem.on, name] : chat.mem.on.filter((n) => n !== name);
+        } else {
+          chat.mem.off = on ? chat.mem.off.filter((n) => n !== name) : [...chat.mem.off, name];
+        }
         Memory.save(chat.mem);
         if (!on) {
           Tools.unplug(chat.tools, name);
