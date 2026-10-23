@@ -971,6 +971,9 @@ function term_frame(t: Term, p: Panel.Panel): void {
   const under = t.scr.off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", fw)];
   const tasks = Panel.panel_width(w) === 0 ? term_tasks_line(t.v, fw) : [];
   const foot  = term_inset([Paint.rule_line(t.v, fw), ...(input?.lines ?? []), ...under, ...tasks, Paint.tabs_line(t.v, fw)]);
+  // ponytail: the whole chat laid out at each paint (a frame apart while
+  // it streams); bounded by the memory's view, cache by its parts if a
+  // long one lags
   const body  = term_lines([...View.view_body(t.v), ...View.view_tail(t.v)]);
   const lines = Panel.panel_frame(p, t.v, body, foot, w, h);
   const at    = input === null || off ? null : { row: h - foot.length + 1 + input.at.row, col: input.at.col + MARGIN };
