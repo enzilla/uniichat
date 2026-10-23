@@ -288,7 +288,11 @@ function task_lines(v: View.View, t: Task, mark: string, more: string[], w: numb
   const said  = [...(t.who === "unii" ? ["com o Unii"] : []), ...(t.ref === null ? [] : [t.ref]), ...(t.answer === null ? [] : ["resposta: " + t.answer]), ...more].map(Paint.text_clean).join(" · ");
   const runs  = [...(frees === "" ? [] : [Paint.Run(frees, { ...Paint.INK, c: Theme.ANSI.frees })]), ...(frees !== "" && said !== "" ? [Paint.Run(" · ", Paint.DIM)] : []), ...(said === "" ? [] : [Paint.Run(said, Paint.DIM)])];
   const tail  = runs.length === 0 ? [] : Paint.runs_wrap(runs, Math.max(4, w - INDENT), false).map((l) => [pad, ...l]);
-  const opts  = mark === " " || t.state !== "open" ? [] : t.choices.map((c, k) => [pad, Paint.Run(k + 1 + ") ", BOLD), Paint.Run(Paint.text_clean(c))]);
+  // each choice, and under it what it means (dimmed), wrapped
+  const opts  = mark === " " || t.state !== "open" ? [] : t.choices.flatMap((c, k) => [
+    [pad, Paint.Run(k + 1 + ") ", BOLD), Paint.Run(Paint.text_clean(c))],
+    ...(t.hints?.[k] ? Paint.runs_wrap([Paint.Run(Paint.text_clean(t.hints[k]), Paint.DIM)], Math.max(4, w - INDENT - 3), false).map((l) => [pad, Paint.Run("   "), ...l]) : []),
+  ]);
   return [...lines, ...tail, ...opts];
 }
 

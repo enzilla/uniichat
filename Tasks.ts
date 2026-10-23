@@ -47,7 +47,8 @@ export type Who   = "user" | "unii";
 
 // a pending item (rev: the list's version at the last change by the
 // user, Store.rev): id ("P7"), title, detail (Markdown), state, who must
-// act, who made it ("main", "user"), the answers offered, the one chosen,
+// act, who made it ("main", "user"), the answers offered and what each
+// means (hints, by the answer's place: "" for none), the one chosen,
 // the comment it was closed with, a free link (a project, an agent, a
 // PR), when made, last changed and closed (ISO), whether Unii saw its
 // last change by the user; the ids it waits for (TaskDeps.ts), and
@@ -60,6 +61,7 @@ export type Task = {
   who     : Who;
   by      : string;
   choices : string[];
+  hints   : string[];
   answer  : string | null;
   note    : string | null;
   ref     : string | null;
@@ -98,6 +100,7 @@ export const TITLE   = 200;
 export const DETAIL  = 2000;
 export const NOTE    = 1000;
 export const CHOICE  = 80;
+export const HINT    = 300;
 export const CHOICES = 9;
 export const REF     = 100;
 
@@ -173,7 +176,13 @@ export function task_read(x: unknown, now: number): Task | null {
     return null;
   }
   const state = STATES.includes(o.state as State) ? (o.state as State) : "open";
-  const choices = Array.isArray(o.choices) ? [...new Set(o.choices.filter((c) => typeof c === "string").map((c) => text_line(c, CHOICE)).filter((c) => c !== ""))].slice(0, CHOICES) : [];
+  // choices kept as answers and hints, or, as Unii may give them, each
+  // its label and description (choices_read); a list without hints, as
+  // older files keep, has none
+  const hint = (k: number) => (Array.isArray(o.hints) && typeof o.hints[k] === "string" ? o.hints[k] : "");
+  const given = (Array.isArray(o.choices) ? o.choices : []).flatMap((c, k) => (typeof c === "string" ? [{ label: c, description: hint(k) }] : typeof c?.label === "string" ? [c] : []));
+  const read = choices_read(given);
+  const { choices, hints } = typeof read === "string" ? choices_read(given.slice(0, CHOICES)) as Choices : read;
   const answer = typeof o.answer === "string" ? text_line(o.answer, CHOICE) : "";
   const text = (y: unknown, n: number, f: (y: unknown, n: number) => string) => (typeof y === "string" ? f(y, n) : "");
   const note = text(o.note, NOTE, text_body);
@@ -189,6 +198,7 @@ export function task_read(x: unknown, now: number): Task | null {
     who     : o.who === "unii" ? "unii" : "user",
     by      : text(o.by, 40, text_line) || "main",
     choices,
+    hints,
     answer  : state === "done" && choices.includes(answer) ? answer : null,
     note    : note === "" ? null : note,
     ref     : ref === "" ? null : ref,
@@ -321,16 +331,21 @@ export function task_find(s: Store, id: unknown): Task | null {
 // Changes
 // =======
 
-// a choices list as given: strings, each a line, none empty or twice
-function choices_read(x: unknown): string[] | string {
+// the answers offered and what each means, by place
+type Choices = { choices: string[]; hints: string[] };
+
+// a choices list as given: each a label, or { label, description } (a
+// line each), none empty or twice (the first kept)
+function choices_read(x: unknown): Choices | string {
   if (x === undefined || x === null) {
-    return [];
+    return { choices: [], hints: [] };
   }
   if (!Array.isArray(x)) {
-    return "choices is a list of strings.";
+    return "choices is a list of { label, description } (or of strings).";
   }
-  const all = [...new Set(x.map((c) => text_line(c, CHOICE)).filter((c) => c !== ""))];
-  return all.length > CHOICES ? "At most " + CHOICES + " choices." : all;
+  const all = x.map((c): Record<string, unknown> => (typeof c === "object" && c !== null ? c : { label: c })).map((c) => ({ label: text_line(c.label, CHOICE), hint: text_line(c.description, HINT) }));
+  const kept = all.filter((c, k) => c.label !== "" && all.findIndex((d) => d.label === c.label) === k);
+  return kept.length > CHOICES ? "At most " + CHOICES + " choices." : { choices: kept.map((c) => c.label), hints: kept.map((c) => c.hint) };
 }
 
 // an after list as given (["P3", "P4"], or "P3, P4"; null: none): ids
@@ -394,7 +409,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number): Task | 
   const at = new Date(now).toISOString();
   const ref = text_line(args.ref, REF);
   const task: Task = {
-    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", who, by, choices, answer: null, note: null,
+    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", who, by, ...choices, answer: null, note: null,
     ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0, after, freed: false,
   };
   s.next += 1;
@@ -433,7 +448,8 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
     if (typeof choices === "string") {
       return choices;
     }
-    next.choices = choices;
+    next.choices = choices.choices;
+    next.hints = choices.hints;
   }
   if (args.ref !== undefined) {
     const ref = text_line(args.ref, REF);
@@ -624,7 +640,7 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const waits = all === null ? [] : Deps.waits(all, t);
   const frees = all === null ? [] : Deps.frees_direct(all, t);
   const deps = (waits.length === 0 ? "" : " waits for " + waits.join(", ")) + (frees.length === 0 ? "" : " frees " + frees.join(", ")) + (all === null && t.after.length > 0 ? " after " + t.after.join(", ") : "");
-  const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ")) + deps;
+  const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.map((c, k) => c + (t.hints[k] ? " (" + t.hints[k] + ")" : "")).join(" | ")) + deps;
   const tail = [t.ref === null ? "" : "ref " + t.ref, ago(t.made, now)].filter((x) => x !== "").join(", ");
   const how   = [t.state, t.answer === null ? "" : "answer: " + t.answer, t.note === null ? "" : "note: " + JSON.stringify(t.note)].filter((x) => x !== "");
   const state = t.state === "open" ? "" : " (" + how.join(", ") + ")";

@@ -650,7 +650,7 @@ export function tasks_footer(v: View, w: number): string {
 export function tasks_md(v: View, one: Task | null = null, waiting = false): string {
   const STATE = { open: "aberta", done: "concluída", dropped: "descartada" };
   const tag = (t: Task) => (t.ref === null ? "" : " · " + t.ref);
-  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c).join("  "));
+  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c + (t.hints?.[k] ? " (" + t.hints[k] + ")" : "")).join("  "));
   if (one !== null) {
     const said = [one.answer === null ? "" : "Resposta: " + one.answer + ".", one.note === null ? "" : "Comentário: " + one.note].filter((x) => x !== "").join(" ");
     const waits = Deps.waits(v.tasks, one);
