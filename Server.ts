@@ -1538,6 +1538,10 @@ export namespace Main {
     if (id === null) {
       return Response.json({ error: "Send { id, task }: id of letters, digits, . : _ - (at most 120)." }, { status: 400 });
     }
+    const odd = Object.keys(msg).filter((k) => k !== "id" && k !== "task");
+    if (odd.length > 0) {
+      return Response.json({ error: "Send { id, task } only; unknown key(s): " + odd.slice(0, 5).map((k) => Tasks.text_line(k, 40)).join(", ") + "." }, { status: 400 });
+    }
     const was = Owner.act_get(id);
     if (was !== null) {
       return Response.json({ ...was, again: true });

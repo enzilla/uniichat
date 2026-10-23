@@ -185,6 +185,48 @@ test("by the server's router: reached without a session; another site's post ref
   expect((await Main.http(req({ authorization: "" }, "r3"), null as any))!.status).toBe(401);
 });
 
+test("a key beside id and task: refused, nothing added", async () => {
+  const before = JSON.stringify(s.tasks);
+  const res = await post({ id: "k1", task: slack({ ref: "slack:K1", title: "Slack: K1" }), evil: 1 });
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toContain("unknown key(s): evil");
+  expect(JSON.stringify(s.tasks)).toBe(before);
+});
+
+test("choices that aren't strings: refused, not read as [object Object]", async () => {
+  const before = JSON.stringify(s.tasks);
+  for (const [k, choices] of [[{ a: 1 }], ["Sim", 2], ["Sim", null], [["x"]]].entries()) {
+    const res = await post({ id: "ch" + k, task: slack({ ref: "slack:CH", title: "Slack: CH", choices }) });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("choices is a list of strings");
+  }
+  expect(JSON.stringify(s.tasks)).toBe(before);
+});
+
+test("origin_url: https only", async () => {
+  const before = JSON.stringify(s.tasks);
+  const res = await post({ id: "u1", task: slack({ ref: "slack:U1", title: "Slack: U1", origin_url: "http://numih.slack.com/archives/D1/p1" }) });
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toContain("https link");
+  expect(JSON.stringify(s.tasks)).toBe(before);
+  expect((await post({ id: "u2", task: slack({ ref: "slack:U2", title: "Slack: U2", origin_url: "HTTPS://numih.slack.com/archives/D1/p1" }) })).status).toBe(201);
+});
+
+test("bidi marks gone from title, detail and choices, new or appended", async () => {
+  const marks = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f";
+  const res = await post({ id: "b1", task: slack({ ref: "slack:B1", title: "Slack: \u202eacsef\u202c de Enzo" + marks, detail: "13:45 Enzo: \u2067oi\u2069\nlinha" + marks, choices: ["Sim\u200f", "Não"] }) });
+  expect(res.status).toBe(201);
+  const t = Tasks.task_find(s, (await res.json()).task)!;
+  expect(t.title).toBe("Slack: acsef de Enzo");
+  expect(t.detail).toBe("13:45 Enzo: oi\nlinha");
+  expect(t.choices).toEqual(["Sim", "Não"]);
+  const more = await post({ id: "b2", task: slack({ ref: "slack:B1", title: "Slack: de \u202eEnzo", detail: "13:50 Enzo: \u200fmais" }) });
+  expect(more.status).toBe(200);
+  expect(t.title).toBe("Slack: de Enzo");
+  expect(t.detail).toBe("13:45 Enzo: oi\nlinha\n13:50 Enzo: mais");
+  expect(/[\u202a-\u202e\u2066-\u2069\u200e\u200f]/.test(t.title + t.detail + t.choices.join(""))).toBe(false);
+});
+
 test("still no turn after all of it", async () => {
   await Bun.sleep(20);
   expect(CALLS).toBe(0);
