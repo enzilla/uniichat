@@ -184,7 +184,8 @@ export namespace Machine {
           return Machine.skill(os.homedir(), cwd, String(input.name));
         }
         case "instructions": {
-          return { text: JSON.stringify(await Instructions.global(os.homedir(), work, Instructions.MANAGED, WAIT)), fail: false };
+          // the device's work dir: the agents' dirs are in it (Machine.run)
+          return { text: JSON.stringify(await Instructions.global(os.homedir(), path.dirname(cwd), Instructions.MANAGED, WAIT)), fail: false };
         }
         case "project_instructions": {
           const at = (Array.isArray(input.paths) ? input.paths : []).map((p: unknown) => path.resolve(cwd, String(p).replace(/^~(?=\/|$)/, os.homedir())));

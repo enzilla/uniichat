@@ -150,3 +150,15 @@ test("a file read brings the instructions now in force for it, once; its path st
     Tools.open = open;
   }
 });
+
+test("the device's instructions job runs through Machine.run, its hooks around it, and answers the parts", async () => {
+  const { Machine } = await import("./Machine.ts");
+  const work = fs.mkdtempSync(os.tmpdir() + "/unii-work-");
+  try {
+    const out = await Machine.run({ name: "instructions", input: {}, cwd: "main" }, work, new AbortController().signal);
+    expect(out.fail).toBe(false);
+    expect(Array.isArray(JSON.parse(out.text))).toBe(true);
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+});
