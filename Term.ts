@@ -32,7 +32,8 @@ import * as View from "./View.ts";
 // next message; flow: how much of each message streaming is printed
 // (Infinity: logged); logs: of each agent's page, the messages printed;
 // panel: the full screen's (null: the classic scrollback, or a pipe);
-// menu: the commands' menu over the input (Menu)
+// menu: the commands' menu over the input (Menu); chooser: a list to
+// choose from over the input, while open (Chooser)
 type Term = {
   v       : View.View;
   scr     : Screen.Screen;
@@ -51,7 +52,16 @@ type Term = {
   logs    : Map<string, number>;
   panel   : Panel.Panel | null;
   menu    : Menu;
+  chooser : Chooser | null;
 };
+
+// a choice of a list (a command without its value: /model, /mcp): its
+// title, its items, the one picked, the text typed that filters them
+type Chooser = { title: string; items: Choice[]; sel: number; typed: string };
+
+// an item: as shown, a note dimmed beside it, whether it is the one now,
+// what choosing it does
+type Choice = { text: string; note: string; now: boolean; run: () => void };
 
 // the commands' menu: the item picked, the input it was for, whether Esc
 // shut it for that input
@@ -188,6 +198,7 @@ function term_new(url: string, token: string): Term {
     logs    : new Map(),
     panel   : null,
     menu    : { sel: 0, text: "", shut: false },
+    chooser : null,
   };
   t.scr.first = (key) => term_menu_key(t, key);
   process.stdin.on("end", () => {
@@ -319,6 +330,10 @@ function term_idle(t: Term): void {
 // a key ("": text typed): its line of COMMANDS (an agent's page: of
 // PAGE_KEYS)
 function term_press(t: Term, key: string): void {
+  if (t.chooser !== null && key !== "") {
+    term_chooser_key(t, t.chooser, key);
+    return term_draw(t);
+  }
   if (t.panel !== null && term_panel(t, t.panel, key)) {
     return term_draw(t);
   }
@@ -425,7 +440,7 @@ function term_menu(t: Term): Item[] {
   if (m.text !== text) {
     [m.sel, m.text, m.shut] = [0, text, false];
   }
-  if (m.shut || t.scr.off || t.panel?.focus || !/^\/\S*$/.test(text)) {
+  if (m.shut || t.scr.off || t.panel?.focus || t.chooser !== null || !/^\/\S*$/.test(text)) {
     return [];
   }
   const own    = term_commands(t.v).filter((c) => c[0] !== "").map((c): Item => ({ name: c[0].split(" ")[0], text: c[2], where: "" }));
@@ -491,6 +506,79 @@ function term_menu_lines(t: Term, w: number): Paint.Line[] {
   };
   const more = items.length > MENU ? " · " + items.length + " comandos" : "";
   return [...seen.map(line), [Paint.Run("  Tab completa · ↑↓ escolhe · Esc fecha" + more, Paint.DIM)]];
+}
+
+// Chooser
+// -------
+
+// the most items a chooser shows at once
+const CHOOSER = 10;
+
+// a list to choose from opens over the input, the one now picked; on a
+// pipe, its items are a note instead (none to choose)
+function term_choose(t: Term, title: string, items: Choice[]): void {
+  if (!t.scr.tty || items.length === 0) {
+    return term_note(t, title + ": " + (items.length === 0 ? "nenhum." : items.map((c) => c.text + (c.now ? " (atual)" : "")).join(", ") + "."));
+  }
+  t.chooser = { title, items, sel: Math.max(0, items.findIndex((c) => c.now)), typed: "" };
+  t.scr.grab = true;
+}
+
+// the items the text typed fits (in its order: those that start with it,
+// then those that hold it)
+function chooser_seen(c: Chooser): Choice[] {
+  const typed = c.typed.toLowerCase();
+  const text  = (x: Choice) => (x.text + " " + x.note).toLowerCase();
+  return [...c.items.filter((x) => x.text.toLowerCase().startsWith(typed)), ...c.items.filter((x) => !x.text.toLowerCase().startsWith(typed) && text(x).includes(typed))];
+}
+
+// a key while a chooser is open: the arrows pick (around), Enter chooses,
+// a digit chooses that item, Esc shuts it, a character filters,
+// Backspace takes one back; it takes every key
+function term_chooser_key(t: Term, c: Chooser, key: string): void {
+  const seen = chooser_seen(c);
+  const shut = () => {
+    t.chooser = null;
+    t.scr.grab = t.panel?.focus ?? false;
+  };
+  if (key === "Up" || key === "Down") {
+    c.sel = seen.length === 0 ? 0 : (c.sel + (key === "Up" ? seen.length - 1 : 1)) % seen.length;
+  } else if (key === "Enter" || (c.typed === "" && /^[1-9]$/.test(key) && Number(key) <= seen.length)) {
+    const item = key === "Enter" ? seen[c.sel] : seen[Number(key) - 1];
+    shut();
+    item?.run();
+  } else if (key === "Esc" || key === "Ctrl+C") {
+    shut();
+  } else if (key === "Backspace") {
+    [c.typed, c.sel] = [c.typed.slice(0, -1), 0];
+  } else if (Paint.text_width(key) === 1 && !key.includes("+")) {
+    [c.typed, c.sel] = [c.typed + key, 0];
+  }
+}
+
+// the chooser's lines, w wide: its title and keys, the items around the
+// one picked (numbered, the one now marked), the filter typed
+function term_chooser_lines(t: Term, w: number): Paint.Line[] {
+  const c = t.chooser;
+  if (c === null) {
+    return [];
+  }
+  const seen = chooser_seen(c);
+  c.sel = Math.min(c.sel, Math.max(0, seen.length - 1));
+  const from = Math.max(0, Math.min(c.sel - CHOOSER + 1, seen.length - CHOOSER));
+  const room = Math.min(32, Math.max(0, ...seen.map((x) => Paint.text_width(x.text)))) + 2;
+  const head = [Paint.Run(c.title, { ...Paint.INK, b: true, c: Theme.ANSI.cmd }), Paint.Run("  ↑↓ escolhe · Enter confirma · Esc cancela · digite para filtrar", Paint.DIM)];
+  const line = (x: Choice, k: number): Paint.Line => {
+    const here = x === seen[c.sel];
+    const mark = Paint.Run((here ? "▸ " : "  ") + (from + k < 9 && c.typed === "" ? from + k + 1 + ". " : "   "), here ? { ...Paint.INK, b: true } : Paint.DIM);
+    const text = Paint.Run(x.text.padEnd(room), { ...Paint.INK, b: here, c: here ? Theme.ANSI.cmd : "" });
+    const note = Paint.Run((x.now ? "atual" + (x.note === "" ? "" : " · ") : "") + x.note, x.now ? { ...Paint.INK, c: Theme.ANSI.here } : Paint.DIM);
+    return Paint.runs_wrap([mark, text, note], w, true)[0];
+  };
+  const list = seen.length === 0 ? [[Paint.Run("  nada encontrado", Paint.DIM)]] : seen.slice(from, from + CHOOSER).map(line);
+  const more = seen.length > CHOOSER ? [[Paint.Run("  " + seen.length + " itens", Paint.DIM)]] : [];
+  const typed = c.typed === "" ? [] : [[Paint.Run("  filtro: ", Paint.DIM), Paint.Run(c.typed, { ...Paint.INK, b: true })]];
+  return [Paint.runs_wrap(head, w, true)[0], ...list, ...more, ...typed];
 }
 
 // Commands
@@ -628,7 +716,8 @@ function term_fold(t: Term): void {
 function term_tab(t: Term, arg: string): void {
   const main = arg.toLowerCase() === View.MAIN.toLowerCase();
   if (arg === "") {
-    return term_note(t, "Tabs: " + View.view_tabs(t.v).map((tab) => tab.text + (tab.sub === undefined ? "" : " (" + tab.sub + ")")).join("  "));
+    const tabs = View.view_tabs(t.v).map((tab): Choice => ({ text: Paint.text_clean(View.agent_label(tab.name ?? "") ?? tab.name ?? View.MAIN), note: tab.sub ?? "", now: tab.here, run: () => term_act(t, { $: "Goto", name: tab.name }) }));
+    return term_choose(t, "Abas", tabs);
   }
   const name = main ? null : term_agent(t, arg);
   if (main || name !== null) {
@@ -677,7 +766,21 @@ function term_pick(t: Term, move: Move, arg: string): void {
   const twins = move === "model" && heads.length > 1 && opts.some(([part, p]) => p.profile === undefined && Pick.twin(p.vendor, part, t.v.vendors));
   const list  = twins ? heads.map((v) => v + ": " + group(v)).join("; ") : [...new Set(opts.map(now))].join(", ");
   const how   = twins ? "/model <model>, or /model <vendor>:<model>" : "/" + move + " <" + move + ">";
-  term_note(t, move[0].toUpperCase() + move.slice(1) + "s: " + list + ". Pick one with " + how + ".");
+  if (!t.scr.tty) {
+    return term_note(t, move[0].toUpperCase() + move.slice(1) + "s: " + list + ". Pick one with " + how + ".");
+  }
+  // each value once (a model under each vendor offering it, when two do),
+  // its vendor or "profiles" beside it
+  const seen  = new Set<string>();
+  const items = opts.flatMap(([part, p]): Choice[] => {
+    const to = twins && p.profile === undefined ? head(p) + ":" + part : part;
+    if (seen.has(to)) {
+      return [];
+    }
+    seen.add(to);
+    return [{ text: part, note: move === "model" ? head(p) : "", now: part === knob.text && head(p) === head(pick), run: () => term_act(t, { $: "Move", move, to }) }];
+  });
+  term_choose(t, { model: "Modelo", effort: "Esforço", speed: "Velocidade" }[move as string] ?? move, items);
 }
 
 // the MCP servers the server's config sets, on or off in this chat; with
@@ -688,6 +791,9 @@ function term_mcp(t: Term, arg: string): void {
     return;
   }
   const list = t.v.mcp.map((p) => p.name + (p.on ? " (on)" : " (off)"));
+  if (t.scr.tty && list.length > 0) {
+    return term_choose(t, "Servidores MCP (Enter liga ou desliga)", t.v.mcp.map((p): Choice => ({ text: p.name, note: p.on ? "ligado" : "desligado", now: false, run: () => term_act(t, { $: "Plug", name: p.name }) })));
+  }
   term_note(t, list.length === 0 ? "No MCP servers: the server's config sets none." : "MCP servers: " + list.join(", ") + ". Turn one on or off with /mcp <name>.");
 }
 
@@ -1062,7 +1168,7 @@ function term_paint(t: Term): void {
   const input = off ? null : Screen.screen_input(t.scr, iw, room - 3, View.HINT + " · /help");
   // with no input, the rule under it only to say offline
   const under = off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", iw, OFFLINE)];
-  const menu  = term_menu_lines(t, iw);
+  const menu  = t.chooser !== null ? term_chooser_lines(t, iw) : term_menu_lines(t, iw);
   const own   = term_inset([...menu, Paint.rule_line(t.v, iw), ...(input?.lines ?? []), ...under, ...term_tasks_line(t.v, iw), Paint.tabs_line(t.v, iw)]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];
@@ -1088,7 +1194,7 @@ function term_frame(t: Term, p: Panel.Panel): void {
   const input = t.scr.off ? null : Screen.screen_input(t.scr, fw, Math.max(1, Math.floor(h / 3)), p.focus ? "Ctrl+P ou Esc volta à mensagem" : View.HINT + " · /help");
   const under = t.scr.off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", fw, OFFLINE)];
   const tasks = Panel.panel_width(w) === 0 ? term_tasks_line(t.v, fw) : [];
-  const menu  = term_menu_lines(t, fw);
+  const menu  = t.chooser !== null ? term_chooser_lines(t, fw) : term_menu_lines(t, fw);
   const foot  = term_inset([...menu, Paint.rule_line(t.v, fw), ...(input?.lines ?? []), ...under, ...tasks, Paint.tabs_line(t.v, fw)]);
   // ponytail: the whole chat laid out at each paint (a frame apart while
   // it streams); bounded by the memory's view, cache by its parts if a
