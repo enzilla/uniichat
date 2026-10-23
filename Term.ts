@@ -416,13 +416,6 @@ function term_page_key(t: Term, key: string): void {
 // the most items the menu shows at once
 const MENU = 8;
 
-// a device's skill, as the server's state lists them (Machine.skills)
-type Skill = { name: string; description: string; device: string };
-
-function term_skills(v: View.View): Skill[] {
-  return (v as View.View & { skills?: Skill[] }).skills ?? [];
-}
-
 // the commands that fit a /word being typed (none once a space follows
 // it, or Esc shut it): this terminal's, then the devices' skills; those
 // that start with it first, then those that hold it
@@ -436,7 +429,7 @@ function term_menu(t: Term): Item[] {
     return [];
   }
   const own    = term_commands(t.v).filter((c) => c[0] !== "").map((c): Item => ({ name: c[0].split(" ")[0], text: c[2], where: "" }));
-  const skills = term_skills(t.v).map((s): Item => ({ name: "/" + s.name, text: s.description, where: s.device }));
+  const skills = t.v.skills.map((s): Item => ({ name: "/" + s.name, text: s.description, where: s.device }));
   const all    = [...own, ...skills].filter((x, k, xs) => xs.findIndex((y) => y.name === x.name) === k);
   const typed  = text.toLowerCase();
   const starts = all.filter((x) => x.name.toLowerCase().startsWith(typed));
