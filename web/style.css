@@ -271,6 +271,12 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 .more > summary::after { content: "Show all"; }
 .more[open] > summary::after { content: "Fold"; }
 .more > summary:hover { color: var(--ink); }
+/* a tool's long call or result (Html.ts SHORT) folded to about six lines,
+   faded out at its foot */
+.msg:has(> .more.out:not([open])) > .clip { max-height: 12.5em; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
+.more.out > summary { margin-top: 2px; font-size: 12.5px; }
+.more.out > summary::after { content: "Mostrar tudo (" attr(data-n) ")"; }
+.more.out[open] > summary::after { content: "Mostrar menos"; }
 
 /* a message, by kind */
 .msg { position: relative; overflow-wrap: anywhere; font: 17.5px/1.68 var(--serif); color: var(--fg); font-style: var(--it); }

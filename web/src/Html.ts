@@ -30,6 +30,10 @@ const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"
 // shows its head; its `details` unfolds it (style.css)
 const TALL = 4000;
 
+// a tool's call or result past SHORT lines (a pre's don't wrap) shows
+// its first lines, faded; its `details` ("out") unfolds it (style.css)
+const SHORT = 8;
+
 // the Copy button's icons: two sheets, and a check once copied
 export const SHEETS = `<svg viewBox="0 0 16 16" width="15" height="15"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 3.5v-.2A1.8 1.8 0 0 0 8.7 1.5H4.3A1.8 1.8 0 0 0 2.5 3.3v4.4a1.8 1.8 0 0 0 1.8 1.8h.2"/></svg>`;
 export const CHECK  = `<svg viewBox="0 0 16 16" width="15" height="15"><path d="M3 8.5l3.2 3L13 4.5"/></svg>`;
@@ -77,11 +81,16 @@ function row_make(row: View.Row): string {
     }
     case "Msg": {
       const at = row.id === null ? "" : ` data-a="${row.id}"`;
-      const copy = copy_html(row.call === null ? row.text : Call.call_text(row.call));
+      const text = row.call === null ? row.text : Call.call_text(row.call);
+      const copy = copy_html(text);
       const body = row.call === null ? row.body.map(block_html).join("") : call_html(row.call);
       const pics = images_html(row.images);
       const tall = ["user", "work"].includes(row.kind) && row.text.length + 80 * row.text.split("\n").length > TALL;
-      const fold = tall ? `<div class="clip">${body}</div><details class="more"><summary></summary></details>` : body;
+      const lines = text.trim().split("\n").length;
+      const long = ["tool", "echo"].includes(row.kind) && lines > SHORT;
+      const fold = tall ? `<div class="clip">${body}</div><details class="more"><summary></summary></details>`
+        : long ? `<div class="clip">${body}</div><details class="more out"><summary data-n="${lines} linhas"></summary></details>`
+        : body;
       const who = row.who === "" ? "" : ` data-who="${esc(row.who)}"`;
       return `<div class="msg ${row.kind}"${at}${who}>${copy}${fold}${pics}</div>`;
     }

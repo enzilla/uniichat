@@ -488,13 +488,18 @@ function name_word(word) {
 
 // Md.ts
 var NAME2 = new RegExp("\\[(" + NAME + ")\\]", "g");
+var HREF = /(?:https?:\/\/|mailto:|\/(?![\s\/\\]))/.source;
+var CTRL = "\\x00-\\x1f\\x7f";
+var HOLD = /\[[^\]\n]*\]\([^)\n]*\)/.source;
+var IN = HOLD + "|[^*\\n\\[]|(?!" + HOLD + ")\\[";
 var SPAN = new RegExp([
   /`([^`\n]+)`/.source,
-  /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|\/(?!\/)[^\s)]*)\)/.source,
+  "\\[([^\\]\\n]+)\\]\\((<" + HREF + "[^>" + CTRL + "]*>|" + HREF + "(?:[^\\s()" + CTRL + "]|\\([^\\s()" + CTRL + "]*\\))*)" + /(?:\s+"[^"\n]*")?\)/.source,
   NAME2.source,
-  /\*\*([^*\n]+)\*\*/.source,
-  /(?<![*\w])\*([^*\s][^*\n]*?)\*(?![\w*])/.source,
-  /(?<![^\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/.source
+  "\\*\\*(?!\\*)((?:" + IN + "|\\*(?!\\*))+?)\\*\\*",
+  "(?<![*\\w])\\*(?![*\\s])((?:" + IN + ")+?)\\*(?![\\w*])",
+  /(?<![^\s(])(https?:\/\/(?:[^\s<()\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\))*(?:[^\s<().,;:!?\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\)))/.source,
+  /<(https?:\/\/[^\s<>\x00-\x1f\x7f]+)>/.source
 ].join("|"), "g");
 var LIST = /^ {0,3}([-*+]|\d{1,9}[.)])(?=[ \t]|$)/;
 var FENCE = /^\s*```/;
@@ -538,21 +543,43 @@ function span_mark(m) {
     return { $: "Code", x: m[1] };
   }
   if (m[2] !== undefined) {
-    return { $: "Link", x: m[2], k: m[3] };
+    return { $: "Link", x: unlinked(span_parse(m[2])), k: m[3].replace(/^<(.*)>$/, "$1") };
   }
   if (m[4] !== undefined) {
     return Name(m[4]);
   }
   if (m[5] !== undefined) {
-    return { $: "Bold", x: m[5] };
+    return { $: "Bold", x: span_parse(m[5]) };
   }
   if (m[6] !== undefined) {
-    return { $: "Ital", x: m[6] };
+    return { $: "Ital", x: span_parse(m[6]) };
   }
-  return { $: "Link", x: m[7], k: m[7] };
+  if (m[8] !== undefined) {
+    return { $: "Link", x: [Text(m[8])], k: m[8] };
+  }
+  return { $: "Link", x: [Text(m[7])], k: m[7] };
+}
+function unlinked(spans) {
+  return spans.flatMap((s) => {
+    switch (s.$) {
+      case "Link":
+        return unlinked(s.x);
+      case "Name":
+        return [Text("[" + s.x + "]")];
+      case "Bold":
+        return [{ $: "Bold", x: unlinked(s.x) }];
+      case "Ital":
+        return [{ $: "Ital", x: unlinked(s.x) }];
+      default:
+        return [s];
+    }
+  });
 }
 function md_flat(s) {
-  return span_parse(s).map((span) => span.x).join("");
+  return span_parse(s).map(span_flat).join("");
+}
+function span_flat(s) {
+  return typeof s.x === "string" ? s.x : s.x.map(span_flat).join("");
 }
 function md_plain(s) {
   const paras = s.replace(/\r/g, "").split(/\n(?:[ \t]*\n)+/);
@@ -1405,6 +1432,7 @@ function timer_when(t) {
 // web/src/Html.ts
 var ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
 var TALL = 4000;
+var SHORT2 = 8;
 var SHEETS = `<svg viewBox="0 0 16 16" width="15" height="15"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 3.5v-.2A1.8 1.8 0 0 0 8.7 1.5H4.3A1.8 1.8 0 0 0 2.5 3.3v4.4a1.8 1.8 0 0 0 1.8 1.8h.2"/></svg>`;
 var CHECK = `<svg viewBox="0 0 16 16" width="15" height="15"><path d="M3 8.5l3.2 3L13 4.5"/></svg>`;
 var MARKS2 = { " ": "", "-": "del", "+": "add" };
@@ -1438,12 +1466,16 @@ function row_make(row) {
     }
     case "Msg": {
       const at = row.id === null ? "" : ` data-a="${row.id}"`;
-      const copy = copy_html(row.call === null ? row.text : call_text(row.call));
+      const text = row.call === null ? row.text : call_text(row.call);
+      const copy = copy_html(text);
       const body = row.call === null ? row.body.map(block_html).join("") : call_html(row.call);
       const pics = images_html(row.images);
       const tall = ["user", "work"].includes(row.kind) && row.text.length + 80 * row.text.split(`
 `).length > TALL;
-      const fold = tall ? `<div class="clip">${body}</div><details class="more"><summary></summary></details>` : body;
+      const lines = text.trim().split(`
+`).length;
+      const long = ["tool", "echo"].includes(row.kind) && lines > SHORT2;
+      const fold = tall ? `<div class="clip">${body}</div><details class="more"><summary></summary></details>` : long ? `<div class="clip">${body}</div><details class="more out"><summary data-n="${lines} linhas"></summary></details>` : body;
       const who = row.who === "" ? "" : ` data-who="${esc(row.who)}"`;
       return `<div class="msg ${row.kind}"${at}${who}>${copy}${fold}${pics}</div>`;
     }
@@ -1731,13 +1763,13 @@ function span_html(s) {
       return `<code>${esc(s.x)}</code>`;
     }
     case "Bold": {
-      return `<strong>${esc(s.x)}</strong>`;
+      return `<strong>${spans_html(s.x)}</strong>`;
     }
     case "Ital": {
-      return `<em>${esc(s.x)}</em>`;
+      return `<em>${spans_html(s.x)}</em>`;
     }
     case "Link": {
-      return `<a href="${esc(s.k)}" target="_blank" rel="noopener">${esc(s.x)}</a>`;
+      return `<a href="${esc(s.k)}" target="_blank" rel="noopener">${spans_html(s.x)}</a>`;
     }
     case "Name": {
       return `<button class="name"${act_html({ $: "Goto", name: s.x })}>[${esc(s.x)}]</button>`;
