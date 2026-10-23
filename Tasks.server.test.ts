@@ -272,3 +272,10 @@ test("fields: a draft is no turn and no note; done refused till the required are
   await idle();
   expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain("[Pendências] Pendência " + t.id + " concluída pelo usuário: “Reiniciar o serve?”. Respostas: Quando: à noite; Obs: “sem pressa”.");
 });
+
+test("the views' state carries the site's build (a page of another one reloads: main.ts desk_build)", () => {
+  const web = (Chat.state(chat) as any).web;
+  expect(typeof web).toBe("string");
+  expect(web).toMatch(/^[0-9a-z]+\.[0-9a-z]+$/);
+  expect((Chat.state(chat) as any).web).toBe(web);
+});

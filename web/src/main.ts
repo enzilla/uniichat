@@ -75,7 +75,23 @@ const P = {
   off   : new Set<string>(),
   step  : "" as "" | "start" | "send" | "run" | "seen" | "done",
   push  : null as { reg: ServiceWorkerRegistration; key: string } | null,
+  // the Mesa's (desk): which screen shows (chat: the Conversa); chose:
+  // the first state picked it (P19); sel: the task shown; q, ref: the
+  // search and the project; pane: on a narrow screen, the task shown
+  // (else the list); ids: the list's order; web: the site's build the
+  // page first heard (another one reloads it)
+  mode  : (sessionStorage.getItem(kept("mode")) === "desk" ? "desk" : "chat") as "chat" | "desk",
+  chose : false,
+  sel   : null as string | null,
+  q     : "",
+  ref   : "",
+  pane  : false,
+  ids   : [] as string[],
+  web   : null as string | null,
 };
+
+// the Mesa and the list side by side, above this width (style.css)
+const NARROW = matchMedia("(max-width: 760px)");
 
 function $<T extends HTMLElement>(sel: string): T {
   return document.querySelector(sel) as T;
@@ -183,15 +199,18 @@ function chat(): void {
     attach([...(ev.dataTransfer?.files ?? [])]);
   };
   document.onclick = click;
-  $("#tasks").addEventListener("change", task_draft);
+  for (const root of [$("#tasks"), $("#desk")]) {
+    root.addEventListener("change", task_draft);
+    root.addEventListener("keydown", (ev) => {
+      const el = ev.target as HTMLElement;
+      if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+        ev.preventDefault();
+        task_say(el.closest<HTMLElement>("[data-task]")!.dataset.task!, root);
+      }
+    });
+  }
   $("#tasks").addEventListener("toggle", thread_toggle, true);
-  $("#tasks").addEventListener("keydown", (ev) => {
-    const el = ev.target as HTMLElement;
-    if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
-      ev.preventDefault();
-      task_say(el.closest<HTMLElement>("li[data-task]")!.dataset.task!);
-    }
-  });
+  desk_wire();
   // a phone's keyboard up or down: the box's last line stays in sight, if
   // the caret is there; the page's bottom, if at it
   visualViewport!.onresize = () => {
@@ -289,13 +308,21 @@ function act(a: View.Act): void {
 // a click on a View.Act, a Copy button, a page (go), a knob or its
 // menu's row (Html.ts), unless it ends a selection dragged in its element
 function click(ev: MouseEvent): void {
-  const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], .choices > button");
+  const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], .choices > button");
   const sel = getSelection();
   if (el === null || (sel !== null && !sel.isCollapsed && el.contains(sel.focusNode))) {
     return;
   }
   if (el.dataset.knob !== undefined) {
     place(el);
+    return;
+  }
+  if (el.dataset.desk !== undefined) {
+    desk_open(el.dataset.desk, true);
+    return;
+  }
+  if (el.dataset.deskBack !== undefined) {
+    desk_back();
     return;
   }
   el.closest<HTMLElement>(".choices")?.hidePopover();
@@ -311,7 +338,7 @@ function click(ev: MouseEvent): void {
   if (a !== undefined) {
     const made = JSON.parse(a) as View.Act;
     if (made.$ === "TaskSay") {
-      task_say(made.task);
+      task_say(made.task, el.closest<HTMLElement>("#tasks, #desk") ?? $("#tasks"));
     } else {
       act(task_act(el, made));
     }
@@ -371,7 +398,7 @@ function left(ev: FocusEvent): void {
 // a task's Concluir, Descartar or choice (Html.tasks_html) takes its
 // item's comment and "Avisar o Unii agora"
 function task_act(el: HTMLElement, a: View.Act): View.Act {
-  const item = el.closest("li[data-task]");
+  const item = el.closest("[data-task]");
   if (a.$ !== "Task" || a.state === "open" || item === null) {
     return a;
   }
@@ -402,18 +429,19 @@ function task_fields(item: Element): Record<string, unknown> {
 
 // a field changed (a radio, a box, a text left): kept as a draft
 function task_draft(ev: Event): void {
-  const set = (ev.target as HTMLElement).closest<HTMLElement>("#tasks fieldset.field");
-  const item = set?.closest<HTMLElement>("li[data-task]");
+  const set = (ev.target as HTMLElement).closest<HTMLElement>("fieldset.field");
+  const item = set?.closest<HTMLElement>("[data-task]");
   if (set === null || set === undefined || item === null || item === undefined) {
     return;
   }
   act({ $: "TaskDraft", task: item.dataset.task!, fields: { [set.dataset.field!]: field_value(set) } });
 }
 
-// a message in a task's thread (its box's text): the box emptied, its
-// text back in it if the server refuses (and it's still empty)
-function task_say(task: string): void {
-  const box = () => document.querySelector<HTMLTextAreaElement>(`#tasks li[data-task="${CSS.escape(task)}"] textarea.say`);
+// a message in a task's thread (its box's text, in root: the aside or
+// the Mesa): the box emptied, its text back in it if the server refuses
+// (and it's still empty)
+function task_say(task: string, root: HTMLElement): void {
+  const box = () => root.querySelector<HTMLTextAreaElement>(`[data-task="${CSS.escape(task)}"] textarea.say`);
   const text = box()?.value ?? "";
   for (const msg of View.view_act(v, { $: "TaskSay", task, text })) {
     const was = box();
@@ -434,14 +462,15 @@ function task_say(task: string): void {
   draw(false);
 }
 
-// what's typed in the list and not sent (data-keep: a comment, a text
-// field, a thread's box, a box checked), and where the focus is, taken
-// before its items are made again and put back in the new ones
+// what's typed in the list (root: the aside or the Mesa's task) and not
+// sent (data-keep: a comment, a text field, a thread's box, a box
+// checked), and where the focus is, taken before its items are made
+// again and put back in the new ones
 type Kept = { el: Element; value: string | null; checked: boolean | null; focus: boolean; start: number | null; end: number | null };
-function keep_take(): Map<string, Kept> {
+function keep_take(root: HTMLElement): Map<string, Kept> {
   const kept = new Map<string, Kept>();
-  for (const el of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("#tasks li[data-task] :is(input, textarea)[data-keep]")) {
-    const key = el.closest<HTMLElement>("li[data-task]")!.dataset.task + "/" + el.dataset.keep;
+  for (const el of root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("[data-task] :is(input, textarea)[data-keep]")) {
+    const key = el.closest<HTMLElement>("[data-task]")!.dataset.task + "/" + el.dataset.keep;
     const box = el instanceof HTMLInputElement && el.type === "checkbox";
     const focus = document.activeElement === el;
     const value = !box && el.value !== el.defaultValue ? el.value : null;
@@ -452,10 +481,10 @@ function keep_take(): Map<string, Kept> {
   }
   return kept;
 }
-function keep_put(kept: Map<string, Kept>): void {
+function keep_put(root: HTMLElement, kept: Map<string, Kept>): void {
   for (const [key, k] of kept) {
     const [task, name] = key.split("/");
-    const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#tasks li[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
+    const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
     if (el === null || el === k.el) {
       continue;
     }
@@ -512,9 +541,9 @@ function tasks_bar(): void {
   $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
   $("#tasks .none").hidden = open.length > 0;
   $("#tasks .none").textContent = View.tasks_none_said(waiting.length);
-  const kept = keep_take();
+  const kept = keep_take($("#tasks"));
   markup($("#tasks ul.now"), now);
-  keep_put(kept);
+  keep_put($("#tasks"), kept);
   threads_put();
   markup($("#tasks .waiting ul"), waiting);
   $("#tasks .waiting").hidden = waiting.length === 0;
@@ -525,6 +554,211 @@ function tasks_bar(): void {
   $("#tasks .tell span").textContent = String(untold);
   if (v.tasks.length === 0 && $("#tasks").matches(":popover-open")) {
     $("#tasks").hidePopover();
+  }
+}
+
+// Mesa
+// ====
+// The pending list as a screen (Html.desk_html), the Conversa's
+// alternative, the header's .mode (or m) switching them; each a step of
+// the tab's history, so Back goes back to the other. As the page opens,
+// it shows the Mesa if a task is the user's move (P19), else the
+// Conversa; a reload keeps the one shown (sessionStorage). The list at
+// the left, by group, searched (q) and filtered by project (ref); the
+// task shown (sel) whole at the right, the first if none (a wide
+// screen). On a narrow one (a phone), one at a time: the list, or the
+// task (pane, a step of the history, Back to the list). Keys, unless
+// typing: j or ↓, k or ↑ move; Enter or o open (on a wide screen, focus
+// in the task); / the search; Esc back to the list; m Mesa or Conversa.
+// The task's markup is made only as it, the search or the selection
+// change, what's typed in it kept (keep_take)
+
+function desk_wire(): void {
+  const q = $<HTMLInputElement>("#desk .q");
+  const ref = $<HTMLSelectElement>("#desk .ref");
+  q.oninput = () => {
+    P.q = q.value;
+    draw(false);
+  };
+  ref.onchange = () => {
+    P.ref = ref.value;
+    draw(false);
+  };
+  $(".mode").onclick = () => desk_mode(P.mode === "desk" ? "chat" : "desk");
+  document.addEventListener("keydown", desk_keys);
+  NARROW.addEventListener("change", () => route());
+}
+
+// the Mesa or the Conversa shown, a step of the history (from the
+// settings page, back to the chat first)
+function desk_mode(mode: "chat" | "desk", push = true): void {
+  sessionStorage.setItem(kept("mode"), mode);
+  const st = { mode, sel: P.sel, pane: false };
+  if (push) {
+    history.pushState(st, "", "/");
+  } else {
+    history.replaceState(st, "", "/");
+  }
+  route();
+}
+
+// a task shown on the Mesa (by a click: on a phone, its own screen)
+function desk_open(id: string, pane: boolean): void {
+  P.sel = id;
+  if (P.mode !== "desk") {
+    P.mode = "desk";
+  }
+  const st = { mode: "desk", sel: id, pane: pane && NARROW.matches };
+  if (st.pane && !(history.state?.pane === true)) {
+    history.pushState(st, "", "/");
+  } else {
+    history.replaceState(st, "", "/");
+  }
+  route();
+  if (!NARROW.matches && pane) {
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`#desk .row[data-desk="${CSS.escape(id)}"]`)?.focus({ preventScroll: true }));
+  }
+}
+
+// on a phone, from a task back to the list (its step of the history)
+function desk_back(): void {
+  if (history.state?.pane === true) {
+    history.back();
+    return;
+  }
+  P.pane = false;
+  route();
+}
+
+// the first state picks the screen (P19), unless this tab showed one
+function desk_choose(): void {
+  if (P.chose) {
+    return;
+  }
+  P.chose = true;
+  const was = sessionStorage.getItem(kept("mode"));
+  const mode = was === "desk" || was === "chat" ? was : View.desk_turn(v.tasks) ? "desk" : "chat";
+  if (mode !== P.mode && PAGES.includes(location.pathname) === false) {
+    desk_mode(mode, false);
+  }
+}
+
+// the site changed under the page (the server restarted with another
+// build): it reloads, what's typed in the box kept (sessionStorage)
+function desk_build(): void {
+  const web = v.web ?? "";
+  if (web === "") {
+    return;
+  }
+  if (P.web === null) {
+    P.web = web;
+  } else if (P.web !== web) {
+    P.web = web;
+    toast("O UniiChat foi atualizado. Recarregando…", true);
+    setTimeout(() => location.reload(), 300);
+  }
+}
+
+let DESKED: { of: unknown; q: string; ref: string; sel: string | null; html: ReturnType<typeof Html.desk_html> } | null = null;
+function desk_draw(): void {
+  const refs = View.desk_refs(v.tasks);
+  if (P.ref !== "" && !refs.includes(P.ref)) {
+    P.ref = "";
+  }
+  // the task shown gone (not in the list's view any more): on a wide
+  // screen the first, on a phone the list
+  if (P.chose && P.sel !== null && !v.tasks.some((t) => t.id === P.sel)) {
+    P.sel = null;
+    P.pane = false;
+    document.body.classList.remove("pane");
+  }
+  if (DESKED === null || DESKED.of !== v.tasks || DESKED.q !== P.q || DESKED.ref !== P.ref || DESKED.sel !== P.sel) {
+    const ids = View.desk_list(v.tasks, P.q, P.ref).flatMap((g) => g.tasks.map((t) => t.id));
+    if (P.sel === null && !NARROW.matches && ids.length > 0) {
+      P.sel = ids[0];
+    }
+    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, html: Html.desk_html(v.tasks, P.q, P.ref, P.sel) };
+  }
+  const { list, detail, ids } = DESKED.html;
+  P.ids = ids;
+  const select = $<HTMLSelectElement>("#desk .ref");
+  markup(select, [`<option value="">Todos os projetos</option>`, ...refs.map((r) => `<option value="${Html.esc(r)}">${Html.esc(r)}</option>`)]);
+  select.value = P.ref;
+  select.hidden = refs.length === 0;
+  markup($("#desk .rows"), list);
+  const pane = $("#desk .pane");
+  const was = keep_take(pane);
+  markup(pane, detail);
+  keep_put(pane, was);
+  const untold = View.view_untold(v).length;
+  $("#desk .tell").hidden = untold === 0;
+  $("#desk .tell span").textContent = String(untold);
+}
+
+// the Mesa's keys (none while typing, but Esc, which leaves the box)
+function desk_keys(ev: KeyboardEvent): void {
+  if (ev.defaultPrevented || ev.ctrlKey || ev.metaKey || ev.altKey || ev.isComposing || !$("#account").hidden || document.body.classList.contains("guest")) {
+    return;
+  }
+  const el = ev.target as HTMLElement;
+  const typing = el.matches("input, textarea, select, [contenteditable], [contenteditable] *");
+  if (document.querySelector("[popover]:popover-open") !== null) {
+    return;
+  }
+  if (typing) {
+    if (ev.key === "Escape" && P.mode === "desk" && el.closest("#desk") !== null) {
+      ev.preventDefault();
+      el.blur();
+    }
+    return;
+  }
+  if (ev.key === "m") {
+    ev.preventDefault();
+    desk_mode(P.mode === "desk" ? "chat" : "desk");
+    return;
+  }
+  if (P.mode !== "desk") {
+    return;
+  }
+  const by = { j: 1, ArrowDown: 1, k: -1, ArrowUp: -1 }[ev.key as "j"];
+  if (by !== undefined && !(NARROW.matches && P.pane)) {
+    ev.preventDefault();
+    const to = View.desk_step(P.ids, P.sel, by);
+    if (to !== null) {
+      desk_open(to, false);
+      requestAnimationFrame(() => {
+        const row = document.querySelector<HTMLElement>(`#desk .row[data-desk="${CSS.escape(to)}"]`);
+        row?.scrollIntoView({ block: "nearest" });
+        row?.focus({ preventScroll: true });
+      });
+    }
+    return;
+  }
+  if ((ev.key === "Enter" || ev.key === "o") && P.sel !== null && (el === document.body || el.closest("#desk .rows") !== null)) {
+    ev.preventDefault();
+    if (NARROW.matches) {
+      desk_open(P.sel, true);
+    } else {
+      $("#desk .pane").querySelector<HTMLElement>("input, textarea, button:not(.back)")?.focus();
+    }
+    return;
+  }
+  if (ev.key === "/") {
+    ev.preventDefault();
+    if (NARROW.matches && P.pane) {
+      desk_back();
+    }
+    $("#desk .q").focus();
+    return;
+  }
+  if (ev.key === "Escape") {
+    if (NARROW.matches && P.pane) {
+      ev.preventDefault();
+      desk_back();
+    } else if (P.sel !== null) {
+      ev.preventDefault();
+      document.querySelector<HTMLElement>(`#desk .row[data-desk="${CSS.escape(P.sel)}"]`)?.focus();
+    }
   }
 }
 
@@ -653,6 +887,10 @@ function hear(msg: View.Server): void {
   const agents = v.agents.join() + JSON.stringify(v.labels ?? {});
   for (const out of View.view_hear(v, msg)) {
     View.link_send(v, out);
+  }
+  if (msg.$ === "state") {
+    desk_build();
+    desk_choose();
   }
   const now = View.view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
   if (now.length > 0) {
@@ -950,6 +1188,12 @@ function paint(): void {
     bars();
     return;
   }
+  if (P.mode === "desk") {
+    P.frame = 0;
+    bars();
+    desk_draw();
+    return;
+  }
   const doc = document.documentElement;
   const follow = P.stick && P.end;
   const at = P.rows && !follow ? anchor() : null;
@@ -1007,6 +1251,9 @@ function bars(): void {
     $("#timers").hidePopover();
   }
   tasks_bar();
+  const turn = View.desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
+  $(".mode").hidden = false;
+  $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
   send.classList.toggle("stop", stop);
   send.disabled = !on;
   BOX.disabled = !on;
@@ -1096,10 +1343,24 @@ function go(path: string): void {
 // the settings page keeps of the footer only its toasts (style.css)
 function route(): void {
   const page = PAGES.includes(location.pathname);
-  $("#log").hidden = page;
+  const st = history.state ?? {};
+  if (st.mode === "desk" || st.mode === "chat") {
+    P.mode = st.mode;
+  }
+  if (typeof st.sel === "string") {
+    P.sel = st.sel;
+  }
+  P.pane = st.pane === true && NARROW.matches;
+  const desk = !page && P.mode === "desk";
+  $("#log").hidden = page || desk;
+  $("#desk").hidden = !desk;
   document.body.classList.toggle("account", page);
+  document.body.classList.toggle("desk", desk);
+  document.body.classList.toggle("pane", desk && P.pane);
   $("#account").hidden = !page;
-  P.shown = location.pathname;
+  // the chat shown again: its rows drawn anew, at its bottom
+  P.rows = true;
+  P.shown = location.pathname + (desk ? "/mesa" : "");
   if (page) {
     account();
   }

@@ -70,6 +70,7 @@ export type State = {
   timers    : Timer[];
   mcp       : Plug[];
   tasks     : Task[]; // the pending list: open, then closed lately (Tasks.tasks_view)
+  web?      : string; // the site's build (its app.js's hash): a page of another reloads (main.ts)
 };
 
 // an MCP server of the server's config (Mcp.ts), on or off in this chat
@@ -340,6 +341,7 @@ export function view_hear(v: View, msg: Server): Client[] {
     case "state": {
       const { $, ...state } = msg;
       Object.assign(v, state);
+      v.tasks = Array.isArray(v.tasks) ? v.tasks.map(task_whole) : [];
       AGENT_LABELS.clear();
       Object.entries(v.labels ?? {}).forEach(([name, label]) => AGENT_LABELS.set(name, label));
       return [];
@@ -632,9 +634,13 @@ export function fields_args(t: Task, words: string): { fields: Record<string, un
     return { fields, rest: words };
   }
   let why: string | null = null;
-  const rest = words.replace(/(^|\s)([A-Za-z0-9][A-Za-z0-9_-]*)=("[^"]*"(?=\s|$)|“[^”]*”(?=\s|$)|\S*)/g, (all, pre: string, ref: string, raw: string) => {
+  const rest = words.replace(/(^|\s)([A-Za-z0-9][A-Za-z0-9_-]*)=("[^"]*"(?=\s|$)|“[^”]*”(?=\s|$)|\S*)/g, (all: string, pre: string, ref: string, raw: string, at: number) => {
     if (/^["“]/.test(raw) && !/^("[^"]*"|“[^”]*”)$/.test(raw)) {
-      why = why ?? "O valor de “" + ref + "” tem " + (/^("[^"]*"|“[^”]*”)./.test(raw) ? "texto colado depois da aspa de fechamento" : "uma aspa sem par") + ": feche as aspas e separe o resto com um espaço. Nada foi alterado.";
+      // the value as typed from its quote on (raw stops at a space: obs="a b"c
+      // is raw "a, though its quote is closed, with c stuck after it)
+      const typed = words.slice(at + pre.length + ref.length + 1);
+      const stuck = /^("[^"\s]*"|“[^”\s]*”)\S/.test(raw) || /^("[^"]*"|“[^”]*”)[^\s"“”]/.test(typed);
+      why = why ?? "O valor de “" + ref + "” tem " + (stuck ? "texto colado depois da aspa de fechamento" : "uma aspa sem par") + ": feche as aspas e separe o resto com um espaço. Nada foi alterado.";
       return all;
     }
     const f = field_ref(t, ref);
@@ -692,6 +698,137 @@ export function origin_said(t: Task): string {
 export function tasks_by_assignee(open: Task[]): [string, Task[]][] {
   const keys = [...new Set(["user", ...open.map((t) => t.assignee)])];
   return keys.map((k) => [k, open.filter((t) => t.assignee === k)] as [string, Task[]]).filter(([, ts]) => ts.length > 0);
+}
+
+// The Mesa (the desk): the pending list as a screen of its own (main.ts,
+// Html.desk_html), each task in one group, by whose move it is: "now",
+// the user's (theirs and free, or Unii answered in its thread); "unii",
+// the user wrote in its thread and Unii hasn't answered; "others",
+// someone else's (Unii's, an agent's) at work; "waiting", waiting for
+// other open tasks (TaskDeps.ts); "closed", resolved lately
+export type Desk = "now" | "unii" | "others" | "waiting" | "closed";
+export const DESK: [Desk, string][] = [
+  ["now", "Agora"],
+  ["unii", "Aguardando o Unii"],
+  ["others", "Em andamento"],
+  ["waiting", "Aguardando outras pendências"],
+  ["closed", "Resolvidas recentemente"],
+];
+
+// a task's group in the Mesa (blocked: the ids waiting, Deps.blocked_ids)
+export function desk_group(t: Task, blocked: Set<string>): Desk {
+  if (t.state !== "open") {
+    return "closed";
+  }
+  if (t.talk === "unii") {
+    return "unii";
+  }
+  if (blocked.has(t.id)) {
+    return "waiting";
+  }
+  return t.assignee === "user" || t.talk === "user" ? "now" : "others";
+}
+
+// whether a task is the user's move now (the Mesa opens on it: P19)
+export function desk_turn(tasks: Task[]): boolean {
+  const blocked = Deps.blocked_ids(tasks);
+  return tasks.some((t) => desk_group(t, blocked) === "now");
+}
+
+// the projects (refs) of the tasks, sorted, each once
+export function desk_refs(tasks: Task[]): string[] {
+  return [...new Set(tasks.flatMap((t) => (t.ref === null ? [] : [t.ref])))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+// a text as a search compares it: no case, no accents, spaces as one
+export function desk_fold(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// whether a task is in the search (q: every word in its id, title,
+// detail, ref, assignee, fields or thread; "": all) and in the project
+// (ref: "" all, else that ref)
+export function desk_match(t: Task, q: string, ref: string): boolean {
+  if (ref !== "" && t.ref !== ref) {
+    return false;
+  }
+  const words = desk_fold(q).split(" ").filter((w) => w !== "");
+  if (words.length === 0) {
+    return true;
+  }
+  const hay = desk_fold([t.id, t.title, t.detail, t.ref ?? "", t.assignee, ...(t.fields ?? []).map((f) => f.label), ...(t.thread ?? []).map((m) => m.text)].join(" "));
+  return words.every((w) => hay.includes(w));
+}
+
+// the Mesa's list: each group with tasks in the search, in DESK's
+// order, its tasks as the server sorts them (in "now", those that free
+// others first)
+export function desk_list(tasks: Task[], q = "", ref = ""): { group: Desk; label: string; tasks: Task[] }[] {
+  const blocked = Deps.blocked_ids(tasks);
+  const shown = tasks.filter((t) => desk_match(t, q, ref));
+  const frees = (t: Task) => Number(Deps.frees(tasks, t) > 0);
+  return DESK.map(([group, label]) => {
+    const of = shown.filter((t) => desk_group(t, blocked) === group);
+    return { group, label, tasks: group === "now" ? [...of].sort((a, b) => frees(b) - frees(a)) : of };
+  }).filter((g) => g.tasks.length > 0);
+}
+
+// the task to show after `at` moves by `by` in the list (ids: its order);
+// none shown, or gone: the first (going up, the last)
+export function desk_step(ids: string[], at: string | null, by: number): string | null {
+  if (ids.length === 0) {
+    return null;
+  }
+  const k = at === null ? -1 : ids.indexOf(at);
+  if (k === -1) {
+    return by < 0 ? ids[ids.length - 1] : ids[0];
+  }
+  return ids[Math.max(0, Math.min(ids.length - 1, k + by))];
+}
+
+// the Mesa as Markdown, for the terminal's /mesa: its groups, each task
+// a line (ref: that project's only)
+export function desk_md(v: View, ref = ""): string {
+  const groups = desk_list(v.tasks, "", ref);
+  if (groups.length === 0) {
+    return ref === "" ? "A Mesa está vazia: nenhuma pendência." : "Nenhuma pendência do projeto “" + ref + "”. Projetos: " + (desk_refs(v.tasks).join(", ") || "nenhum") + ".";
+  }
+  const line = (t: Task, g: Desk) => {
+    const more = [
+      ...(t.ref === null || ref !== "" ? [] : [t.ref]),
+      ...(t.assignee === "user" ? [] : [assignee_said(t)]),
+      ...(g === "waiting" ? ["aguarda " + Deps.waits(v.tasks, t).join(", ")] : []),
+      ...(g === "closed" ? [t.state === "done" ? "concluída" : "descartada"] : []),
+      ...(g === "closed" || g === "waiting" || task_frees_said(v, t) === "" ? [] : [task_frees_said(v, t)]),
+    ];
+    return "- **" + t.id + "** " + t.title + (more.length === 0 ? "" : " · " + more.join(" · "));
+  };
+  const parts = groups.map((g) => "**" + g.label + " (" + g.tasks.length + ")**\n\n" + g.tasks.slice(0, g.group === "closed" ? 10 : undefined).map((t) => line(t, g.group)).join("\n"));
+  return [...parts, "`/p P7` detalha · `/conversa P7 mensagem` conversa · `/ok P7` conclui · `/mesa projeto` filtra por projeto"].join("\n\n");
+}
+
+// a task as an older or newer server sends it, made whole: its assignee
+// from `who` (its older name) if it has none (else "user"), what later
+// phases added, empty; so no view takes an older server's task for the
+// user's, nor breaks on what it lacks
+export function task_whole(t: any): Task {
+  const named = typeof t?.assignee === "string" && t.assignee !== "";
+  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined) {
+    return t;
+  }
+  return {
+    ...t,
+    assignee   : named ? t.assignee : t?.who === "unii" ? "unii" : "user",
+    origin     : t?.origin ?? null,
+    origin_url : t?.origin_url ?? null,
+    choices    : Array.isArray(t?.choices) ? t.choices : [],
+    after      : Array.isArray(t?.after) ? t.after : [],
+    fields     : Array.isArray(t?.fields) ? t.fields : [],
+    draft      : t?.draft ?? {},
+    answers    : t?.answers ?? null,
+    thread     : Array.isArray(t?.thread) ? t.thread : [],
+    talk       : t?.talk ?? null,
+  };
 }
 
 // the pending list as Markdown, for the terminal's /p (one: its whole;

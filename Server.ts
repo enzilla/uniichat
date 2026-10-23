@@ -192,6 +192,18 @@ const WEB: Record<string, string> = {
 // the settings page, drawn by the site's page
 WEB["/settings"] = WEB["/"];
 
+// the site's build, in each state: a page opened on another one (the
+// server restarted with a new site) reloads (main.ts), as it would
+// misread what changed ("": unread, none reloads)
+export const WEB_BUILD = web_build();
+function web_build(): string {
+  try {
+    return Bun.hash(fs.readFileSync(app_js)).toString(36) + "." + Bun.hash(fs.readFileSync(style_css)).toString(36);
+  } catch {
+    return "";
+  }
+}
+
 // Chat
 // ====
 
@@ -993,7 +1005,7 @@ export namespace Chat {
     const mcp = config.MCP.map(({ name }) => ({ name, on: !chat.mem.off.includes(name) }));
     const labels = Object.fromEntries(chat.tools.labels);
     const tasks = Tasks.tasks_view(Tasks.tasks_load(chat.mem.dir), Date.now());
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, web: WEB_BUILD };
   }
 
   export function waits(chat: Chat): Wait {

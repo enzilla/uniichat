@@ -24,11 +24,22 @@
   <span class="net">offline</span>
   <button class="imping" popovertarget="import" hidden><span></span><progress max="1" value="0"></progress></button>
   <button class="timers" popovertarget="timers" title="Schedules" hidden>⏰ <span></span></button>
+  <button class="mode" type="button" title="Alternar entre a Mesa e a Conversa (m)" hidden>Mesa</button>
   <button class="tasks" popovertarget="tasks" title="Pendências" hidden>✓ <span></span></button>
   <button class="menu" popovertarget="menu">☰</button>
 </header>
 <main id="log"><div class="rows"></div><div class="tail"></div></main>
 <main id="account" hidden></main>
+<!-- the Mesa: the pending list as a screen (main.ts desk; Html.desk_html) -->
+<main id="desk" hidden>
+  <nav class="list" aria-label="Pendências">
+    <div class="find"><input class="q" type="search" placeholder="Buscar pendências" aria-label="Buscar pendências" autocomplete="off"><select class="ref" aria-label="Projeto"></select></div>
+    <div class="rows" role="listbox" aria-label="Pendências"></div>
+    <button class="tell" type="button" data-act='{"$":"TasksTell"}' hidden>Avisar o Unii agora (<span></span>)</button>
+    <p class="keys"><kbd>j</kbd> <kbd>k</kbd> ou setas navegam · <kbd>Enter</kbd> abre · <kbd>/</kbd> busca · <kbd>m</kbd> alterna Mesa e Conversa · <kbd>Esc</kbd> volta</p>
+  </nav>
+  <section class="pane" aria-label="Pendência"></section>
+</main>
 <footer>
   <button class="mine" type="button" title="Up to your message" hidden><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
   <button class="down" type="button" title="Down to the end" hidden><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>

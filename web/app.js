@@ -1048,6 +1048,7 @@ function view_hear(v, msg) {
     case "state": {
       const { $, ...state } = msg;
       Object.assign(v, state);
+      v.tasks = Array.isArray(v.tasks) ? v.tasks.map(task_whole) : [];
       AGENT_LABELS.clear();
       Object.entries(v.labels ?? {}).forEach(([name, label]) => AGENT_LABELS.set(name, label));
       return [];
@@ -1234,6 +1235,84 @@ function origin_said(t) {
 function tasks_by_assignee(open) {
   const keys = [...new Set(["user", ...open.map((t) => t.assignee)])];
   return keys.map((k) => [k, open.filter((t) => t.assignee === k)]).filter(([, ts]) => ts.length > 0);
+}
+var DESK = [
+  ["now", "Agora"],
+  ["unii", "Aguardando o Unii"],
+  ["others", "Em andamento"],
+  ["waiting", "Aguardando outras pendências"],
+  ["closed", "Resolvidas recentemente"]
+];
+function desk_group(t, blocked) {
+  if (t.state !== "open") {
+    return "closed";
+  }
+  if (t.talk === "unii") {
+    return "unii";
+  }
+  if (blocked.has(t.id)) {
+    return "waiting";
+  }
+  return t.assignee === "user" || t.talk === "user" ? "now" : "others";
+}
+function desk_turn(tasks) {
+  const blocked = blocked_ids(tasks);
+  return tasks.some((t) => desk_group(t, blocked) === "now");
+}
+function desk_refs(tasks) {
+  return [...new Set(tasks.flatMap((t) => t.ref === null ? [] : [t.ref]))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+function desk_fold(s) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+function desk_match(t, q, ref) {
+  if (ref !== "" && t.ref !== ref) {
+    return false;
+  }
+  const words = desk_fold(q).split(" ").filter((w) => w !== "");
+  if (words.length === 0) {
+    return true;
+  }
+  const hay = desk_fold([t.id, t.title, t.detail, t.ref ?? "", t.assignee, ...(t.fields ?? []).map((f) => f.label), ...(t.thread ?? []).map((m) => m.text)].join(" "));
+  return words.every((w) => hay.includes(w));
+}
+function desk_list(tasks, q = "", ref = "") {
+  const blocked = blocked_ids(tasks);
+  const shown = tasks.filter((t) => desk_match(t, q, ref));
+  const frees2 = (t) => Number(frees(tasks, t) > 0);
+  return DESK.map(([group, label]) => {
+    const of = shown.filter((t) => desk_group(t, blocked) === group);
+    return { group, label, tasks: group === "now" ? [...of].sort((a, b) => frees2(b) - frees2(a)) : of };
+  }).filter((g) => g.tasks.length > 0);
+}
+function desk_step(ids, at, by) {
+  if (ids.length === 0) {
+    return null;
+  }
+  const k = at === null ? -1 : ids.indexOf(at);
+  if (k === -1) {
+    return by < 0 ? ids[ids.length - 1] : ids[0];
+  }
+  return ids[Math.max(0, Math.min(ids.length - 1, k + by))];
+}
+function task_whole(t) {
+  const named = typeof t?.assignee === "string" && t.assignee !== "";
+  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined) {
+    return t;
+  }
+  return {
+    ...t,
+    assignee: named ? t.assignee : t?.who === "unii" ? "unii" : "user",
+    origin: t?.origin ?? null,
+    origin_url: t?.origin_url ?? null,
+    choices: Array.isArray(t?.choices) ? t.choices : [],
+    after: Array.isArray(t?.after) ? t.after : [],
+    fields: Array.isArray(t?.fields) ? t.fields : [],
+    draft: t?.draft ?? {},
+    answers: t?.answers ?? null,
+    thread: Array.isArray(t?.thread) ? t.thread : [],
+    talk: t?.talk ?? null
+  };
 }
 function view_body(v) {
   if (v.page !== null) {
@@ -1651,47 +1730,116 @@ function timers_html(timers) {
   });
 }
 function tasks_html(tasks) {
-  const when = (iso) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-  const head = (t) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
-  const origin = (t) => {
-    const said = origin_said(t);
-    if (said === "") {
-      return [];
-    }
-    const url = t.origin_url !== null && /^https?:\/\//i.test(t.origin_url) ? t.origin_url : null;
-    return [url === null ? `<span class="origin" title="Origem">${esc(said)}</span>` : `<a class="origin" title="Origem" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(said)}</a>`];
-  };
-  const meta = (t, more) => `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more, ...origin(t)].join(" · ")}</p>`;
-  const act = (t, state, text, cls, answer) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
   const blocked = blocked_ids(tasks);
-  const open = (t) => {
-    const n = frees(tasks, t);
-    const mine = t.assignee === "user";
-    const who = [...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...mine ? [] : [esc(assignee_said(t))]];
-    const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${md_parse(t.detail).map(block_html).join("")}</div></details>`;
-    const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
-    const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
-    const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
-    const acts = `<div class="acts">${go}${act(t, "done", "Concluir", mine ? "done" : "done quiet")}${act(t, "dropped", "Descartar", "drop")}</div>`;
-    const talk = task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`];
-    const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
-    return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head(t)}${meta(t, [...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t)}${opts}${note}${acts}${thread_html(t)}</li>`;
-  };
-  const closed = (t) => {
-    const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii ainda não viu"]];
-    return `<li class="task closed" data-task="${esc(t.id)}">${head(t)}${meta(t, how)}<div class="acts">${act(t, "open", "Reabrir", "reopen")}</div></li>`;
-  };
-  const whose = (u) => u === undefined || u.assignee === "user" ? "" : " (" + assignee_said(u) + ")";
-  const waiting = (t) => {
-    const more = [`aguarda ${esc(waits(tasks, t).map((id) => id + whose(tasks.find((u) => u.id === id))).join(", "))}`, ...t.assignee === "user" ? [] : [esc(assignee_said(t))]];
-    return `<li class="task waiting ${esc(t.assignee === "user" ? "user" : "other " + t.assignee)}" data-task="${esc(t.id)}">${head(t)}${meta(t, more)}</li>`;
-  };
   const opened = tasks.filter((t) => t.state === "open");
   const groups = tasks_by_assignee(opened.filter((t) => !blocked.has(t.id)));
+  const open = (t) => task_open_html(t, tasks, false);
   const heading = (a, ts) => `<li class="group" data-assignee="${esc(a)}">${esc(assignee_said(ts[0]).replace(/^c/, "C"))} <span class="n">(${ts.length})</span></li>`;
   const titled = groups.length > 1 || groups.length === 1 && groups[0][0] !== "user";
   const now = groups.flatMap(([a, ts]) => [...titled ? [heading(a, ts)] : [], ...ts.map(open)]);
-  return { open: groups.flatMap(([, ts]) => ts.map(open)), now, waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
+  return { open: groups.flatMap(([, ts]) => ts.map(open)), now, waiting: opened.filter((t) => blocked.has(t.id)).map((t) => task_waiting_html(t, tasks, false)), closed: tasks.filter((t) => t.state !== "open").map((t) => task_closed_html(t, false)) };
+}
+function task_when(iso) {
+  return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+function task_head(t) {
+  return `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
+}
+function task_origin(t) {
+  const said = origin_said(t);
+  if (said === "") {
+    return [];
+  }
+  const url = t.origin_url !== null && /^https?:\/\//i.test(t.origin_url) ? t.origin_url : null;
+  return [url === null ? `<span class="origin" title="Origem">${esc(said)}</span>` : `<a class="origin" title="Origem" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(said)}</a>`];
+}
+function task_meta(t, more) {
+  return `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more, ...task_origin(t)].join(" · ")}</p>`;
+}
+function task_button(t, state, text, cls, answer) {
+  return `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
+}
+function task_detail(t, desk) {
+  if (t.detail === "") {
+    return "";
+  }
+  const md = `<div class="md">${md_parse(t.detail).map(block_html).join("")}</div>`;
+  return desk ? `<div class="detail">${md}</div>` : `<details><summary>Detalhes</summary>${md}</details>`;
+}
+function task_open_html(t, tasks, desk) {
+  const n = frees(tasks, t);
+  const mine = t.assignee === "user";
+  const who = [...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...mine ? [] : [esc(assignee_said(t))]];
+  const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => task_button(t, "done", c, "opt", c)).join("")}</div>`;
+  const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
+  const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
+  const acts = `<div class="acts">${go}${task_button(t, "done", "Concluir", mine ? "done" : "done quiet")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
+  const talk = task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`];
+  const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
+  const tag = desk ? "article" : "li";
+  return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${task_detail(t, desk)}${fields_html(t)}${opts}${note}${acts}${thread_html(t, desk)}</${tag}>`;
+}
+function task_closed_html(t, desk) {
+  const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii ainda não viu"]];
+  const acts = `<div class="acts">${task_button(t, "open", "Reabrir", "reopen")}</div>`;
+  if (!desk) {
+    return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${acts}</li>`;
+  }
+  return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
+}
+function task_waiting_html(t, tasks, desk) {
+  const whose = (u) => u === undefined || u.assignee === "user" ? "" : " (" + assignee_said(u) + ")";
+  const waits2 = waits(tasks, t);
+  const cls = esc(t.assignee === "user" ? "user" : "other " + t.assignee);
+  if (!desk) {
+    const more = [`aguarda ${esc(waits2.map((id) => id + whose(tasks.find((u) => u.id === id))).join(", "))}`, ...t.assignee === "user" ? [] : [esc(assignee_said(t))]];
+    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, more)}</li>`;
+  }
+  const link = (id) => `<button class="goto" data-desk="${esc(id)}">${esc(id + whose(tasks.find((u) => u.id === id)))}</button>`;
+  const more = t.assignee === "user" ? [] : [esc(assignee_said(t))];
+  const why = `<p class="waits">Só pode ser resolvida depois de: ${waits2.map(link).join(", ")}.</p>`;
+  return `<article class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, more)}${why}${task_detail(t, true)}${thread_read_html(t)}</article>`;
+}
+function answers_html(t) {
+  const fields = t.fields ?? [];
+  const values = t.answers ?? {};
+  if (t.state !== "done" || fields.length === 0) {
+    return "";
+  }
+  const said = (f) => {
+    const v = Object.hasOwn(values, f.id) ? values[f.id] : undefined;
+    return v === undefined || v.length === 0 ? "sem resposta" : Array.isArray(v) ? v.join(", ") : v;
+  };
+  return `<dl class="answers">${fields.map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(said(f))}</dd>`).join("")}</dl>`;
+}
+function thread_read_html(t) {
+  const thread = t.thread ?? [];
+  return thread.length === 0 ? "" : `<section class="thread read"><p class="sub">Conversa (${thread.length})</p><ol>${thread.map(thread_msg_html).join("")}</ol></section>`;
+}
+function desk_html(tasks, q, ref, sel) {
+  const groups = desk_list(tasks, q, ref);
+  const ids = groups.flatMap((g) => g.tasks.map((t) => t.id));
+  const row = (t, g) => {
+    const n = g === "closed" || g === "waiting" ? 0 : frees(tasks, t);
+    const more = [
+      ...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`],
+      ...task_talk_said(t) === "" || g === "closed" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`],
+      ...t.assignee === "user" ? [] : [esc(assignee_said(t))],
+      ...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`],
+      ...g === "waiting" ? [esc("aguarda " + waits(tasks, t).join(", "))] : [],
+      ...g === "closed" ? [t.state === "done" ? "concluída" : "descartada"] : []
+    ];
+    const on = t.id === sel;
+    return `<button class="row ${g}${on ? " sel" : ""}" role="option" aria-selected="${on}" data-desk="${esc(t.id)}"><span class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></span>${more.length === 0 ? "" : `<span class="meta">${more.join(" · ")}</span>`}</button>`;
+  };
+  const list = groups.flatMap((g) => [`<p class="group ${g.group}" role="presentation">${esc(g.label)} <span class="n">(${g.tasks.length})</span></p>`, ...g.tasks.map((t) => row(t, g.group))]);
+  const searched = q.trim() !== "" || ref !== "";
+  const none = tasks.length === 0 ? "Nenhuma pendência. Quando o Unii precisar de você, ela aparece aqui." : searched && ids.length === 0 ? "Nenhuma pendência na busca." : "";
+  const t = sel === null ? undefined : tasks.find((x) => x.id === sel);
+  const blocked = blocked_ids(tasks);
+  const back = `<button class="back" type="button" data-desk-back aria-label="Voltar à lista">← Pendências</button>`;
+  const detail = t === undefined ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`] : [back, t.state !== "open" ? task_closed_html(t, true) : blocked.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true)];
+  return { list: none === "" ? list : [...list, `<p class="none">${esc(none)}</p>`], detail, ids };
 }
 function fields_html(t) {
   const fields = t.fields ?? [];
@@ -1714,14 +1862,20 @@ function fields_html(t) {
   };
   return `<div class="fields">${fields.map(one).join("")}</div>`;
 }
-function thread_html(t) {
+function thread_msg_html(m) {
+  return m.who === "unii" ? `<li class="unii"><span class="who">Unii</span><div class="md">${md_parse(m.text).map(block_html).join("")}</div></li>` : `<li class="user"><span class="who">Você</span><p>${esc(m.text)}</p></li>`;
+}
+function thread_html(t, desk = false) {
   const thread = t.thread ?? [];
-  const msg = (m) => m.who === "unii" ? `<li class="unii"><span class="who">Unii</span><div class="md">${md_parse(m.text).map(block_html).join("")}</div></li>` : `<li class="user"><span class="who">Você</span><p>${esc(m.text)}</p></li>`;
-  const open = thread.length > 0 && t.talk !== null ? " open" : "";
   const said = thread.length === 0 ? "Conversar sobre esta pendência" : "Conversa (" + thread.length + ")";
-  const box = `<textarea class="say" rows="2" maxlength="4000" placeholder="Escreva sobre esta pendência (não a conclui)" aria-label="Mensagem sobre ${esc(t.id)}" data-keep="say"></textarea>`;
+  const box = `<textarea class="say" rows="${desk ? 3 : 2}" maxlength="4000" placeholder="Escreva sobre esta pendência (não a conclui)" aria-label="Mensagem sobre ${esc(t.id)}" data-keep="say"></textarea>`;
   const send = `<button class="say-send"${act_html({ $: "TaskSay", task: t.id, text: "" })}>Enviar</button>`;
-  return `<details class="thread" data-keep="thread"${open}><summary>${esc(said)}</summary>${thread.length === 0 ? "" : `<ol>${thread.map(msg).join("")}</ol>`}${box}<div class="acts">${send}</div></details>`;
+  const msgs = thread.length === 0 ? "" : `<ol>${thread.map(thread_msg_html).join("")}</ol>`;
+  if (desk) {
+    return `<section class="thread"><p class="sub">${esc(said)}</p>${msgs}${box}<div class="acts"><span class="hint">Ctrl+Enter envia</span>${send}</div></section>`;
+  }
+  const open = thread.length > 0 && t.talk !== null ? " open" : "";
+  return `<details class="thread" data-keep="thread"${open}><summary>${esc(said)}</summary>${msgs}${box}<div class="acts">${send}</div></details>`;
 }
 function account_html(prompts, notify = null) {
   const item = (what, note, act) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
@@ -1972,7 +2126,7 @@ function span_html(s) {
 
 // web/src/main.ts
 var APP = window.webkit?.messageHandlers?.unii ?? null;
-var DESK = matchMedia("(hover: hover)");
+var DESK2 = matchMedia("(hover: hover)");
 var NONE = "No Claude or ChatGPT chats in that folder. Choose ~/.claude or ~/.codex.";
 var SCENES = `
   <div class="scene"><p>Your entire life.</p><p>One single chat.</p></div>
@@ -1994,8 +2148,17 @@ var P = {
   done: {},
   off: new Set,
   step: "",
-  push: null
+  push: null,
+  mode: sessionStorage.getItem(kept("mode")) === "desk" ? "desk" : "chat",
+  chose: false,
+  sel: null,
+  q: "",
+  ref: "",
+  pane: false,
+  ids: [],
+  web: null
 };
+var NARROW = matchMedia("(max-width: 760px)");
 function $(sel) {
   return document.querySelector(sel);
 }
@@ -2051,7 +2214,7 @@ function chat() {
     draw(true);
   };
   BOX.onkeydown = (ev) => {
-    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && DESK.matches) {
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && DESK2.matches) {
       ev.preventDefault();
       submit();
     }
@@ -2078,15 +2241,18 @@ function chat() {
     attach([...ev.dataTransfer?.files ?? []]);
   };
   document.onclick = click;
-  $("#tasks").addEventListener("change", task_draft);
+  for (const root of [$("#tasks"), $("#desk")]) {
+    root.addEventListener("change", task_draft);
+    root.addEventListener("keydown", (ev) => {
+      const el = ev.target;
+      if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+        ev.preventDefault();
+        task_say(el.closest("[data-task]").dataset.task, root);
+      }
+    });
+  }
   $("#tasks").addEventListener("toggle", thread_toggle, true);
-  $("#tasks").addEventListener("keydown", (ev) => {
-    const el = ev.target;
-    if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
-      ev.preventDefault();
-      task_say(el.closest("li[data-task]").dataset.task);
-    }
-  });
+  desk_wire();
   visualViewport.onresize = () => {
     if (document.activeElement === BOX && BOX.selectionStart === BOX.value.length) {
       BOX.scrollTop = BOX.scrollHeight;
@@ -2164,13 +2330,21 @@ function act(a) {
   draw(a.$ === "Send");
 }
 function click(ev) {
-  const el = ev.target.closest("[data-act], [data-copy], [data-go], [data-knob], .choices > button");
+  const el = ev.target.closest("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], .choices > button");
   const sel = getSelection();
   if (el === null || sel !== null && !sel.isCollapsed && el.contains(sel.focusNode)) {
     return;
   }
   if (el.dataset.knob !== undefined) {
     place(el);
+    return;
+  }
+  if (el.dataset.desk !== undefined) {
+    desk_open(el.dataset.desk, true);
+    return;
+  }
+  if (el.dataset.deskBack !== undefined) {
+    desk_back();
     return;
   }
   el.closest(".choices")?.hidePopover();
@@ -2186,7 +2360,7 @@ function click(ev) {
   if (a !== undefined) {
     const made = JSON.parse(a);
     if (made.$ === "TaskSay") {
-      task_say(made.task);
+      task_say(made.task, el.closest("#tasks, #desk") ?? $("#tasks"));
     } else {
       act(task_act(el, made));
     }
@@ -2231,7 +2405,7 @@ function left(ev) {
   }
 }
 function task_act(el, a) {
-  const item = el.closest("li[data-task]");
+  const item = el.closest("[data-task]");
   if (a.$ !== "Task" || a.state === "open" || item === null) {
     return a;
   }
@@ -2255,15 +2429,15 @@ function task_fields(item) {
   return out;
 }
 function task_draft(ev) {
-  const set = ev.target.closest("#tasks fieldset.field");
-  const item = set?.closest("li[data-task]");
+  const set = ev.target.closest("fieldset.field");
+  const item = set?.closest("[data-task]");
   if (set === null || set === undefined || item === null || item === undefined) {
     return;
   }
   act({ $: "TaskDraft", task: item.dataset.task, fields: { [set.dataset.field]: field_value(set) } });
 }
-function task_say(task) {
-  const box = () => document.querySelector(`#tasks li[data-task="${CSS.escape(task)}"] textarea.say`);
+function task_say(task, root) {
+  const box = () => root.querySelector(`[data-task="${CSS.escape(task)}"] textarea.say`);
   const text = box()?.value ?? "";
   for (const msg of view_act(v, { $: "TaskSay", task, text })) {
     const was = box();
@@ -2283,10 +2457,10 @@ function task_say(task) {
   }
   draw(false);
 }
-function keep_take() {
+function keep_take(root) {
   const kept = new Map;
-  for (const el of document.querySelectorAll("#tasks li[data-task] :is(input, textarea)[data-keep]")) {
-    const key = el.closest("li[data-task]").dataset.task + "/" + el.dataset.keep;
+  for (const el of root.querySelectorAll("[data-task] :is(input, textarea)[data-keep]")) {
+    const key = el.closest("[data-task]").dataset.task + "/" + el.dataset.keep;
     const box = el instanceof HTMLInputElement && el.type === "checkbox";
     const focus = document.activeElement === el;
     const value = !box && el.value !== el.defaultValue ? el.value : null;
@@ -2297,10 +2471,10 @@ function keep_take() {
   }
   return kept;
 }
-function keep_put(kept) {
+function keep_put(root, kept) {
   for (const [key, k] of kept) {
     const [task, name] = key.split("/");
-    const el = document.querySelector(`#tasks li[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
+    const el = root.querySelector(`[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
     if (el === null || el === k.el) {
       continue;
     }
@@ -2349,9 +2523,9 @@ function tasks_bar() {
   $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
   $("#tasks .none").hidden = open.length > 0;
   $("#tasks .none").textContent = tasks_none_said(waiting.length);
-  const kept = keep_take();
+  const kept = keep_take($("#tasks"));
   markup($("#tasks ul.now"), now);
-  keep_put(kept);
+  keep_put($("#tasks"), kept);
   threads_put();
   markup($("#tasks .waiting ul"), waiting);
   $("#tasks .waiting").hidden = waiting.length === 0;
@@ -2362,6 +2536,177 @@ function tasks_bar() {
   $("#tasks .tell span").textContent = String(untold);
   if (v.tasks.length === 0 && $("#tasks").matches(":popover-open")) {
     $("#tasks").hidePopover();
+  }
+}
+function desk_wire() {
+  const q = $("#desk .q");
+  const ref = $("#desk .ref");
+  q.oninput = () => {
+    P.q = q.value;
+    draw(false);
+  };
+  ref.onchange = () => {
+    P.ref = ref.value;
+    draw(false);
+  };
+  $(".mode").onclick = () => desk_mode(P.mode === "desk" ? "chat" : "desk");
+  document.addEventListener("keydown", desk_keys);
+  NARROW.addEventListener("change", () => route());
+}
+function desk_mode(mode, push = true) {
+  sessionStorage.setItem(kept("mode"), mode);
+  const st = { mode, sel: P.sel, pane: false };
+  if (push) {
+    history.pushState(st, "", "/");
+  } else {
+    history.replaceState(st, "", "/");
+  }
+  route();
+}
+function desk_open(id, pane) {
+  P.sel = id;
+  if (P.mode !== "desk") {
+    P.mode = "desk";
+  }
+  const st = { mode: "desk", sel: id, pane: pane && NARROW.matches };
+  if (st.pane && !(history.state?.pane === true)) {
+    history.pushState(st, "", "/");
+  } else {
+    history.replaceState(st, "", "/");
+  }
+  route();
+  if (!NARROW.matches && pane) {
+    requestAnimationFrame(() => document.querySelector(`#desk .row[data-desk="${CSS.escape(id)}"]`)?.focus({ preventScroll: true }));
+  }
+}
+function desk_back() {
+  if (history.state?.pane === true) {
+    history.back();
+    return;
+  }
+  P.pane = false;
+  route();
+}
+function desk_choose() {
+  if (P.chose) {
+    return;
+  }
+  P.chose = true;
+  const was = sessionStorage.getItem(kept("mode"));
+  const mode = was === "desk" || was === "chat" ? was : desk_turn(v.tasks) ? "desk" : "chat";
+  if (mode !== P.mode && PAGES.includes(location.pathname) === false) {
+    desk_mode(mode, false);
+  }
+}
+function desk_build() {
+  const web = v.web ?? "";
+  if (web === "") {
+    return;
+  }
+  if (P.web === null) {
+    P.web = web;
+  } else if (P.web !== web) {
+    P.web = web;
+    toast("O UniiChat foi atualizado. Recarregando…", true);
+    setTimeout(() => location.reload(), 300);
+  }
+}
+var DESKED = null;
+function desk_draw() {
+  const refs = desk_refs(v.tasks);
+  if (P.ref !== "" && !refs.includes(P.ref)) {
+    P.ref = "";
+  }
+  if (P.chose && P.sel !== null && !v.tasks.some((t) => t.id === P.sel)) {
+    P.sel = null;
+    P.pane = false;
+    document.body.classList.remove("pane");
+  }
+  if (DESKED === null || DESKED.of !== v.tasks || DESKED.q !== P.q || DESKED.ref !== P.ref || DESKED.sel !== P.sel) {
+    const ids = desk_list(v.tasks, P.q, P.ref).flatMap((g) => g.tasks.map((t) => t.id));
+    if (P.sel === null && !NARROW.matches && ids.length > 0) {
+      P.sel = ids[0];
+    }
+    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, html: desk_html(v.tasks, P.q, P.ref, P.sel) };
+  }
+  const { list, detail, ids } = DESKED.html;
+  P.ids = ids;
+  const select = $("#desk .ref");
+  markup(select, [`<option value="">Todos os projetos</option>`, ...refs.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`)]);
+  select.value = P.ref;
+  select.hidden = refs.length === 0;
+  markup($("#desk .rows"), list);
+  const pane = $("#desk .pane");
+  const was = keep_take(pane);
+  markup(pane, detail);
+  keep_put(pane, was);
+  const untold = view_untold(v).length;
+  $("#desk .tell").hidden = untold === 0;
+  $("#desk .tell span").textContent = String(untold);
+}
+function desk_keys(ev) {
+  if (ev.defaultPrevented || ev.ctrlKey || ev.metaKey || ev.altKey || ev.isComposing || !$("#account").hidden || document.body.classList.contains("guest")) {
+    return;
+  }
+  const el = ev.target;
+  const typing = el.matches("input, textarea, select, [contenteditable], [contenteditable] *");
+  if (document.querySelector("[popover]:popover-open") !== null) {
+    return;
+  }
+  if (typing) {
+    if (ev.key === "Escape" && P.mode === "desk" && el.closest("#desk") !== null) {
+      ev.preventDefault();
+      el.blur();
+    }
+    return;
+  }
+  if (ev.key === "m") {
+    ev.preventDefault();
+    desk_mode(P.mode === "desk" ? "chat" : "desk");
+    return;
+  }
+  if (P.mode !== "desk") {
+    return;
+  }
+  const by = { j: 1, ArrowDown: 1, k: -1, ArrowUp: -1 }[ev.key];
+  if (by !== undefined && !(NARROW.matches && P.pane)) {
+    ev.preventDefault();
+    const to = desk_step(P.ids, P.sel, by);
+    if (to !== null) {
+      desk_open(to, false);
+      requestAnimationFrame(() => {
+        const row = document.querySelector(`#desk .row[data-desk="${CSS.escape(to)}"]`);
+        row?.scrollIntoView({ block: "nearest" });
+        row?.focus({ preventScroll: true });
+      });
+    }
+    return;
+  }
+  if ((ev.key === "Enter" || ev.key === "o") && P.sel !== null && (el === document.body || el.closest("#desk .rows") !== null)) {
+    ev.preventDefault();
+    if (NARROW.matches) {
+      desk_open(P.sel, true);
+    } else {
+      $("#desk .pane").querySelector("input, textarea, button:not(.back)")?.focus();
+    }
+    return;
+  }
+  if (ev.key === "/") {
+    ev.preventDefault();
+    if (NARROW.matches && P.pane) {
+      desk_back();
+    }
+    $("#desk .q").focus();
+    return;
+  }
+  if (ev.key === "Escape") {
+    if (NARROW.matches && P.pane) {
+      ev.preventDefault();
+      desk_back();
+    } else if (P.sel !== null) {
+      ev.preventDefault();
+      document.querySelector(`#desk .row[data-desk="${CSS.escape(P.sel)}"]`)?.focus();
+    }
   }
 }
 function copied(button) {
@@ -2466,6 +2811,10 @@ function hear(msg) {
   for (const out of view_hear(v, msg)) {
     link_send(v, out);
   }
+  if (msg.$ === "state") {
+    desk_build();
+    desk_choose();
+  }
   const now = view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
   if (now.length > 0) {
     toast("Now " + now.map((k) => k.hint).join("; ") + ".");
@@ -2559,7 +2908,7 @@ function import_took(name, read, status) {
 async function import_welcome() {
   await INTRO;
   const key = kept("welcomed");
-  if (localStorage.getItem(key) === null && v.pick !== null && v.parts.length === OPENING && v.importing === null && DESK.matches) {
+  if (localStorage.getItem(key) === null && v.pick !== null && v.parts.length === OPENING && v.importing === null && DESK2.matches) {
     localStorage.setItem(key, "1");
     import_open(true);
   }
@@ -2704,6 +3053,12 @@ function paint() {
     bars();
     return;
   }
+  if (P.mode === "desk") {
+    P.frame = 0;
+    bars();
+    desk_draw();
+    return;
+  }
   const doc = document.documentElement;
   const follow = P.stick && P.end;
   const at = P.rows && !follow ? anchor() : null;
@@ -2755,6 +3110,9 @@ function bars() {
     $("#timers").hidePopover();
   }
   tasks_bar();
+  const turn = desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
+  $(".mode").hidden = false;
+  $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
   send.classList.toggle("stop", stop);
   send.disabled = !on;
   BOX.disabled = !on;
@@ -2812,10 +3170,23 @@ function go(path) {
 }
 function route() {
   const page = PAGES.includes(location.pathname);
-  $("#log").hidden = page;
+  const st = history.state ?? {};
+  if (st.mode === "desk" || st.mode === "chat") {
+    P.mode = st.mode;
+  }
+  if (typeof st.sel === "string") {
+    P.sel = st.sel;
+  }
+  P.pane = st.pane === true && NARROW.matches;
+  const desk = !page && P.mode === "desk";
+  $("#log").hidden = page || desk;
+  $("#desk").hidden = !desk;
   document.body.classList.toggle("account", page);
+  document.body.classList.toggle("desk", desk);
+  document.body.classList.toggle("pane", desk && P.pane);
   $("#account").hidden = !page;
-  P.shown = location.pathname;
+  P.rows = true;
+  P.shown = location.pathname + (desk ? "/mesa" : "");
   if (page) {
     account();
   }
@@ -3182,7 +3553,7 @@ function intro_play() {
         el.remove();
         gone();
       };
-      if (DESK.matches) {
+      if (DESK2.matches) {
         BOX.focus();
       }
     }

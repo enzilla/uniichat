@@ -132,6 +132,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ]],
     ["Pendências", [
       ["/p [P7|aguardando]", "",                       "a lista de pendências; com um id, o detalhe dela; aguardando: as que esperam outras", term_tasks],
+      ["/mesa [projeto]",   "",                        "a Mesa: as pendências por vez (agora, aguardando o Unii, em andamento, aguardando outras, resolvidas); com um projeto, só as dele", term_desk],
       ["/ok P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência (com as respostas dos campos: 1=a 2=\"um texto\"); o Unii a vê no próximo turno", (t, a) => term_task(t, a, "done", false)],
       ["/ok! P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência e avisa o Unii agora",     (t, a) => term_task(t, a, "done", true)],
       ["/rascunho P7 campo=valor", "",                 "responde campos da pendência sem concluir (salvo como rascunho)", term_draft],
@@ -606,6 +607,12 @@ function term_tasks(t: Term, arg: string): void {
     return term_note(t, got);
   }
   term_rows(t, View.entry_rows(null, "note", View.tasks_md(t.v, got.task)), false);
+}
+
+// the Mesa (View.desk_md): the tasks by whose move it is; a project's
+// only, given one
+function term_desk(t: Term, arg: string): void {
+  term_rows(t, View.entry_rows(null, "note", View.desk_md(t.v, arg.trim())), false);
 }
 
 // a task resolved: done (with a choice, by its text or number), dropped,
