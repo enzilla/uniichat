@@ -327,7 +327,7 @@ test("terminal words: a quote left open or text stuck after the closing one is r
   expect(View.task_args(v, "P1 obs=“curva sem fechar", true)).toBe(open);
   expect(View.task_args(v, "P1 obs=\"", true)).toBe(open);
   expect(View.task_args(v, "P1 obs=\"a\"b", true)).toBe(stuck);
-  expect(View.task_args(v, "P1 obs=\"a b\"c d", true)).toBe(open);
+  expect(View.task_args(v, "P1 obs=\"a b\"c d", true)).toBe(stuck);
   expect(View.task_args(v, "P1 3=“a”b", true)).toContain("O valor de “3” tem texto colado");
   // closed ones still pass, also empty and at the end
   const ok = View.task_args(v, "P1 obs=\"\" amb=hom fim", true);

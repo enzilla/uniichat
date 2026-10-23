@@ -190,47 +190,147 @@ export function timers_html(timers: Timer.Timer[]): string[] {
 // task not the user's has no Concluir in relief. Where it came from
 // (origin), a quiet badge, a link to its source if it has one
 export function tasks_html(tasks: Task[]): { open: string[]; now: string[]; waiting: string[]; closed: string[] } {
-  const when = (iso: string) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-  const head = (t: Task) => `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
-  const origin = (t: Task) => {
-    const said = View.origin_said(t);
-    if (said === "") {
-      return [];
-    }
-    const url = t.origin_url !== null && /^https?:\/\//i.test(t.origin_url) ? t.origin_url : null;
-    return [url === null ? `<span class="origin" title="Origem">${esc(said)}</span>` : `<a class="origin" title="Origem" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(said)}</a>`];
-  };
-  const meta = (t: Task, more: string[]) => `<p class="meta">${[...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...more, ...origin(t)].join(" · ")}</p>`;
-  const act = (t: Task, state: Task["state"], text: string, cls: string, answer?: string) => `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...(answer === undefined ? {} : { answer }) })}>${esc(text)}</button>`;
   const blocked = Deps.blocked_ids(tasks);
-  const open = (t: Task) => {
-    const n = Deps.frees(tasks, t);
-    const mine = t.assignee === "user";
-    const who = [...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(mine ? [] : [esc(View.assignee_said(t))])];
-    const detail = t.detail === "" ? "" : `<details><summary>Detalhes</summary><div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div></details>`;
-    const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => act(t, "done", c, "opt", c)).join("")}</div>`;
-    const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
-    const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
-    const acts = `<div class="acts">${go}${act(t, "done", "Concluir", mine ? "done" : "done quiet")}${act(t, "dropped", "Descartar", "drop")}</div>`;
-    const talk = View.task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(View.task_talk_said(t))}</span>`];
-    const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
-    return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head(t)}${meta(t, [...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t)}${opts}${note}${acts}${thread_html(t)}</li>`;
-  };
-  const closed = (t: Task) => {
-    const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii ainda não viu"])];
-    return `<li class="task closed" data-task="${esc(t.id)}">${head(t)}${meta(t, how)}<div class="acts">${act(t, "open", "Reabrir", "reopen")}</div></li>`;
-  };
-  const whose = (u: Task | undefined) => (u === undefined || u.assignee === "user" ? "" : " (" + View.assignee_said(u) + ")");
-  const waiting = (t: Task) => {
-    const more = [`aguarda ${esc(Deps.waits(tasks, t).map((id) => id + whose(tasks.find((u) => u.id === id))).join(", "))}`, ...(t.assignee === "user" ? [] : [esc(View.assignee_said(t))])];
-    return `<li class="task waiting ${esc(t.assignee === "user" ? "user" : "other " + t.assignee)}" data-task="${esc(t.id)}">${head(t)}${meta(t, more)}</li>`;
-  };
   const opened = tasks.filter((t) => t.state === "open");
   const groups = View.tasks_by_assignee(opened.filter((t) => !blocked.has(t.id)));
+  const open = (t: Task) => task_open_html(t, tasks, false);
   const heading = (a: string, ts: Task[]) => `<li class="group" data-assignee="${esc(a)}">${esc(View.assignee_said(ts[0]).replace(/^c/, "C"))} <span class="n">(${ts.length})</span></li>`;
   const titled = groups.length > 1 || (groups.length === 1 && groups[0][0] !== "user");
   const now = groups.flatMap(([a, ts]) => [...(titled ? [heading(a, ts)] : []), ...ts.map(open)]);
-  return { open: groups.flatMap(([, ts]) => ts.map(open)), now, waiting: opened.filter((t) => blocked.has(t.id)).map(waiting), closed: tasks.filter((t) => t.state !== "open").map(closed) };
+  return { open: groups.flatMap(([, ts]) => ts.map(open)), now, waiting: opened.filter((t) => blocked.has(t.id)).map((t) => task_waiting_html(t, tasks, false)), closed: tasks.filter((t) => t.state !== "open").map((t) => task_closed_html(t, false)) };
+}
+
+function task_when(iso: string): string {
+  return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function task_head(t: Task): string {
+  return `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
+}
+
+// where a task came from, a badge (a link to its source, if it has one)
+function task_origin(t: Task): string[] {
+  const said = View.origin_said(t);
+  if (said === "") {
+    return [];
+  }
+  const url = t.origin_url !== null && /^https?:\/\//i.test(t.origin_url) ? t.origin_url : null;
+  return [url === null ? `<span class="origin" title="Origem">${esc(said)}</span>` : `<a class="origin" title="Origem" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(said)}</a>`];
+}
+
+function task_meta(t: Task, more: string[]): string {
+  return `<p class="meta">${[...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...more, ...task_origin(t)].join(" · ")}</p>`;
+}
+
+function task_button(t: Task, state: Task["state"], text: string, cls: string, answer?: string): string {
+  return `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...(answer === undefined ? {} : { answer }) })}>${esc(text)}</button>`;
+}
+
+// a task's detail, Markdown: folded in the list, whole on the Mesa
+function task_detail(t: Task, desk: boolean): string {
+  if (t.detail === "") {
+    return "";
+  }
+  const md = `<div class="md">${Md.md_parse(t.detail).map(block_html).join("")}</div>`;
+  return desk ? `<div class="detail">${md}</div>` : `<details><summary>Detalhes</summary>${md}</details>`;
+}
+
+// an open task free to resolve, an item of the list (desk: the Mesa's
+// detail, its detail and thread unfolded, an article)
+function task_open_html(t: Task, tasks: Task[], desk: boolean): string {
+  const n = Deps.frees(tasks, t);
+  const mine = t.assignee === "user";
+  const who = [...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(mine ? [] : [esc(View.assignee_said(t))])];
+  const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => task_button(t, "done", c, "opt", c)).join("")}</div>`;
+  const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
+  const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
+  const acts = `<div class="acts">${go}${task_button(t, "done", "Concluir", mine ? "done" : "done quiet")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
+  const talk = View.task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(View.task_talk_said(t))}</span>`];
+  const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
+  const tag = desk ? "article" : "li";
+  return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${task_detail(t, desk)}${fields_html(t)}${opts}${note}${acts}${thread_html(t, desk)}</${tag}>`;
+}
+
+// a task closed lately: how, and Reabrir (desk: with its detail, its
+// answers and its thread, to read)
+function task_closed_html(t: Task, desk: boolean): string {
+  const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii ainda não viu"])];
+  const acts = `<div class="acts">${task_button(t, "open", "Reabrir", "reopen")}</div>`;
+  if (!desk) {
+    return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${acts}</li>`;
+  }
+  return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
+}
+
+// a task waiting for others: what it waits for (desk: each a link to it
+// on the Mesa, with its detail)
+function task_waiting_html(t: Task, tasks: Task[], desk: boolean): string {
+  const whose = (u: Task | undefined) => (u === undefined || u.assignee === "user" ? "" : " (" + View.assignee_said(u) + ")");
+  const waits = Deps.waits(tasks, t);
+  const cls = esc(t.assignee === "user" ? "user" : "other " + t.assignee);
+  if (!desk) {
+    const more = [`aguarda ${esc(waits.map((id) => id + whose(tasks.find((u) => u.id === id))).join(", "))}`, ...(t.assignee === "user" ? [] : [esc(View.assignee_said(t))])];
+    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, more)}</li>`;
+  }
+  const link = (id: string) => `<button class="goto" data-desk="${esc(id)}">${esc(id + whose(tasks.find((u) => u.id === id)))}</button>`;
+  const more = t.assignee === "user" ? [] : [esc(View.assignee_said(t))];
+  const why = `<p class="waits">Só pode ser resolvida depois de: ${waits.map(link).join(", ")}.</p>`;
+  return `<article class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, more)}${why}${task_detail(t, true)}${thread_read_html(t)}</article>`;
+}
+
+// a task concluded with fields: each one's answer
+function answers_html(t: Task): string {
+  const fields = t.fields ?? [];
+  const values = t.answers ?? {};
+  if (t.state !== "done" || fields.length === 0) {
+    return "";
+  }
+  const said = (f: Field) => {
+    const v = Object.hasOwn(values, f.id) ? values[f.id] : undefined;
+    return v === undefined || v.length === 0 ? "sem resposta" : Array.isArray(v) ? v.join(", ") : v;
+  };
+  return `<dl class="answers">${fields.map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(said(f))}</dd>`).join("")}</dl>`;
+}
+
+// a closed or waiting task's thread, to read only ("" for none)
+function thread_read_html(t: Task): string {
+  const thread = t.thread ?? [];
+  return thread.length === 0 ? "" : `<section class="thread read"><p class="sub">Conversa (${thread.length})</p><ol>${thread.map(thread_msg_html).join("")}</ol></section>`;
+}
+
+// The Mesa (main.ts): the list at the left, its groups (View.desk_list)
+// each under its heading, a task a row (its id, title, and a line of
+// its project, whose turn, assignee, what it frees or waits for; sel:
+// the one shown, aria-selected); the detail at the right, the task
+// shown whole (task_open_html, task_closed_html, task_waiting_html) or,
+// none, a note (detail: its elements, the first ← back, for a phone).
+// ids: the rows' order (j and k go down and up them)
+export function desk_html(tasks: Task[], q: string, ref: string, sel: string | null): { list: string[]; detail: string[]; ids: string[] } {
+  const groups = View.desk_list(tasks, q, ref);
+  const ids = groups.flatMap((g) => g.tasks.map((t) => t.id));
+  const row = (t: Task, g: View.Desk) => {
+    const n = g === "closed" || g === "waiting" ? 0 : Deps.frees(tasks, t);
+    const more = [
+      ...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]),
+      ...(View.task_talk_said(t) === "" || g === "closed" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(View.task_talk_said(t))}</span>`]),
+      ...(t.assignee === "user" ? [] : [esc(View.assignee_said(t))]),
+      ...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]),
+      ...(g === "waiting" ? [esc("aguarda " + Deps.waits(tasks, t).join(", "))] : []),
+      ...(g === "closed" ? [t.state === "done" ? "concluída" : "descartada"] : []),
+    ];
+    const on = t.id === sel;
+    return `<button class="row ${g}${on ? " sel" : ""}" role="option" aria-selected="${on}" data-desk="${esc(t.id)}"><span class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></span>${more.length === 0 ? "" : `<span class="meta">${more.join(" · ")}</span>`}</button>`;
+  };
+  const list = groups.flatMap((g) => [`<p class="group ${g.group}" role="presentation">${esc(g.label)} <span class="n">(${g.tasks.length})</span></p>`, ...g.tasks.map((t) => row(t, g.group))]);
+  const searched = q.trim() !== "" || ref !== "";
+  const none = tasks.length === 0 ? "Nenhuma pendência. Quando o Unii precisar de você, ela aparece aqui." : searched && ids.length === 0 ? "Nenhuma pendência na busca." : "";
+  const t = sel === null ? undefined : tasks.find((x) => x.id === sel);
+  const blocked = Deps.blocked_ids(tasks);
+  const back = `<button class="back" type="button" data-desk-back aria-label="Voltar à lista">← Pendências</button>`;
+  const detail = t === undefined
+    ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`]
+    : [back, t.state !== "open" ? task_closed_html(t, true) : blocked.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true)];
+  return { list: none === "" ? list : [...list, `<p class="none">${esc(none)}</p>`], detail, ids };
 }
 
 // a task's fields, each a fieldset: a choice and yes or no as radios,
@@ -258,19 +358,27 @@ function fields_html(t: Task): string {
   return `<div class="fields">${fields.map(one).join("")}</div>`;
 }
 
-// a task's thread: its messages (Unii's as Markdown, as messages are;
-// the user's as typed), a box and Enviar (main.ts: the box's text, as a
-// TaskSay); open while it's the user's turn
-function thread_html(t: Task): string {
-  const thread = t.thread ?? [];
-  const msg = (m: Task["thread"][number]) => m.who === "unii"
+function thread_msg_html(m: Task["thread"][number]): string {
+  return m.who === "unii"
     ? `<li class="unii"><span class="who">Unii</span><div class="md">${Md.md_parse(m.text).map(block_html).join("")}</div></li>`
     : `<li class="user"><span class="who">Você</span><p>${esc(m.text)}</p></li>`;
-  const open = thread.length > 0 && t.talk !== null ? " open" : "";
+}
+
+// a task's thread: its messages (Unii's as Markdown, as messages are;
+// the user's as typed), a box and Enviar (main.ts: the box's text, as a
+// TaskSay); open while it's the user's turn (desk: the Mesa's, always
+// open, a section)
+function thread_html(t: Task, desk = false): string {
+  const thread = t.thread ?? [];
   const said = thread.length === 0 ? "Conversar sobre esta pendência" : "Conversa (" + thread.length + ")";
-  const box = `<textarea class="say" rows="2" maxlength="4000" placeholder="Escreva sobre esta pendência (não a conclui)" aria-label="Mensagem sobre ${esc(t.id)}" data-keep="say"></textarea>`;
+  const box = `<textarea class="say" rows="${desk ? 3 : 2}" maxlength="4000" placeholder="Escreva sobre esta pendência (não a conclui)" aria-label="Mensagem sobre ${esc(t.id)}" data-keep="say"></textarea>`;
   const send = `<button class="say-send"${act_html({ $: "TaskSay", task: t.id, text: "" })}>Enviar</button>`;
-  return `<details class="thread" data-keep="thread"${open}><summary>${esc(said)}</summary>${thread.length === 0 ? "" : `<ol>${thread.map(msg).join("")}</ol>`}${box}<div class="acts">${send}</div></details>`;
+  const msgs = thread.length === 0 ? "" : `<ol>${thread.map(thread_msg_html).join("")}</ol>`;
+  if (desk) {
+    return `<section class="thread"><p class="sub">${esc(said)}</p>${msgs}${box}<div class="acts"><span class="hint">Ctrl+Enter envia</span>${send}</div></section>`;
+  }
+  const open = thread.length > 0 && t.talk !== null ? " open" : "";
+  return `<details class="thread" data-keep="thread"${open}><summary>${esc(said)}</summary>${msgs}${box}<div class="acts">${send}</div></details>`;
 }
 
 // Settings page
