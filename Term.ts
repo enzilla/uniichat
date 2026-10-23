@@ -136,6 +136,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/fold",             "Ctrl+F",                  "the chat in the fewest blocks; again: unfold (Ctrl+F eaten? type /fold)", term_fold],
       ["/import [...]",     "",                        "import your Claude and ChatGPT chats (alone: options)", term_import],
       ["/export",           "",                        "save the memory as ./unii-memory.json",          term_export],
+      ["/copy [n]",         "",                        "copia a última resposta do Unii; com n, o n-ésimo bloco de código dela (pelo terminal: funciona via ssh)", term_copy],
       ["/tree",             "",                        "the whole memory, in the browser (its link prints too)", (t) => term_browse(t, "The memory tree", t.url + "/tree")],
       ["",                  "Ctrl+Z",                  "suspend; fg brings it back",                     (t) => Screen.screen_suspend(t.scr)],
       ["/quit",             "",                        "leave: the chat goes on without this terminal",  term_quit],
@@ -795,6 +796,24 @@ function term_mcp(t: Term, arg: string): void {
     return term_choose(t, "Servidores MCP (Enter liga ou desliga)", t.v.mcp.map((p): Choice => ({ text: p.name, note: p.on ? "ligado" : "desligado", now: false, run: () => term_act(t, { $: "Plug", name: p.name }) })));
   }
   term_note(t, list.length === 0 ? "No MCP servers: the server's config sets none." : "MCP servers: " + list.join(", ") + ". Turn one on or off with /mcp <name>.");
+}
+
+// /copy: Unii's last answer, or its n-th code block, to the clipboard of
+// the terminal shown, by OSC 52 (over ssh too; tmux passes it on with
+// set-clipboard on)
+function term_copy(t: Term, arg: string): void {
+  const n = arg === "" ? 0 : Number(arg);
+  if (!Number.isInteger(n) || n < 0) {
+    return term_note(t, "Use /copy para a última resposta, ou /copy 2 para o segundo bloco de código dela.");
+  }
+  const got = View.view_copy(t.v, n);
+  if (typeof got === "string") {
+    return term_note(t, got);
+  }
+  process.stdout.write("\x1b]52;c;" + Buffer.from(got.text).toString("base64") + "\x07");
+  const size = Buffer.byteLength(got.text);
+  const tmux = process.env.TMUX ? " No tmux, precisa de set -g set-clipboard on." : "";
+  term_note(t, "Copiado: " + got.what + " (" + size + (size === 1 ? " byte" : " bytes") + ")." + tmux);
 }
 
 async function term_export(t: Term): Promise<void> {

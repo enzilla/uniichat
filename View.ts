@@ -564,6 +564,28 @@ export function task_args(v: View, arg: string, choose: boolean): { task: Task; 
   return { task, answer, note: rest.slice(used).trim() };
 }
 
+// Copy
+// ====
+
+// what /copy takes from the chat: Unii's last answer known whole (n 0),
+// else its n-th code block (from 1, as they come, those in quotes and
+// lists too); else why not
+export function view_copy(v: View, n: number): { text: string; what: string } | string {
+  const last = [...v.whole].filter(([, e]) => e.kind === "unii").sort((a, b) => b[0] - a[0])[0]?.[1];
+  if (last === undefined) {
+    return "Nenhuma resposta do Unii para copiar.";
+  }
+  if (n === 0) {
+    return { text: last.text, what: "a última resposta" };
+  }
+  const codes = (blocks: Md.Block[]): Md.Code[] => blocks.flatMap((b) => (b.$ === "Code" ? [b] : b.$ === "Quot" ? codes(b.x) : b.$ === "List" ? b.x.flatMap(codes) : []));
+  const all = codes(Md.md_parse(last.text));
+  if (n > all.length) {
+    return all.length === 0 ? "A última resposta não tem bloco de código." : "A última resposta tem " + all.length + (all.length === 1 ? " bloco" : " blocos") + " de código: /copy 1" + (all.length === 1 ? "." : " a /copy " + all.length + ".");
+  }
+  return { text: all[n - 1].x, what: "o bloco de código " + n };
+}
+
 // the footer's line of the pending list ("" with none open): ids that
 // fit in w, else the count alone
 // (those that wait for others: only how many, "+2 aguardando")
