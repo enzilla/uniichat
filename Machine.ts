@@ -17,6 +17,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Out } from "./Agent.ts";
 import { CAP, clip, clip_end } from "./Clip.ts";
+import * as Hooks from "./Hooks.ts";
 import * as Instructions from "./Instructions.ts";
 import { Mcp } from "./Mcp.ts";
 import { FIT, HEAD, IMAGE, image_kind, PIXELS } from "./View.ts";
@@ -130,9 +131,20 @@ export function spec(name: string, info: string, fields: object, need: string[])
 
 export namespace Machine {
 
+  // a job in its agent's dir, under the Claude Code hooks its tool
+  // matches (Hooks.ts)
   export async function run(job: Job, work: string, signal: AbortSignal): Promise<Out> {
     const root = work.startsWith("~/") ? os.homedir() + work.slice(1) : work;
     const cwd = path.join(root, path.basename(job.cwd));
+    try {
+      fs.mkdirSync(cwd, { recursive: true });
+    } catch (err: any) {
+      return { text: String(err?.message ?? err), fail: true };
+    }
+    return Hooks.around(job, cwd, signal, (input) => Machine.act({ ...job, input }, cwd, signal));
+  }
+
+  export async function act(job: Job, cwd: string, signal: AbortSignal): Promise<Out> {
     const input = job.input;
     const file = path.resolve(cwd, String(input.path));
     try {
