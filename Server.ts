@@ -1232,7 +1232,7 @@ export namespace Chat {
     if (!go) {
       return Chat.note(chat, text);
     }
-    Tasks.tasks_told(Tasks.tasks_load(chat.mem.dir), new Map(tasks.map((t) => [t.id, t.changed])));
+    Tasks.tasks_told(Tasks.tasks_load(chat.mem.dir), new Map(tasks.map((t) => [t.id, t.rev])));
     Chat.hold(chat, () => {
       Chat.take(chat, Chat.push(chat, null, "work", "[Pendências] " + text));
       Chat.change(chat);

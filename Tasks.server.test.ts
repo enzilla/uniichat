@@ -171,6 +171,14 @@ test("terminal words: id, choice by text or number, comment", () => {
   expect(args("")).toBe("Qual pendência? Informe o id, como P7.");
   expect(args("P77")).toBe("Pendência P77 não encontrada.");
   expect(args("Px")).toBe("Qual pendência? Informe o id, como P7.");
+  // a number none of the choices is: refused, nothing taken as a comment
+  expect(args("P2 4")).toBe("Opção 4 inválida: a pendência P2 tem 2 opções (1 a 2). Nada foi alterado.");
+  expect(args("P2 0 talvez")).toBe("Opção 0 inválida: a pendência P2 tem 2 opções (1 a 2). Nada foi alterado.");
+  expect(args("P2 12")).toBe("Opção 12 inválida: a pendência P2 tem 2 opções (1 a 2). Nada foi alterado.");
+  expect(args("P2 1")).toEqual(["P2", "sim", ""]);
+  // without choices, a number is a comment; /descartar takes no choice
+  expect(args("P4 3 PRs abertos")).toEqual(["P4", undefined, "3 PRs abertos"]);
+  expect(args("P2 4", false)).toEqual(["P2", undefined, "4"]);
 });
 
 test("terminal footer: ids if they fit, else the count", () => {

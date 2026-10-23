@@ -241,3 +241,113 @@ test("an unreadable tasks.json is kept aside, the list empty", () => {
 test("ids: P7, p7, 7", () => {
   expect(["P7", "p7", " 7 ", "P07"].map(T.task_id)).toEqual(["P7", "P7", "P7", "P7"]);
 });
+
+// tasks.json edited by hand, or of another version (SmokyRadish's block)
+// ======================================================================
+
+function hand(json: unknown): T.Store {
+  fs.writeFileSync(dir + "/tasks.json", typeof json === "string" ? json : JSON.stringify(json));
+  return T.tasks_load(dir, NOW);
+}
+
+const OK = { id: "P1", title: "Boa", detail: "", state: "open", who: "user", by: "main", choices: ["sim"], answer: null, note: null, ref: null, made: "2026-10-23T10:00:00.000Z", changed: "2026-10-23T10:00:00.000Z", closed: null, told: true };
+
+test("hand-edited tasks.json: an item without choices is completed; block, views and list work", () => {
+  const s = hand({ next: 3, tasks: [{ id: "P1", title: "Sem opções", state: "done", told: false }, { id: "P2", title: "Aberta" }] });
+  expect(s.tasks.map((t) => [t.id, t.choices, t.who, t.by, t.answer, t.told])).toEqual([["P1", [], "user", "main", null, false], ["P2", [], "user", "main", null, true]]);
+  expect(T.tasks_block(s, NOW)).toContain("P1 done by user");
+  expect(T.tasks_block(s, NOW)).toContain("- P2 [user] Aberta");
+  expect(T.tasks_list(s, { all: true }, NOW)).toContain("P1");
+  expect(T.tasks_view(s, NOW).length).toBe(2);
+  expect(fs.existsSync(dir + "/tasks.json.bad")).toBe(false);
+});
+
+test("hand-edited tasks.json: items without an id, or with id Pabc, left out; the next id past the good ones; file kept aside", () => {
+  const s = hand({ next: "x", tasks: [{ title: "sem id" }, { ...OK, id: "Pabc" }, { ...OK, id: "P4" }, { ...OK, id: "P4", title: "gêmea" }, null, 7, "P9"] });
+  expect(s.tasks.map((t) => t.id)).toEqual(["P4"]);
+  expect(s.next).toBe(5);
+  expect(fs.existsSync(dir + "/tasks.json.bad")).toBe(true);
+  expect(T.tasks_block(s, NOW)).toContain("P4 [user] Boa");
+  expect(add(s, { title: "Nova" }).id).toBe("P5");
+  // what was left out never comes back on the next save
+  const disk = JSON.parse(fs.readFileSync(dir + "/tasks.json", "utf8"));
+  expect(disk.tasks.map((t: T.Task) => t.id)).toEqual(["P4", "P5"]);
+  expect(disk.next).toBe(6);
+});
+
+test("hand-edited tasks.json: wrong types become defaults; bad dates, states and answers are fixed", () => {
+  const s = hand({ next: 2, tasks: [{ id: "P1", title: 42, detail: { x: 1 }, state: "later", who: "boss", by: [], choices: "sim", answer: 3, note: 5, ref: false, made: "ontem", changed: 1, closed: "x", told: "no", rev: -3 }] });
+  const t = s.tasks[0];
+  expect([t.title, t.detail, t.state, t.who, t.by, t.choices, t.answer, t.note, t.ref, t.closed, t.told, t.rev]).toEqual(["(sem título)", "", "open", "user", "main", [], null, null, null, null, true, 0]);
+  expect(t.made).toBe(new Date(NOW).toISOString());
+  expect(t.changed).toBe(t.made);
+  const d = hand.call(null, "{}");
+  expect(d).toBe(s); // read once per process: the list kept
+  T.tasks_forget();
+  const answer = hand({ tasks: [{ ...OK, state: "done", choices: ["sim", 3, "", "sim"], answer: "talvez" }, { ...OK, id: "P2", state: "done", answer: "sim", closed: null }] });
+  expect(answer.tasks.map((x) => [x.choices, x.answer, x.closed])).toEqual([[["sim"], null, OK.changed], [["sim"], "sim", OK.changed]]);
+});
+
+test("hand-edited tasks.json: control characters in texts never reach the prompt", () => {
+  const s = hand({ tasks: [{ ...OK, title: "a\x1b]8;;http://x\x1b\\b\x07c", detail: "l1\nl2\x1b[31m", ref: "r\x00", choices: ["s\x1bim"], note: "n\x9bx", state: "done", told: false }] });
+  const block = T.tasks_block(s, NOW);
+  expect(block).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/);
+  expect(T.tasks_list(s, { id: "P1" }, NOW)).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/);
+  expect(s.tasks[0].detail).toBe("l1\nl2[31m");
+});
+
+test("tasks.json without a list of tasks, or null: kept aside, the list empty and usable", () => {
+  expect(hand("null").tasks).toEqual([]);
+  expect(fs.existsSync(dir + "/tasks.json.bad")).toBe(true);
+  T.tasks_forget();
+  fs.rmSync(dir + "/tasks.json.bad");
+  const s = hand({ next: 3, tasks: "P1" });
+  expect(s.tasks).toEqual([]);
+  expect(fs.existsSync(dir + "/tasks.json.bad")).toBe(true);
+  expect(add(s, { title: "x" }).id).toBe("P1");
+});
+
+// told and versions (SmokyRadish's ressalvas 1 and 2)
+// ===================================================
+
+test("Unii editing a task the user resolved, unseen, keeps it to tell; a change of state by Unii tells it", () => {
+  const s = T.tasks_load(dir);
+  add(s, { title: "Abrir PR?", choices: ["sim", "não"] });
+  add(s, { title: "Outra" });
+  T.task_resolve(s, "P1", "done", "sim", "pode", NOW + 1);
+  const e = T.task_edit(s, { id: "P1", detail: "mais contexto", ref: "uniichat" }, NOW + 2) as T.Task;
+  expect([e.told, e.state, e.answer]).toEqual([false, "done", "sim"]);
+  expect(T.tasks_block(s, NOW + 3)).toContain("P1 done by user");
+  // a state set again (the same) is no change of state
+  expect((T.task_edit(s, { id: "P1", state: "done" }, NOW + 4) as T.Task).told).toBe(false);
+  // shown, then edited by Unii during the call: still told when it ends well
+  expect(T.tasks_told(s)).toBe(1);
+  T.task_resolve(s, "P2", "dropped", null, null, NOW + 5);
+  const o = T.task_edit(s, { id: "P2", state: "open" }, NOW + 6) as T.Task;
+  expect(o.told).toBe(true);
+  expect(T.tasks_untold(s)).toEqual([]);
+});
+
+test("two changes by the user in one millisecond: the one after the block stays to tell", () => {
+  const s = T.tasks_load(dir);
+  add(s, { title: "A" });
+  T.task_resolve(s, "P1", "done", null, null, NOW);
+  T.tasks_block(s, NOW);
+  T.task_resolve(s, "P1", "open", null, null, NOW); // the same ms
+  expect(T.tasks_told(s)).toBe(0);
+  expect(T.tasks_untold(s).map((t) => [t.id, t.state])).toEqual([["P1", "open"]]);
+  // versions only go up, read back after a restart too
+  const rev = s.rev;
+  T.tasks_forget();
+  const again = T.tasks_load(dir);
+  expect(again.rev).toBe(rev);
+  T.task_resolve(again, "P1", "dropped", null, null, NOW);
+  expect(again.tasks[0].rev).toBe(rev + 1);
+});
+
+test("an old tasks.json, without versions: its untold changes told by the next block", () => {
+  const s = hand({ next: 2, tasks: [{ ...OK, state: "done", told: false }] });
+  expect(s.tasks[0].rev).toBe(0);
+  T.tasks_block(s, NOW);
+  expect(T.tasks_told(s)).toBe(1);
+});

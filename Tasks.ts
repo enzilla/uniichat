@@ -16,7 +16,15 @@
 // resolution is a note in the chat; with go, a "[Pendências]" message
 // that starts a turn, as a report does (Server.ts).
 // Every text is stripped of control characters as it comes: titles and
-// details reach the terminal (ANSI) and the web (escaped there).
+// details reach the terminal (ANSI) and the web (escaped there). What
+// tasks.json holds is read item by item (task_read): a hand edit, or a
+// file of another version, can't break a turn or a view; an item with
+// no id "P<n>" is left out, said in the server's log, the file kept
+// whole as tasks.json.bad.
+// Each change by the user stamps the task with the list's next version
+// (rev, only ever up), so a block's shown changes are told by version,
+// never by clock: two in one millisecond stay apart. Unii's own edits
+// keep the stamp and whether it was told, unless it changes the state.
 
 import * as fs from "node:fs";
 import { Disk } from "./Disk.ts";
@@ -27,7 +35,8 @@ import { Disk } from "./Disk.ts";
 export type State = "open" | "done" | "dropped";
 export type Who   = "user" | "unii";
 
-// a pending item: id ("P7"), title, detail (Markdown), state, who must
+// a pending item (rev: the list's version at the last change by the
+// user, Store.rev): id ("P7"), title, detail (Markdown), state, who must
 // act, who made it ("main", "user"), the answers offered, the one chosen,
 // the comment it was closed with, a free link (a project, an agent, a
 // PR), when made, last changed and closed (ISO), whether Unii saw its
@@ -47,11 +56,13 @@ export type Task = {
   changed : string;
   closed  : string | null;
   told    : boolean;
+  rev     : number;
 };
 
-// the list of a chat's dir: the next id's number, the tasks; shown: the
-// changes the last block showed, by id, at each one's `changed`
-export type Store = { dir: string; next: number; tasks: Task[]; shown: Map<string, string> };
+// the list of a chat's dir: the next id's number, the last version
+// stamped (only up), the tasks; shown: the changes the last block
+// showed, by id, at each one's rev
+export type Store = { dir: string; next: number; rev: number; tasks: Task[]; shown: Map<string, number> };
 
 // a change asked: by Unii (task_add, task_edit) or the user (an act)
 export type Edit = {
@@ -125,20 +136,90 @@ export function task_id(x: unknown): string {
 // Store
 // =====
 
-// the list of a chat's dir, read once (none, or unreadable: empty, the
-// unreadable file kept aside)
-export function tasks_load(dir: string): Store {
+// a time as read: an ISO date, else `or`
+function time_read(x: unknown, or: string): string {
+  return typeof x === "string" && !Number.isNaN(Date.parse(x)) ? new Date(Date.parse(x)).toISOString() : or;
+}
+
+// a whole number >= 0 as read, else 0
+function count_read(x: unknown): number {
+  return typeof x === "number" && Number.isSafeInteger(x) && x >= 0 ? x : 0;
+}
+
+// an item of tasks.json as a task: each field checked, its texts cleaned
+// and cut as if given now, what's missing or wrong filled in; null: none
+// can be made (no id "P<n>")
+export function task_read(x: unknown, now: number): Task | null {
+  if (typeof x !== "object" || x === null || Array.isArray(x)) {
+    return null;
+  }
+  const o = x as Record<string, unknown>;
+  const m = /^P([1-9]\d{0,8})$/.exec(typeof o.id === "string" ? o.id.trim() : "");
+  if (m === null) {
+    return null;
+  }
+  const state = STATES.includes(o.state as State) ? (o.state as State) : "open";
+  const choices = Array.isArray(o.choices) ? [...new Set(o.choices.filter((c) => typeof c === "string").map((c) => text_line(c, CHOICE)).filter((c) => c !== ""))].slice(0, CHOICES) : [];
+  const answer = typeof o.answer === "string" ? text_line(o.answer, CHOICE) : "";
+  const text = (y: unknown, n: number, f: (y: unknown, n: number) => string) => (typeof y === "string" ? f(y, n) : "");
+  const note = text(o.note, NOTE, text_body);
+  const ref = text(o.ref, REF, text_line);
+  const at = new Date(now).toISOString();
+  const made = time_read(o.made, at);
+  const changed = time_read(o.changed, made);
+  return {
+    id      : "P" + Number(m[1]),
+    title   : text(o.title, TITLE, text_line) || "(sem título)",
+    detail  : text(o.detail, DETAIL, text_body),
+    state,
+    who     : o.who === "unii" ? "unii" : "user",
+    by      : text(o.by, 40, text_line) || "main",
+    choices,
+    answer  : state === "done" && choices.includes(answer) ? answer : null,
+    note    : note === "" ? null : note,
+    ref     : ref === "" ? null : ref,
+    made,
+    changed,
+    closed  : state === "open" ? null : time_read(o.closed, changed),
+    told    : o.told !== false,
+    rev     : count_read(o.rev),
+  };
+}
+
+// the list of a chat's dir, read once (none: empty). Read whole before
+// it's taken: unreadable, it's kept aside and the list is empty; items
+// left out (task_read; an id twice: the first) are said in the log, the
+// file kept aside as it was. The next id and version: past every one read
+export function tasks_load(dir: string, now = Date.now()): Store {
   const had = STORES.get(dir);
   if (had !== undefined) {
     return had;
   }
-  const s: Store = { dir, next: 1, tasks: [], shown: new Map() };
+  const s: Store = { dir, next: 1, rev: 0, tasks: [], shown: new Map() };
   const file = dir + FILE;
   if (fs.existsSync(file)) {
     try {
       const got = JSON.parse(fs.readFileSync(file, "utf8"));
-      s.tasks = Array.isArray(got.tasks) ? got.tasks : [];
-      s.next = Math.max(Number(got.next) || 1, ...s.tasks.map((t) => Number(t.id.slice(1)) + 1));
+      if (typeof got !== "object" || got === null || !Array.isArray(got.tasks)) {
+        throw new Error("no list of tasks");
+      }
+      const tasks: Task[] = [];
+      let left = 0;
+      for (const x of got.tasks) {
+        const t = task_read(x, now);
+        if (t === null || tasks.some((u) => u.id === t.id)) {
+          left += 1;
+        } else {
+          tasks.push(t);
+        }
+      }
+      if (left > 0) {
+        console.error("unii: " + file + ": " + left + " item(s) left out (no id P<n>, or an id twice); the file as it was kept as " + file + ".bad");
+        fs.copyFileSync(file, file + ".bad");
+      }
+      s.tasks = tasks;
+      s.next = Math.max(1, count_read(got.next), ...tasks.map((t) => Number(t.id.slice(1)) + 1));
+      s.rev = Math.max(count_read(got.rev), ...tasks.map((t) => t.rev));
     } catch (err: any) {
       console.error("unii: " + file + " unreadable, kept as " + file + ".bad: " + (err?.message ?? err));
       fs.renameSync(file, file + ".bad");
@@ -157,7 +238,7 @@ export function tasks_forget(): void {
 export function tasks_save(s: Store): void {
   const file = s.dir + FILE;
   fs.mkdirSync(s.dir, { recursive: true });
-  fs.writeFileSync(file + ".new", JSON.stringify({ next: s.next, tasks: s.tasks }));
+  fs.writeFileSync(file + ".new", JSON.stringify({ next: s.next, rev: s.rev, tasks: s.tasks }));
   fs.renameSync(file + ".new", file);
   Disk.wrote(file);
 }
@@ -222,7 +303,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number): Task | 
   const ref = text_line(args.ref, REF);
   const task: Task = {
     id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", who, by, choices, answer: null, note: null,
-    ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true,
+    ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0,
   };
   s.next += 1;
   s.tasks.push(task);
@@ -230,8 +311,10 @@ export function task_new(s: Store, args: Edit, by: string, now: number): Task | 
   return task;
 }
 
-// a task changed by Unii (task_edit): any field, its state too (one it
-// closes is told: Unii did it); else why not
+// a task changed by Unii (task_edit): any field, its state too. A new
+// state makes the task told (Unii did it); any other edit leaves told
+// and rev as they were, so a user's change Unii hasn't seen yet stays to
+// tell; else why not
 export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number): Task | string {
   const task = task_find(s, args.id);
   if (task === null) {
@@ -285,7 +368,7 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
     }
     next.answer = answer === "" ? null : answer;
   }
-  return task_put(s, task, next, now, true);
+  return task_put(s, task, next, now, next.state !== task.state ? true : null);
 }
 
 // a task resolved by the user: done (answer: one of its choices), dropped
@@ -320,14 +403,20 @@ export function task_resolve(s: Store, id: unknown, state: unknown, answer: unkn
   return task_put(s, task, { ...task, state: to, answer: to === "done" ? said : null, note: comment ?? task.note }, now, false);
 }
 
-// a change kept: stamped (a close: its time; told: Unii's own), the
-// closed archived, saved
-function task_put(s: Store, task: Task, next: Task, now: number, told: boolean): Task {
+// a change kept: stamped (a close: its time); told: true, Unii's own
+// change of state; false, the user's, stamped with the next version;
+// null, Unii's other edits, told and rev as they were. The closed
+// archived, saved
+function task_put(s: Store, task: Task, next: Task, now: number, told: boolean | null): Task {
   const at = new Date(now).toISOString();
   const closes = next.state !== "open" && task.state === "open";
   next.changed = at;
   next.closed = next.state === "open" ? null : closes ? at : (task.closed ?? at);
-  next.told = told;
+  next.told = told ?? task.told;
+  if (told === false) {
+    s.rev += 1;
+    next.rev = s.rev;
+  }
   s.tasks[s.tasks.indexOf(task)] = next;
   tasks_archive(s, now);
   tasks_save(s);
@@ -336,13 +425,13 @@ function task_put(s: Store, task: Task, next: Task, now: number, told: boolean):
 
 // the user's changes Unii hasn't seen, oldest first
 export function tasks_untold(s: Store): Task[] {
-  return s.tasks.filter((t) => !t.told).sort((a, b) => a.changed.localeCompare(b.changed));
+  return s.tasks.filter((t) => !t.told).sort((a, b) => a.rev - b.rev || a.changed.localeCompare(b.changed));
 }
 
-// those changes seen: told, saved (a change since, at another `changed`,
-// stays to tell); ids: those of `shown`, else all untold
-export function tasks_told(s: Store, shown: Map<string, string> = s.shown): number {
-  const told = s.tasks.filter((t) => !t.told && shown.get(t.id) === t.changed);
+// those changes seen: told, saved (a change since, at another rev, stays
+// to tell); shown: rev by id, those the last block showed by default
+export function tasks_told(s: Store, shown: Map<string, number> = s.shown): number {
+  const told = s.tasks.filter((t) => !t.told && shown.get(t.id) === t.rev);
   told.forEach((t) => (t.told = true));
   if (told.length > 0) {
     tasks_save(s);
@@ -353,7 +442,7 @@ export function tasks_told(s: Store, shown: Map<string, string> = s.shown): numb
 // every untold change told now (it went in a message)
 export function tasks_tell(s: Store): Task[] {
   const all = tasks_untold(s);
-  tasks_told(s, new Map(all.map((t) => [t.id, t.changed])));
+  tasks_told(s, new Map(all.map((t) => [t.id, t.rev])));
   return all;
 }
 
@@ -420,7 +509,7 @@ export function tasks_list(s: Store, args: { all?: unknown; ref?: unknown; id?: 
 export function tasks_block(s: Store, now: number): string {
   const changed = tasks_untold(s);
   const open = tasks_sort(s.tasks).filter((t) => t.state === "open");
-  s.shown = new Map(changed.map((t) => [t.id, t.changed]));
+  s.shown = new Map(changed.map((t) => [t.id, t.rev]));
   if (changed.length === 0 && open.length === 0) {
     return "";
   }

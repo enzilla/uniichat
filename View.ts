@@ -494,8 +494,10 @@ export function view_untold(v: View): Task[] {
 }
 
 // a command's words ("P7 sim pode mesclar", "7 2", "p7"): its task, the
-// choice it names (the longest that starts the rest, as written or by
-// its number), the comment after; else why not
+// choice it names (the longest that starts the rest, as written; else by
+// its number), the comment after; else why not. A task with choices
+// whose rest starts with a number none of them is (/ok P1 4 with 3):
+// refused, nothing done, rather than "4" taken as a comment
 export function task_args(v: View, arg: string, choose: boolean): { task: Task; answer?: string; note: string } | string {
   const m = /^\s*[Pp]?(\d+)(?=\s|$)\s*([\s\S]*)$/.exec(arg);
   if (m === null) {
@@ -512,9 +514,13 @@ export function task_args(v: View, arg: string, choose: boolean): { task: Task; 
   }
   const low = rest.toLowerCase();
   const said = [...task.choices].sort((a, b) => b.length - a.length).find((c) => low === c.toLowerCase() || low.startsWith(c.toLowerCase() + " "));
-  const num = /^(\d)(?=\s|$)/.exec(rest);
+  const num = said === undefined ? /^(\d+)(?=\s|$)/.exec(rest) : null;
+  if (num !== null && (Number(num[1]) < 1 || Number(num[1]) > task.choices.length)) {
+    const n = task.choices.length;
+    return "Opção " + num[1] + " inválida: a pendência " + id + " tem " + n + (n === 1 ? " opção (1)." : " opções (1 a " + n + ").") + " Nada foi alterado.";
+  }
   const answer = said ?? (num !== null ? task.choices[Number(num[1]) - 1] : undefined);
-  const used = said !== undefined ? said.length : answer !== undefined ? 1 : 0;
+  const used = said !== undefined ? said.length : num !== null ? num[1].length : 0;
   return { task, answer, note: rest.slice(used).trim() };
 }
 
