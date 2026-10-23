@@ -37,7 +37,7 @@ export async function run(given: string | undefined): Promise<void> {
   const work = String(conf.work ?? WORK);
   let token: string | undefined = conf.url === url ? conf.token : undefined;
   if (!await Client.signed(url, token)) {
-    token = await Client.login(url, "the device " + name);
+    token = await Client.login(url, "o dispositivo " + name);
   }
   Client.write("device", { ...conf, url, token, name, work });
   console.log("unii device " + name + " on " + url + ", work dir " + work);

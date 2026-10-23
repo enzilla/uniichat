@@ -70,18 +70,18 @@ export async function login(url: string, what: string): Promise<string> {
   if (typeof out.url !== "string") {
     fail(out.error ?? "no sign-in from " + url);
   }
-  console.log("To sign " + what + " in to " + url + ", open this link in a browser signed in there");
-  console.log("(on the server, `unii serve link` signs a browser in):\n\n  " + out.url + "\n");
-  console.log("and type this code: " + out.code + "\n");
+  console.log("Para conectar " + what + " a " + url + ", abra este link num navegador em que você já entrou como dono");
+  console.log("(no servidor, `unii serve link` faz um navegador entrar):\n\n  " + out.url + "\n");
+  console.log("e digite este código: " + out.code + "\n");
   const wait = { headers: auth(key), timeout: false } as RequestInit;
   while (true) {
     const done = await fetch(url + "/api/wait", wait).catch(() => null);
     const ans  = await done?.json().catch(() => ({})) ?? {};
     if (done?.status === 410) {
-      fail("the sign-in link expired: run unii again");
+      fail("o link expirou: rode o unii de novo para receber outro");
     }
     if (done?.ok && ans.ok) {
-      console.log("Signed in.");
+      console.log("Conectado.");
       return key;
     }
     if (done?.status !== 408) {

@@ -54,6 +54,30 @@ const ASKS  = 100;
 // the browsers that get pushes at once (the oldest beyond go)
 const WEB_PUSHES = 32;
 
+// the sign-in pages' look (Owner.page): a column a phone wide, the mark
+// over the title, who asks in a chip, a device's warning tinted, the code
+// in big, spaced digits, one button the column wide
+const AUTH_CSS = `
+body.auth main { width: min(400px, 100% - 40px); margin: 14vh auto 8vh; text-align: left; }
+body.auth .mark { width: 34px; height: 34px; margin: 0 0 22px; }
+body.auth h1 { font-size: 38px; }
+body.auth main :is(p, h1) { text-wrap: pretty; }
+body.auth .sub { font-size: 15px; line-height: 1.6; color: var(--mid); }
+body.auth .sub strong, body.auth .who { color: var(--ink); }
+body.auth .who { display: inline-block; padding: 1px 9px; border-radius: 7px; background: var(--block); font-weight: 600; }
+body.auth .warn, body.auth .err, body.auth .hint { margin: 16px 0 0; padding: 12px 14px; border-radius: 10px; font-size: 14px; line-height: 1.5; }
+body.auth .warn { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--ink); }
+body.auth .err { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
+body.auth .hint { padding: 0; color: var(--mid); font-size: 13px; }
+body.auth form { display: grid; gap: 10px; margin: 22px 0 0; }
+body.auth label { font-size: 13px; font-weight: 600; color: var(--mid); }
+body.auth input[name=code] { width: 100%; box-sizing: border-box; padding: 14px 12px; border: 1px solid var(--hair); border-radius: 10px; background: var(--paper); color: var(--ink); font: 600 30px/1 var(--mono); letter-spacing: .3em; text-align: center; }
+body.auth input[name=code]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+body.auth button { width: 100%; padding: 13px; border: 0; border-radius: 10px; background: var(--ink); color: var(--paper); font: 600 15px/1 var(--sans); cursor: pointer; }
+body.auth button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body.auth code { padding: 1px 6px; border-radius: 5px; background: var(--block); font: 13px var(--mono); color: var(--ink); }
+`;
+
 const SCHEMA = `
 create table if not exists sessions (hash text primary key, what text not null default '', at integer not null default 0);
 create table if not exists tickets  (hash text primary key, data text not null, expires integer not null);
@@ -216,13 +240,13 @@ export namespace Owner {
         }
         const link = Owner.ticket_read(t, false);
         if (link === null) {
-          return Owner.page("This sign-in link expired", "Ask for a new one: run <code>unii serve link</code> on the server, or start the terminal or device again.");
+          return Owner.page("Este link expirou", "Cada link vale uma vez, por 15 minutos. Peça um novo: rode <code>unii serve link</code> no servidor, ou abra de novo o terminal ou o dispositivo.");
         }
         if (link.session !== null) {
-          return owner ? Owner.page_confirm(t, link.what, "") : Owner.page("Sign in this browser first", "Run <code>unii serve link</code> on the server, open the link it prints, then open this link again.");
+          return owner ? Owner.page_confirm(t, link.what, "") : Owner.page("Entre primeiro neste navegador", "Só o dono do servidor autoriza um acesso. Rode <code>unii serve link</code> no servidor, abra o link que ele mostrar e depois abra este link de novo.");
         }
         // a button, so a chat app's preview of the link doesn't use it up
-        return Owner.page("Sign in this browser", `Sign in to this unii server as its owner.</p><form method="post" action="/auth"><input type="hidden" name="t" value="${Owner.safe(t)}"><button type="submit" autofocus>Sign in</button></form><p>`);
+        return Owner.page("Entrar neste navegador", `Este navegador passa a ser o do dono deste servidor do unii: conversa, configurações e a autorização de terminais e dispositivos.</p><form method="post" action="/auth"><input type="hidden" name="t" value="${Owner.safe(t)}"><button type="submit" autofocus>Entrar</button></form><p>`);
       }
       case "/api/wait": {
         if (owner) {
@@ -326,30 +350,46 @@ export namespace Owner {
       return new Response(null, { status: 303, headers: { location: config.SITE + "/", "set-cookie": COOKIE + "=" + token + KEEP } });
     }
     if (link === null || link.session === null || !Owner.is(req)) {
-      return Owner.page("This sign-in link expired", "Start the terminal or device again for a new one.");
+      return Owner.page("Este link expirou", "Abra de novo o terminal ou o dispositivo para receber um link novo.");
     }
     if (typed !== Owner.code(link.session)) {
-      return Owner.page_confirm(t, link.what, "That code didn't match. Check the code it shows and try again.");
+      return Owner.page_confirm(t, link.what, "O código não confere. Confira o código mostrado e tente de novo.");
     }
     Owner.open().query("insert or ignore into sessions values (?, ?, ?)").run(link.session, link.what, Date.now());
     Owner.ticket_read(t, true);
     WAITS.get(link.session)?.();
-    return Owner.page("Signed in", "You can close this tab and go back to " + Owner.safe(link.what) + ".");
+    const who = Owner.safe(Owner.who(link.what));
+    return Owner.page("Pronto", "<strong>" + who.charAt(0).toUpperCase() + who.slice(1) + "</strong> está conectado a este servidor. Pode fechar esta aba e voltar para ele.");
   }
 
-  // the page a terminal's or device's link opens: it asks for the code
-  // it shows
+  // the page a terminal's or device's link opens: who asks, what it may
+  // do (a device: run commands and edit files on its computer), and the
+  // code it shows to type
   export function page_confirm(t: string, what: string, err: string): Response {
-    const note = err === "" ? "" : `<p class="err">${err}</p>`;
-    return Owner.page("Sign in " + Owner.safe(what), `Type the code it shows to let it use this server as you.</p>${note}<form method="post" action="/auth"><input type="hidden" name="t" value="${Owner.safe(t)}"><input name="code" inputmode="numeric" autocomplete="off" autofocus aria-label="code"><button type="submit">Confirm</button></form><p>`);
+    const note = err === "" ? "" : `<p class="err" role="alert">${err}</p>`;
+    const device = /\b(device|dispositivo)\b/i.test(what);
+    const may = device
+      ? `<p class="warn">Um dispositivo deixa o Unii <strong>rodar comandos e editar arquivos</strong> naquele computador. Autorize só se foi você quem o iniciou.</p>`
+      : `<p class="hint">Ele poderá ler e enviar mensagens neste servidor como você.</p>`;
+    const form = `<form method="post" action="/auth"><input type="hidden" name="t" value="${Owner.safe(t)}"><label for="code">Código mostrado no ${device ? "dispositivo" : "terminal"}</label><input id="code" name="code" inputmode="numeric" pattern="[0-9 ]*" maxlength="9" autocomplete="one-time-code" autofocus required><button type="submit">Autorizar</button></form>`;
+    return Owner.page("Autorizar acesso", `<span class="who">${Owner.safe(Owner.who(what))}</span> quer usar este servidor.</p>${may}${note}${form}<p class="hint">Se não foi você quem pediu, feche esta página: sem o código, nada acontece.`);
+  }
+
+  // who asks, as the terminal and device name themselves (an older one
+  // says it in English)
+  export function who(what: string): string {
+    return what.replace(/^the terminal on /, "o terminal em ").replace(/^the device /, "o dispositivo ").replace(/^a terminal$/, "um terminal");
   }
 
   export function safe(s: string): string {
     return s.replace(/[<>&"]/g, "");
   }
 
+  // a sign-in page: the mark, a title, its text (HTML: a form may close
+  // and reopen its paragraph); its look here (AUTH_CSS), on the site's
+  // colors and fonts (style.css)
   export function page(title: string, body: string): Response {
-    const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · UniiChat</title><link rel="stylesheet" href="/style.css"></head><body class="solo"><main><h1>${title}</h1><p class="sub">${body}</p></main></body></html>`;
+    const page = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${title} · UniiChat</title><link rel="stylesheet" href="/style.css"><style>${AUTH_CSS}</style></head><body class="solo auth"><main><span class="mark" aria-hidden="true"></span><h1>${title}</h1><p class="sub">${body}</p></main></body></html>`;
     return new Response(page, { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 

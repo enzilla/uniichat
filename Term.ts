@@ -1371,7 +1371,7 @@ export async function main(given: string | undefined, classic = false): Promise<
   const tokens = conf.tokens ?? {};
   let token: string | undefined = tokens[Client.host(url)];
   if (!await Client.signed(url, token)) {
-    token = await Client.login(url, "the terminal on " + os.hostname());
+    token = await Client.login(url, "o terminal em " + os.hostname());
     Client.write("tui", { ...conf, url, tokens: { ...tokens, [Client.host(url)]: token } });
   }
   const t = term_new(url, token!);
