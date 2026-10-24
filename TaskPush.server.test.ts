@@ -4,7 +4,7 @@
 // list's pushes in the server (Server.ts Chat.task_push): a task the
 // user's, added by Unii, goes to the owner's phones and browsers as one
 // push after the window, its count for the badge, and a turn's reply
-// carries the count too; a push that fails goes again, only to the
+// pushes nothing; a push that fails goes again, only to the
 // browsers it didn't. Push.notify and Push.deliver are fakes that keep
 // what they get (Push.phones one that does nothing).
 
@@ -84,10 +84,20 @@ test("a push that fails goes again, with the same text; told once it went", asyn
   expect(GOT.length).toBe(3);
 });
 
-test("a turn's reply carries the user's count", async () => {
+test("a turn's reply pushes nothing; a new task still does", async () => {
   GOT.length = 0;
+  const t0 = Date.now() + 100 * TaskPush.WINDOW;
   await Chat.writing(chat, async () => Chat.push(chat, null, "unii", "Pronto."));
-  Chat.phone(chat);
+  Chat.talked(chat);
+  expect((Chat as any).phone).toBeUndefined();
+  await Chat.task_push(chat, t0);
+  await Chat.task_push(chat, t0 + TaskPush.WINDOW);
   expect(Memory.message(chat.mem, chat.mem.count - 1)!.text).toBe("Pronto.");
-  expect(GOT).toEqual([{ text: "Pronto.", more: { kind: "reply", tasks: 2 } }]);
+  expect(GOT).toEqual([]);
+  const s = Tasks.tasks_load(dir);
+  Tasks.task_new(s, { title: "Pendência depois da resposta" }, "main", t0 + TaskPush.WINDOW);
+  await Chat.task_push(chat, t0 + TaskPush.WINDOW);
+  await Chat.task_push(chat, t0 + 2 * TaskPush.WINDOW);
+  expect(GOT.map((g) => g.more.kind)).toEqual(["tasks"]);
+  expect(GOT[0].text).toMatch(/^Pendência P\d+ precisa de você$/);
 });

@@ -392,7 +392,6 @@ export namespace Chat {
       chat.busy = false;
       Chat.live(chat, null, []);
       Chat.talked(chat);
-      Chat.phone(chat);
       Chat.after(chat);
       Chat.change(chat);
     }
@@ -673,15 +672,8 @@ export namespace Chat {
     Tasks.tasks_talked(s, last !== null && last.kind === "unii" ? last.text : null, Date.now());
   }
 
-  // a turn's last message, Unii's reply or why there was none, to the
-  // owner's phones and browsers (Push.notify)
-  export function phone(chat: Chat): void {
-    const last = Memory.message(chat.mem, chat.mem.count - 1);
-    if (last !== null && (last.kind === "unii" || last.kind === "note")) {
-      const tasks = TaskPush.turn_count(Tasks.tasks_load(chat.mem.dir).tasks);
-      Push.notify(Owner.open(), last.text, { kind: "reply", tasks });
-    }
-  }
+  // a turn's reply goes to no phone nor browser: only the pending list's
+  // pushes do (task_push), so the user is called only when a task needs them
 
   // the pending list looked at (TaskPush.ts): tasks made or freed for the
   // user, together, and the day's late ones, pushed to the owner's phones
