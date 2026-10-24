@@ -135,6 +135,27 @@ export namespace Push {
     }
   }
 
+  // a task's push (TaskPush.ts) to every browser not in `done` (those
+  // it went to, or whose subscription is gone, kept there): whether it
+  // went to all, so a try again (TaskPush.tell) goes only to the ones it
+  // didn't; a push service's error (5xx, 429...) or none (0) is a fail
+  export async function deliver(db: Database, text: string, more: Record<string, unknown>, done: Set<string>): Promise<boolean> {
+    const subs = (db.query("select endpoint, p256dh, auth from web_pushes").all() as Sub[]).filter((sub) => !done.has(sub.endpoint));
+    const body = JSON.stringify({ ...more, text: Push.gist(text) });
+    const went = await Promise.all(subs.map(async (sub) => {
+      const status = await Push.send(sub, body);
+      if (status === 404 || status === 410) {
+        db.query("delete from web_pushes where endpoint = ?").run(sub.endpoint);
+      } else if (status < 200 || status > 299) {
+        console.error("web push: " + new URL(sub.endpoint).host + ": " + (status === 0 ? "not sent" : "HTTP " + status));
+        return false;
+      }
+      done.add(sub.endpoint);
+      return true;
+    }));
+    return went.every((ok) => ok);
+  }
+
   // the connection to APNs, opened again if it closed
   export function apns(): http2.ClientHttp2Session {
     if (PUSH.link === null || PUSH.link.closed || PUSH.link.destroyed) {

@@ -36,6 +36,7 @@ const at = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime()
 test("the first look takes the tasks open as told: nothing pushed", () => {
   const { state, send } = TaskPush.step(null, [task("P1"), task("P2")], at(24, 10));
   expect(send).toEqual([]);
+  expect(state.day).toBe(TaskPush.day(at(24, 10)));
   expect(Object.keys(state.seen)).toEqual(["P1", "P2"]);
 });
 
@@ -115,19 +116,101 @@ test("the late ones once a day, at REMIND or after, each once ever", () => {
   expect(out.send.filter((n) => n.kind === "late").map((n) => n.ids)).toEqual([["P3"]]);
 });
 
-test("kept in the chat's dir, mode 600; a broken file starts again as the first look", () => {
+test("kept in the chat's dir, mode 600; a broken file starts again as the first look", async () => {
   const dir = config.DIR + "/chat-a";
   const sent: TaskPush.Notice[] = [];
-  TaskPush.look(dir, [task("P1")], at(24, 10), (n) => sent.push(n));
+  const send = (n: TaskPush.Notice) => (sent.push(n), true);
+  await TaskPush.look(dir, [task("P1")], at(24, 10), send);
   expect(fs.statSync(dir + TaskPush.FILE).mode & 0o777).toBe(0o600);
-  TaskPush.look(dir, [task("P1"), task("P2")], at(24, 10, 1), (n) => sent.push(n));
-  TaskPush.look(dir, [task("P1"), task("P2")], at(24, 10, 2), (n) => sent.push(n));
+  await TaskPush.look(dir, [task("P1"), task("P2")], at(24, 10, 1), send);
+  await TaskPush.look(dir, [task("P1"), task("P2")], at(24, 10, 2), send);
   expect(sent.map((n) => n.text)).toEqual(["Pendência P2 precisa de você"]);
   fs.writeFileSync(dir + TaskPush.FILE, "{not json");
   expect(TaskPush.load(dir)).toBe(null);
-  const again = TaskPush.look(dir, [task("P1"), task("P2"), task("P5")], at(24, 12), () => {});
+  const again = await TaskPush.look(dir, [task("P1"), task("P2"), task("P5")], at(24, 12), () => true);
   expect(again).toEqual([]);
   expect(Object.keys(TaskPush.load(dir)!.seen)).toEqual(["P1", "P2", "P5"]);
+  expect(fs.statSync(dir + TaskPush.FILE).mode & 0o777).toBe(0o600);
+});
+
+test("a push that fails is tried again, waits growing, TRIES in all; told only then", async () => {
+  const dir = config.DIR + "/chat-retry";
+  await TaskPush.look(dir, [task("P1")], at(24, 10), () => true);
+  await TaskPush.look(dir, [task("P1"), task("P2")], at(24, 10, 1), () => true);
+  const tries: number[] = [];
+  const waits: number[] = [];
+  // fails twice, then goes
+  const out = await TaskPush.look(dir, [task("P1"), task("P2")], at(24, 10, 2), (_n, i) => (tries.push(i), i === 2), async (ms) => waits.push(ms));
+  expect(out.map((n) => n.text)).toEqual(["Pendência P2 precisa de você"]);
+  expect(tries).toEqual([0, 1, 2]);
+  expect(waits).toEqual(TaskPush.WAITS);
+  expect(waits[1]).toBeGreaterThan(waits[0]);
+  expect(TaskPush.load(dir)!.queue).toEqual([]);
+  // a throw is a fail too; given up after TRIES: told, not tried again
+  const dir2 = config.DIR + "/chat-retry-2";
+  await TaskPush.look(dir2, [], at(24, 10), () => true);
+  await TaskPush.look(dir2, [task("P3")], at(24, 10, 1), () => true);
+  let n = 0;
+  await TaskPush.look(dir2, [task("P3")], at(24, 10, 2), () => { n++; throw new Error("rede fora"); }, async () => {});
+  expect(n).toBe(TaskPush.TRIES);
+  expect(TaskPush.load(dir2)!.queue).toEqual([]);
+  expect(await TaskPush.look(dir2, [task("P3")], at(24, 10, 3), () => (n++, true))).toEqual([]);
+  expect(n).toBe(TaskPush.TRIES);
+});
+
+test("a push not yet gone isn't kept as told: cut off, it goes again; a look meanwhile does nothing", async () => {
+  const dir = config.DIR + "/chat-cut";
+  await TaskPush.look(dir, [task("P1")], at(24, 10), () => true);
+  await TaskPush.look(dir, [task("P1"), task("P2")], at(24, 10, 1), () => true);
+  let go!: (ok: boolean) => void;
+  const going = TaskPush.look(dir, [task("P1"), task("P2")], at(24, 10, 2), () => new Promise<boolean>((r) => (go = r)));
+  // still going (the server could stop here): P2 not told
+  expect(TaskPush.load(dir)!.queue).toEqual(["P2"]);
+  let other = 0;
+  expect(await TaskPush.look(dir, [task("P1"), task("P2")], at(24, 10, 2), () => (other++, true))).toEqual([]);
+  expect(other).toBe(0);
+  go(true);
+  await going;
+  expect(TaskPush.load(dir)!.queue).toEqual([]);
+});
+
+test("the first look counts LATE from when a task was made, and pushes nothing that day", () => {
+  const old = task("P1", { made: new Date(at(22, 15)).toISOString() });
+  const fresh = task("P2", { made: new Date(at(24, 9, 30)).toISOString() });
+  const later = task("P3", { made: "2099-01-01T00:00:00.000Z" });
+  let out = TaskPush.step(null, [old, fresh, later], at(24, 10));
+  expect(out.send).toEqual([]);
+  expect(out.state.seen.P1).toBe(new Date(at(22, 15)).toISOString());
+  expect(out.state.seen.P3).toBe(new Date(at(24, 10)).toISOString());
+  // today, past REMIND: not then
+  out = TaskPush.step(out.state, [old, fresh, later], at(24, 10, 1));
+  expect(out.send).toEqual([]);
+  // the next day: P1 late since made (not since the first look), P2 since made too
+  out = TaskPush.step(out.state, [old, fresh, later], at(25, TaskPush.REMIND));
+  expect(out.send).toEqual([{ kind: "late", ids: ["P1"], text: "Pendência P1 está em atraso", count: 3 }]);
+  out = TaskPush.step(out.state, [old, fresh, later], at(26, TaskPush.REMIND));
+  expect(out.send.map((n) => n.ids)).toEqual([["P2", "P3"]]);
+});
+
+test("a try again goes only to the browsers it didn't; gone ones forgotten", async () => {
+  const subs = [{ endpoint: "https://a.example/1", p256dh: "x", auth: "y" }, { endpoint: "https://b.example/2", p256dh: "x", auth: "y" }, { endpoint: "https://c.example/3", p256dh: "x", auth: "y" }];
+  const gone: string[] = [];
+  const db = { query: (sql: string) => ({ all: () => subs, run: (endpoint: string) => sql.startsWith("delete") && gone.push(endpoint) }) } as any;
+  const to: string[] = [];
+  const status: Record<string, number[]> = { "https://a.example/1": [201], "https://b.example/2": [503, 0, 201], "https://c.example/3": [410] };
+  const send = Push.send;
+  (Push as any).send = async (sub: { endpoint: string }) => (to.push(sub.endpoint), status[sub.endpoint].shift());
+  const done = new Set<string>();
+  try {
+    expect(await Push.deliver(db, "Pendência P7 precisa de você", { kind: "tasks" }, done)).toBe(false);
+    expect(await Push.deliver(db, "Pendência P7 precisa de você", { kind: "tasks" }, done)).toBe(false);
+    expect(await Push.deliver(db, "Pendência P7 precisa de você", { kind: "tasks" }, done)).toBe(true);
+  } finally {
+    (Push as any).send = send;
+  }
+  expect(to.filter((e) => e === "https://a.example/1").length).toBe(1);
+  expect(to.filter((e) => e === "https://b.example/2").length).toBe(3);
+  expect(gone).toEqual(["https://c.example/3"]);
 });
 
 test("the user's count is the Mesa's Agora", () => {

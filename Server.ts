@@ -685,11 +685,24 @@ export namespace Chat {
 
   // the pending list looked at (TaskPush.ts): tasks made or freed for the
   // user, together, and the day's late ones, pushed to the owner's phones
-  // and browsers (a tap opens the Mesa: sw.js)
-  export function task_push(chat: Chat, now = Date.now()): void {
-    TaskPush.look(chat.mem.dir, Tasks.tasks_load(chat.mem.dir).tasks, now, (n) => {
-      Push.notify(Owner.open(), n.text, { kind: "tasks", tasks: n.count, ids: n.ids });
-    });
+  // (once) and browsers (tried again, only those it didn't go to: a tap
+  // opens the Mesa, sw.js); never throws
+  export async function task_push(chat: Chat, now = Date.now(), wait?: (ms: number) => Promise<unknown>): Promise<TaskPush.Notice[]> {
+    const done = new Map<TaskPush.Notice, Set<string>>();
+    try {
+      return await TaskPush.look(chat.mem.dir, Tasks.tasks_load(chat.mem.dir).tasks, now, (n, try_) => {
+        const db = Owner.open();
+        if (try_ === 0) {
+          Push.phones(db, n.text);
+        }
+        const to = done.get(n) ?? new Set<string>();
+        done.set(n, to);
+        return Push.deliver(db, n.text, { kind: "tasks", tasks: n.count, ids: n.ids }, to);
+      }, wait);
+    } catch (err: any) {
+      console.error("unii: the pending list's pushes failed: " + (err?.stack ?? err));
+      return [];
+    }
   }
 
   // config.AFTER, a shell command, after each turn

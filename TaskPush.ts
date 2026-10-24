@@ -12,8 +12,12 @@
 // Each push carries the user's count (open tasks whose move it is, as
 // the Mesa's "Agora" counts them) for the app's badge (sw.js).
 // What was told is kept in the chat's dir (push.json, written whole,
-// mode 600); the first look, with no file, takes the tasks open then as
-// told, so turning this on doesn't push the whole list. A task that stops
+// mode 600), and only once its pushes went (or failed TRIES times, WAITS
+// apart): one cut off before is pushed again at the next look. The first
+// look, with no file, takes the tasks open then as told, since they were
+// made (so their LATE counts from then, not from the server's start), and
+// today's reminder as looked for, so turning this on pushes nothing of
+// the list, neither then nor at today's REMIND. A task that stops
 // being the user's (resolved, waiting again) is forgotten, so being so
 // again (reopened, freed again) is told again.
 
@@ -48,6 +52,10 @@ export const LATE = 24 * 60 * 60 * 1000;
 
 // the local hour the daily reminder goes, at or after
 export const REMIND = 9;
+
+// how many times a push is tried, and the waits between (ms, growing)
+export const TRIES = 3;
+export const WAITS = [5000, 20000];
 
 // how many ids a push names (the rest counted)
 const NAMES = 4;
@@ -100,6 +108,13 @@ function sorted(ids: Iterable<string>): string[] {
   return [...ids].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
 }
 
+// since when a task open at the first look is the user's: when it was
+// made, if that's a time and not past now; else now
+function made_at(task: Task | undefined, now: number): string {
+  const made = Date.parse(task?.made ?? "");
+  return new Date(Number.isNaN(made) || made > now ? now : made).toISOString();
+}
+
 // a look at the list (state: null, the first): what's told now, and the
 // pushes to send (sending them is the caller's)
 export function step(state: State | null, tasks: Task[], now: number): { state: State; send: Notice[] } {
@@ -109,7 +124,8 @@ export function step(state: State | null, tasks: Task[], now: number): { state: 
   const send: Notice[] = [];
   const count = turn_count(tasks);
   if (state === null) {
-    return { state: { seen: Object.fromEntries(ids.map((id) => [id, at])), queue: [], since: null, reminded: [], day: null }, send };
+    const by = new Map(tasks.map((t) => [t.id, t]));
+    return { state: { seen: Object.fromEntries(ids.map((id) => [id, made_at(by.get(id), now)])), queue: [], since: null, reminded: [], day: day(now) }, send };
   }
   const seen: Record<string, string> = {};
   for (const id of ids) {
@@ -171,14 +187,58 @@ export function save(dir: string, state: State): void {
   write_whole(dir + FILE, JSON.stringify(state) + "\n");
 }
 
-// a look at a chat's list: what's told kept (written only if it changed),
-// the pushes given to `send`
-export function look(dir: string, tasks: Task[], now: number, send: (n: Notice) => void): Notice[] {
+// a send: true once the push went (try: 0 the first, 1 the second...)
+export type Send = (n: Notice, try_: number) => boolean | Promise<boolean>;
+
+// the chats' dirs whose pushes are going (a look then does nothing: the
+// one going keeps what it told when done)
+const GOING = new Set<string>();
+
+// a push sent, tried again after each WAITS while it fails, TRIES times
+// in all: whether it went
+export async function tell(n: Notice, send: Send, wait: (ms: number) => Promise<unknown> = Bun.sleep): Promise<boolean> {
+  for (let i = 0; ; i++) {
+    let ok = false;
+    try {
+      ok = (await send(n, i)) === true;
+    } catch (err: any) {
+      console.error("task push: " + (err?.message ?? err));
+    }
+    if (ok) {
+      return true;
+    }
+    if (i + 1 >= TRIES) {
+      console.error("task push: " + n.ids.join(" ") + " not sent after " + TRIES + " tries, given up");
+      return false;
+    }
+    await wait(WAITS[Math.min(i, WAITS.length - 1)]);
+  }
+}
+
+// a look at a chat's list: the pushes given to `send` (each tried TRIES
+// times), then what's told kept (written only if it changed): a push is
+// taken as told only once it went or was given up, so one cut off (the
+// server stopped) goes again at the next look. A look while pushes are
+// going does nothing
+export async function look(dir: string, tasks: Task[], now: number, send: Send, wait?: (ms: number) => Promise<unknown>): Promise<Notice[]> {
+  if (GOING.has(dir)) {
+    return [];
+  }
   const was = load(dir);
   const { state, send: out } = step(was, tasks, now);
-  if (was === null || JSON.stringify(was) !== JSON.stringify(state)) {
-    save(dir, state);
+  const keep = () => (was === null || JSON.stringify(was) !== JSON.stringify(state)) && save(dir, state);
+  if (out.length === 0) {
+    keep();
+    return out;
   }
-  out.forEach(send);
+  GOING.add(dir);
+  try {
+    for (const n of out) {
+      await tell(n, send, wait);
+    }
+    keep();
+  } finally {
+    GOING.delete(dir);
+  }
   return out;
 }
