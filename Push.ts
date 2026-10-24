@@ -1,7 +1,7 @@
 // Push
 // ====
-// Each turn's last message to the owner's phones (the iOS app, by APNs)
-// and browsers (notify). Web Push (RFC 8030) with no vendor's account: the server's own VAPID
+// The pending list's pushes (TaskPush.ts, Server.ts task_push) to the
+// owner's phones (the iOS app, by APNs) and browsers (main.ts notify). Web Push (RFC 8030) with no vendor's account: the server's own VAPID
 // key pair (RFC 8292), made at its first start and kept beside its config
 // (config.DIR/vapid.json; a new pair loses every browser's subscription),
 // signs each request, and each message is encrypted to its browser's
@@ -77,14 +77,6 @@ let KEYS: Keys | null | undefined;
 // ====
 
 export namespace Push {
-
-  // a turn's last message, or a task's push (TaskPush.ts), to every
-  // phone and browser of the owner's; more goes to browsers beside the
-  // text (kind, the user's count of tasks: sw.js)
-  export function notify(db: Database, text: string, more: Record<string, unknown> = {}): void {
-    Push.phones(db, text);
-    Push.browsers(db, text, more);
-  }
 
   // the start of a message, to every phone (a push token goes with its
   // sign-in); a phone APNs no longer knows is forgotten

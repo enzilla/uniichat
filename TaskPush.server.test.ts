@@ -5,8 +5,9 @@
 // user's, added by Unii, goes to the owner's phones and browsers as one
 // push after the window, its count for the badge, and a turn's reply
 // pushes nothing; a push that fails goes again, only to the
-// browsers it didn't. Push.notify and Push.deliver are fakes that keep
-// what they get (Push.phones one that does nothing).
+// browsers it didn't. Push.deliver is a fake that keeps what it gets;
+// Push.phones and Push.browsers fakes keep what reaches them (SENT), so
+// a whole turn (Chat.turn) is seen to push nothing.
 
 import { afterAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -22,10 +23,10 @@ if (!config.DIR.startsWith("/tmp/")) {
 }
 
 const GOT: { text: string; more: any }[] = [];
-const NOTIFY = Push.notify;
+const SENT: { to: string; text: string; more?: any }[] = [];
 const DELIVER = Push.deliver;
 const PHONES = Push.phones;
-(Push as any).notify = (_db: unknown, text: string, more: any = {}) => GOT.push({ text, more });
+const BROWSERS = Push.browsers;
 // fails as many times as FAIL says, then goes
 let FAIL = 0;
 (Push as any).deliver = async (_db: unknown, text: string, more: any, done: Set<string>) => {
@@ -37,7 +38,8 @@ let FAIL = 0;
   done.add("https://a.example/1");
   return true;
 };
-(Push as any).phones = () => {};
+(Push as any).phones = (_db: unknown, text: string) => SENT.push({ to: "phones", text });
+(Push as any).browsers = (_db: unknown, text: string, more: any = {}) => SENT.push({ to: "browsers", text, more });
 
 const chat = Chat.open() as any;
 const dir = chat.mem.dir;
@@ -45,9 +47,9 @@ const dir = chat.mem.dir;
 // the chat's list and what was told left as found: the other files of a
 // whole run share this chat's dir
 afterAll(() => {
-  (Push as any).notify = NOTIFY;
   (Push as any).deliver = DELIVER;
   (Push as any).phones = PHONES;
+  (Push as any).browsers = BROWSERS;
   Tasks.tasks_forget();
   fs.rmSync(dir + "/tasks.json", { force: true });
   fs.rmSync(dir + TaskPush.FILE, { force: true });
@@ -84,20 +86,35 @@ test("a push that fails goes again, with the same text; told once it went", asyn
   expect(GOT.length).toBe(3);
 });
 
-test("a turn's reply pushes nothing; a new task still does", async () => {
+test("a whole turn's reply pushes nothing; a new task still does", async () => {
   GOT.length = 0;
+  SENT.length = 0;
   const t0 = Date.now() + 100 * TaskPush.WINDOW;
-  await Chat.writing(chat, async () => Chat.push(chat, null, "unii", "Pronto."));
-  Chat.talked(chat);
-  expect((Chat as any).phone).toBeUndefined();
+  // the model's call faked: it answers "Pronto." and the turn ends, its
+  // finally run as in the server
+  const CALL = Chat.call;
+  (Chat as any).call = async (c: any) => {
+    c.wait = [];
+    await Chat.writing(c, async () => Chat.push(c, null, "unii", "Pronto."));
+    return false;
+  };
+  try {
+    chat.wait = [{ id: -1 }];
+    await Chat.turn(chat);
+  } finally {
+    (Chat as any).call = CALL;
+  }
+  expect(chat.busy).toBe(false);
+  expect(Memory.message(chat.mem, chat.mem.count - 1)!.text).toBe("Pronto.");
   await Chat.task_push(chat, t0);
   await Chat.task_push(chat, t0 + TaskPush.WINDOW);
-  expect(Memory.message(chat.mem, chat.mem.count - 1)!.text).toBe("Pronto.");
   expect(GOT).toEqual([]);
+  expect(SENT).toEqual([]);
   const s = Tasks.tasks_load(dir);
   Tasks.task_new(s, { title: "Pendência depois da resposta" }, "main", t0 + TaskPush.WINDOW);
   await Chat.task_push(chat, t0 + TaskPush.WINDOW);
   await Chat.task_push(chat, t0 + 2 * TaskPush.WINDOW);
   expect(GOT.map((g) => g.more.kind)).toEqual(["tasks"]);
   expect(GOT[0].text).toMatch(/^Pendência P\d+ precisa de você$/);
+  expect(SENT.map((g) => g.to)).toEqual(["phones"]);
 });
