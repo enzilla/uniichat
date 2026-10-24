@@ -35,6 +35,7 @@ import { Settings } from "./Settings.ts";
 import { INSTALL } from "./Update.ts";
 import { write_whole } from "./Write.ts";
 import * as Timer from "./Timer.ts";
+import * as TaskPush from "./TaskPush.ts";
 import * as Tasks from "./Tasks.ts";
 import { PROMPTS, SEARCHES, Tools, type Agent, type Live } from "./Tools.ts";
 import { FRAME, IMAGES, live_push, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
@@ -147,6 +148,9 @@ const SPARE      = 2 ** 30;
 const TIMER_TEXT = 200;
 const RING       = 60000;
 const WAKE       = 60000;
+
+// how often the pending list is looked at for pushes (TaskPush.ts), ms
+const TASK_PUSH  = 15000;
 
 // the acts with a body (Chat.post)
 const BODIES     = ["say", "import", "voice"];
@@ -674,7 +678,30 @@ export namespace Chat {
   export function phone(chat: Chat): void {
     const last = Memory.message(chat.mem, chat.mem.count - 1);
     if (last !== null && (last.kind === "unii" || last.kind === "note")) {
-      Push.notify(Owner.open(), last.text);
+      const tasks = TaskPush.turn_count(Tasks.tasks_load(chat.mem.dir).tasks);
+      Push.notify(Owner.open(), last.text, { kind: "reply", tasks });
+    }
+  }
+
+  // the pending list looked at (TaskPush.ts): tasks made or freed for the
+  // user, together, and the day's late ones, pushed to the owner's phones
+  // (once) and browsers (tried again, only those it didn't go to: a tap
+  // opens the Mesa, sw.js); never throws
+  export async function task_push(chat: Chat, now = Date.now(), wait?: (ms: number) => Promise<unknown>): Promise<TaskPush.Notice[]> {
+    const done = new Map<TaskPush.Notice, Set<string>>();
+    try {
+      return await TaskPush.look(chat.mem.dir, Tasks.tasks_load(chat.mem.dir).tasks, now, (n, try_) => {
+        const db = Owner.open();
+        if (try_ === 0) {
+          Push.phones(db, n.text);
+        }
+        const to = done.get(n) ?? new Set<string>();
+        done.set(n, to);
+        return Push.deliver(db, n.text, { kind: "tasks", tasks: n.count, ids: n.ids }, to);
+      }, wait);
+    } catch (err: any) {
+      console.error("unii: the pending list's pushes failed: " + (err?.stack ?? err));
+      return [];
     }
   }
 
@@ -1672,6 +1699,8 @@ export namespace Main {
         sock.close(QUIT, "signed out");
       });
     }, PING / 2);
+    // the pending list's pushes, looked for every TASK_PUSH
+    setInterval(() => Main.event("the pending list's pushes", () => Chat.task_push(Main.chat)), TASK_PUSH);
     for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
       process.on(sig, () => process.exit(0));
     }

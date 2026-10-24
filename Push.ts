@@ -78,10 +78,12 @@ let KEYS: Keys | null | undefined;
 
 export namespace Push {
 
-  // a turn's last message, to every phone and browser of the owner's
-  export function notify(db: Database, text: string): void {
+  // a turn's last message, or a task's push (TaskPush.ts), to every
+  // phone and browser of the owner's; more goes to browsers beside the
+  // text (kind, the user's count of tasks: sw.js)
+  export function notify(db: Database, text: string, more: Record<string, unknown> = {}): void {
     Push.phones(db, text);
-    Push.browsers(db, text);
+    Push.browsers(db, text, more);
   }
 
   // the start of a message, to every phone (a push token goes with its
@@ -119,9 +121,9 @@ export namespace Push {
   // the start of a message, to every browser that turned notifications on
   // (sw.js shows it); one its push service no longer knows (404, 410) is
   // forgotten
-  export function browsers(db: Database, text: string): void {
+  export function browsers(db: Database, text: string, more: Record<string, unknown> = {}): void {
         const subs = db.query("select endpoint, p256dh, auth from web_pushes").all() as Sub[];
-    const body = JSON.stringify({ text: Push.gist(text) });
+    const body = JSON.stringify({ ...more, text: Push.gist(text) });
     for (const sub of subs) {
       Push.send(sub, body).then((status) => {
         if (status === 404 || status === 410) {
@@ -131,6 +133,27 @@ export namespace Push {
         }
       });
     }
+  }
+
+  // a task's push (TaskPush.ts) to every browser not in `done` (those
+  // it went to, or whose subscription is gone, kept there): whether it
+  // went to all, so a try again (TaskPush.tell) goes only to the ones it
+  // didn't; a push service's error (5xx, 429...) or none (0) is a fail
+  export async function deliver(db: Database, text: string, more: Record<string, unknown>, done: Set<string>): Promise<boolean> {
+    const subs = (db.query("select endpoint, p256dh, auth from web_pushes").all() as Sub[]).filter((sub) => !done.has(sub.endpoint));
+    const body = JSON.stringify({ ...more, text: Push.gist(text) });
+    const went = await Promise.all(subs.map(async (sub) => {
+      const status = await Push.send(sub, body);
+      if (status === 404 || status === 410) {
+        db.query("delete from web_pushes where endpoint = ?").run(sub.endpoint);
+      } else if (status < 200 || status > 299) {
+        console.error("web push: " + new URL(sub.endpoint).host + ": " + (status === 0 ? "not sent" : "HTTP " + status));
+        return false;
+      }
+      done.add(sub.endpoint);
+      return true;
+    }));
+    return went.every((ok) => ok);
   }
 
   // the connection to APNs, opened again if it closed

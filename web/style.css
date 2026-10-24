@@ -444,6 +444,9 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
    On a narrow screen, one at a time: the list, or the task (← back).
    While it shows, the chat's footer and the aside are out */
 header > .mode { font-weight: 600; }
+/* the user's move (main.ts turn_show): the ✓ and the Mesa's switch marked */
+header > :is(.tasks, .mode).turn { background: var(--ink); color: var(--paper); border-radius: 999px; }
+body.desk header > .mode.turn { background: none; color: inherit; }
 body.desk #tasks, body.desk header > .tasks { display: none !important; }
 body.desk { padding-right: 0 !important; }
 body.desk footer { position: fixed; inset: auto 0 0; background: none; pointer-events: none; }

@@ -110,6 +110,11 @@ async function boot(): Promise<void> {
   document.head.insertAdjacentHTML("beforeend", `<style>${theme_css()}</style>`);
   if (APP === null) {
     navigator.serviceWorker?.register("/sw.js").catch(() => {});
+    // a tap on a task's push (sw.js): the Mesa, in a tab open or a new one
+    navigator.serviceWorker?.addEventListener("message", (ev) => ev.data?.$ === "mesa" && desk_mode("desk"));
+  }
+  if (new URLSearchParams(location.search).has("mesa")) {
+    sessionStorage.setItem(kept("mode"), "desk");
   }
   history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : "/");
   if (await boot_me() === null) {
@@ -522,6 +527,24 @@ function threads_put(): void {
       el.open = was.open;
     }
   }
+}
+
+// the user's count of tasks (the Mesa's "Agora"), wherever it shows
+// besides the list: the tab's title ("(2) UniiChat"), the ✓ marked, the
+// app's badge (an installed app: sw.js sets it too, as pushes come); none,
+// all cleared. Set only as it changes
+let TURN = -1;
+const TITLE = document.title;
+function turn_show(n: number): void {
+  if (n === TURN) {
+    return;
+  }
+  TURN = n;
+  document.title = View.turn_title(TITLE, n);
+  $(".tasks").classList.toggle("turn", n > 0);
+  $(".mode").classList.toggle("turn", n > 0);
+  const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+  (n === 0 ? nav.clearAppBadge?.() : nav.setAppBadge?.(n))?.catch(() => {});
 }
 
 // the pending list: the header's ✓ (on a wide screen, an aside instead:
@@ -1252,6 +1275,7 @@ function bars(): void {
   }
   tasks_bar();
   const turn = View.desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
+  turn_show(turn);
   $(".mode").hidden = false;
   $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
   send.classList.toggle("stop", stop);
@@ -1471,13 +1495,12 @@ async function notify(on: boolean): Promise<void> {
   if (push === null) {
     return;
   }
-  const what = on ? "on" : "off";
   try {
     const out = on ? await notify_on(push.reg, push.key) : await notify_off(push.reg);
-    toast(out.error ?? "Notifications are " + what + ".");
+    toast(out.error ?? (on ? "Notificações ativadas." : "Notificações desativadas."));
   } catch (err: any) {
     const denied = typeof Notification !== "undefined" && Notification.permission === "denied";
-    toast(denied ? "Notifications are blocked in this browser's settings." : "Could not turn notifications " + what + ": " + (err?.message ?? err));
+    toast(denied ? "As notificações estão bloqueadas nas configurações deste navegador." : (on ? "Não foi possível ativar as notificações: " : "Não foi possível desativar as notificações: ") + (err?.message ?? err));
   }
   account();
 }

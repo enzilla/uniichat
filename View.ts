@@ -533,6 +533,12 @@ export function task_frees_said(v: View, t: Task): string {
   return n === 0 ? "" : "libera " + n;
 }
 
+// the tab's title with the user's count of tasks before it: "(2) UniiChat";
+// none, the title alone
+export function turn_title(title: string, n: number): string {
+  return n > 0 ? "(" + n + ") " + title : title;
+}
+
 // the header's ✓ count: the open free to resolve; none, but some that
 // wait: "+2" (so never a bare 0 beside a list that isn't empty)
 export function tasks_count_said(open: number, waiting: number): string {

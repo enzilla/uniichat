@@ -1210,6 +1210,9 @@ function view_act(v, act) {
 function task_waits_said(t, waits) {
   return "A pendência " + t.id + " aguarda " + waits.join(", ") + ": resolva " + (waits.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
 }
+function turn_title(title, n) {
+  return n > 0 ? "(" + n + ") " + title : title;
+}
 function tasks_count_said(open, waiting) {
   return open === 0 && waiting > 0 ? "+" + waiting : String(open);
 }
@@ -1894,13 +1897,13 @@ function prompt_html(name, text, note) {
 }
 function notify_html(notify) {
   const note = {
-    off: "Replies on this device, when UniiChat isn't open.",
-    on: "Replies on this device, when UniiChat isn't open.",
-    blocked: "Blocked in this browser's settings for this site.",
-    home: "On iPhone and iPad: Share, then Add to Home Screen, and open it from there."
+    off: "Respostas e pendências que precisam de você, neste aparelho, quando o UniiChat não está aberto.",
+    on: "Respostas e pendências que precisam de você, neste aparelho, quando o UniiChat não está aberto.",
+    blocked: "Bloqueadas nas configurações deste navegador para este site.",
+    home: "No iPhone e no iPad: toque em Compartilhar, depois em Adicionar à Tela de Início, e abra o UniiChat por lá."
   }[notify];
-  const button = notify === "home" ? "" : `<button class="chip notify"${notify === "blocked" ? " disabled" : ""}>${notify === "on" ? "Turn off" : "Turn on"}</button>`;
-  return `<div class="item"><p>Notifications<small>${note}</small></p>${button}</div>`;
+  const button = notify === "home" ? "" : `<button class="chip notify"${notify === "blocked" ? " disabled" : ""}>${notify === "on" ? "Desativar" : "Ativar"}</button>`;
+  return `<div class="item"><p>Notificações<small>${note}</small></p>${button}</div>`;
 }
 var SETTING = {
   vendors: ["Vendors", "Whose models the server offers."],
@@ -2169,6 +2172,10 @@ async function boot() {
   document.head.insertAdjacentHTML("beforeend", `<style>${theme_css()}</style>`);
   if (APP === null) {
     navigator.serviceWorker?.register("/sw.js").catch(() => {});
+    navigator.serviceWorker?.addEventListener("message", (ev) => ev.data?.$ === "mesa" && desk_mode("desk"));
+  }
+  if (new URLSearchParams(location.search).has("mesa")) {
+    sessionStorage.setItem(kept("mode"), "desk");
   }
   history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : "/");
   if (await boot_me() === null) {
@@ -2509,6 +2516,19 @@ function threads_put() {
       el.open = was.open;
     }
   }
+}
+var TURN2 = -1;
+var TITLE = document.title;
+function turn_show(n) {
+  if (n === TURN2) {
+    return;
+  }
+  TURN2 = n;
+  document.title = turn_title(TITLE, n);
+  $(".tasks").classList.toggle("turn", n > 0);
+  $(".mode").classList.toggle("turn", n > 0);
+  const nav = navigator;
+  (n === 0 ? nav.clearAppBadge?.() : nav.setAppBadge?.(n))?.catch(() => {});
 }
 var TASKS = { of: null, html: { open: [], now: [], waiting: [], closed: [] } };
 function tasks_bar() {
@@ -3111,6 +3131,7 @@ function bars() {
   }
   tasks_bar();
   const turn = desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
+  turn_show(turn);
   $(".mode").hidden = false;
   $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
   send.classList.toggle("stop", stop);
@@ -3274,13 +3295,12 @@ async function notify(on) {
   if (push === null) {
     return;
   }
-  const what = on ? "on" : "off";
   try {
     const out = on ? await notify_on(push.reg, push.key) : await notify_off(push.reg);
-    toast(out.error ?? "Notifications are " + what + ".");
+    toast(out.error ?? (on ? "Notificações ativadas." : "Notificações desativadas."));
   } catch (err) {
     const denied = typeof Notification !== "undefined" && Notification.permission === "denied";
-    toast(denied ? "Notifications are blocked in this browser's settings." : "Could not turn notifications " + what + ": " + (err?.message ?? err));
+    toast(denied ? "As notificações estão bloqueadas nas configurações deste navegador." : (on ? "Não foi possível ativar as notificações: " : "Não foi possível desativar as notificações: ") + (err?.message ?? err));
   }
   account();
 }
