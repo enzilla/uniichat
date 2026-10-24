@@ -409,13 +409,13 @@ function prompt_html(name: string, text: string, note: string): string {
 // the account page's notifications item: its note, and its button
 function notify_html(notify: Notify): string {
   const note = {
-    off     : "Replies on this device, when UniiChat isn't open.",
-    on      : "Replies on this device, when UniiChat isn't open.",
-    blocked : "Blocked in this browser's settings for this site.",
-    home    : "On iPhone and iPad: Share, then Add to Home Screen, and open it from there.",
+    off     : "Respostas e pendências que precisam de você, neste aparelho, quando o UniiChat não está aberto.",
+    on      : "Respostas e pendências que precisam de você, neste aparelho, quando o UniiChat não está aberto.",
+    blocked : "Bloqueadas nas configurações deste navegador para este site.",
+    home    : "No iPhone e no iPad: toque em Compartilhar, depois em Adicionar à Tela de Início, e abra o UniiChat por lá.",
   }[notify];
-  const button = notify === "home" ? "" : `<button class="chip notify"${notify === "blocked" ? " disabled" : ""}>${notify === "on" ? "Turn off" : "Turn on"}</button>`;
-  return `<div class="item"><p>Notifications<small>${note}</small></p>${button}</div>`;
+  const button = notify === "home" ? "" : `<button class="chip notify"${notify === "blocked" ? " disabled" : ""}>${notify === "on" ? "Desativar" : "Ativar"}</button>`;
+  return `<div class="item"><p>Notificações<small>${note}</small></p>${button}</div>`;
 }
 
 // Settings

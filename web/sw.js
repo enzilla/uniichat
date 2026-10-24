@@ -5,9 +5,12 @@
 // boot_me) instead of the browser's error page. The server's answer
 // always comes first, so a deploy shows at once; nothing else (the API,
 // the socket, the chat's pages and images) is ever kept or answered here.
-// A push (Push.ts, Push.browsers) shows the start of a reply, unless a
-// tab of the chat is in front, in place of the one before; a tap opens
-// the chat.
+// A push (Push.ts, Push.browsers) shows the start of a reply, or which
+// tasks of the pending list need the user (TaskPush.ts: only their ids),
+// unless a tab of the chat is in front, in place of the one before of its
+// kind; it sets the app's badge to the user's count of tasks (where the
+// browser has one: an installed app). A tap opens the chat; a task's, the
+// Mesa (main.ts: ?mesa, or a message to a tab open).
 
 // (a new name, for files a client should not be shown old: the shell's
 // before it is dropped as this one starts)
@@ -58,29 +61,55 @@ async function fresh(req, key) {
 }
 
 self.addEventListener("push", (ev) => {
-  let text = "";
+  let data = {};
   try {
-    text = String(ev.data?.json().text ?? "");
+    data = ev.data?.json() ?? {};
   } catch {}
-  ev.waitUntil(notify(text));
+  ev.waitUntil(notify(data));
 });
 
-async function notify(text) {
+// a push shown (not over a tab in front, but on Safari) and the badge set
+async function notify(data) {
+  const text = String(data?.text ?? "");
+  const tasks = data?.kind === "tasks";
+  await badge(data?.tasks);
   const tabs = await self.clients.matchAll({ type: "window" });
   if (QUIET && tabs.some((tab) => tab.focused)) {
     return;
   }
-  await self.registration.showNotification("UniiChat", { body: text, icon: "/icon-192.png", tag: "unii", renotify: true });
+  const options = { body: text, icon: "/icon-192.png", badge: "/icon-192.png", tag: tasks ? "unii-tasks" : "unii", renotify: true, data: { mesa: tasks } };
+  await self.registration.showNotification("UniiChat", options);
+}
+
+// the app's badge: the user's count of tasks (none: cleared); a browser
+// with none, or a push without the count, leaves it
+async function badge(n) {
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) {
+    return;
+  }
+  try {
+    if (n === 0) {
+      await self.navigator.clearAppBadge?.();
+    } else {
+      await self.navigator.setAppBadge?.(Math.floor(n));
+    }
+  } catch {}
 }
 
 self.addEventListener("notificationclick", (ev) => {
   ev.notification.close();
-  ev.waitUntil(open_chat());
+  ev.waitUntil(open_chat(ev.notification.data?.mesa === true));
 });
 
-// the chat: one of its tabs, in front; else a new one
-async function open_chat() {
+// the chat (mesa: on the Mesa): one of its tabs, in front; else a new one
+async function open_chat(mesa) {
   const tabs = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   const tab = tabs.find((t) => new URL(t.url).origin === location.origin);
-  return tab !== undefined ? tab.focus() : self.clients.openWindow("/");
+  if (tab === undefined) {
+    return self.clients.openWindow(mesa ? "/?mesa" : "/");
+  }
+  if (mesa) {
+    tab.postMessage({ $: "mesa" });
+  }
+  return tab.focus();
 }

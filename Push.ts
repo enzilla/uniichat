@@ -78,10 +78,12 @@ let KEYS: Keys | null | undefined;
 
 export namespace Push {
 
-  // a turn's last message, to every phone and browser of the owner's
-  export function notify(db: Database, text: string): void {
+  // a turn's last message, or a task's push (TaskPush.ts), to every
+  // phone and browser of the owner's; more goes to browsers beside the
+  // text (kind, the user's count of tasks: sw.js)
+  export function notify(db: Database, text: string, more: Record<string, unknown> = {}): void {
     Push.phones(db, text);
-    Push.browsers(db, text);
+    Push.browsers(db, text, more);
   }
 
   // the start of a message, to every phone (a push token goes with its
@@ -119,9 +121,9 @@ export namespace Push {
   // the start of a message, to every browser that turned notifications on
   // (sw.js shows it); one its push service no longer knows (404, 410) is
   // forgotten
-  export function browsers(db: Database, text: string): void {
+  export function browsers(db: Database, text: string, more: Record<string, unknown> = {}): void {
         const subs = db.query("select endpoint, p256dh, auth from web_pushes").all() as Sub[];
-    const body = JSON.stringify({ text: Push.gist(text) });
+    const body = JSON.stringify({ ...more, text: Push.gist(text) });
     for (const sub of subs) {
       Push.send(sub, body).then((status) => {
         if (status === 404 || status === 410) {
