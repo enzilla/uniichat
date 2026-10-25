@@ -404,7 +404,21 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 :is(#tasks, #desk) .acts .done:hover { background: var(--ink); opacity: .85; }
 :is(#tasks, #desk) .acts .done.quiet { background: var(--block); color: var(--mid); }
 :is(#tasks, #desk) .acts .done.quiet:hover { background: var(--hover); opacity: 1; }
-:is(#tasks, #desk) .go { margin-right: auto; display: flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--mid); cursor: pointer; }
+:is(#tasks, #desk) .acts .hint { margin-right: auto; font-size: 12.5px; color: var(--mid); }
+/* the aside's items are narrow: the batch's note only on the Mesa */
+#tasks .acts .hint.told { display: none; }
+/* Unii's recommendation (View.task_rec, field_rec): the choice framed in
+   the accent, a tag saying it; "Aceitar as recomendadas" takes them */
+:is(#tasks, #desk) .opts button.rec { border: 2px solid var(--accent); font-weight: 600; }
+:is(#tasks, #desk) .rec-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 5px; border: 1px solid var(--accent); color: var(--accent); font-size: 11px; font-weight: 600; line-height: 1.5; vertical-align: 1px; }
+:is(#tasks, #desk) .field label.rec { font-weight: 600; }
+:is(#tasks, #desk) .rec-text { margin: 2px 0 4px; font-size: 12.5px; color: var(--mid); }
+:is(#tasks, #desk) .acts .accept { border: 2px solid var(--accent); color: var(--accent); font-weight: 600; background: var(--paper); }
+:is(#tasks, #desk) .acts .accept:hover { background: var(--hover); }
+/* a task of Unii's (P6): Cobrar agora, Pode fechar */
+:is(#tasks, #desk) .acts.unii .chase { background: var(--ink); color: var(--paper); }
+:is(#tasks, #desk) .acts.unii .chase:hover { background: var(--ink); opacity: .85; }
+:is(#tasks, #desk) .acts.unii .chase:disabled { background: var(--block); color: var(--mid); opacity: 1; cursor: default; }
 :is(#tasks, #desk) .note { width: 100%; margin-top: 6px; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); }
 #tasks .tell { margin: 8px 0 0; text-align: center; background: var(--block); font-size: 13.5px; }
 #tasks .closed, #tasks .waiting { margin-top: 10px; }
@@ -525,8 +539,7 @@ body.desk footer > :not(#toast) { display: none; }
 @media (pointer: coarse) {
   #desk :is(.find input, .find select, .pane .back, article :is(.opts, .acts) button, article .note, .pane .next) { min-height: 44px; }
   #desk article .field label { min-height: 44px; }
-  #desk article :is(.field, .go) input { width: 20px; height: 20px; }
-  #desk article .go { min-height: 44px; }
+  #desk article .field input { width: 20px; height: 20px; }
   #desk article .prs a.pr { padding: 10px 10px; }
   #desk article a.origin { display: inline-block; padding: 8px 8px; }
 }
@@ -539,6 +552,15 @@ body.desk footer > :not(#toast) { display: none; }
   #desk .pane .back { display: inline-block; }
   #desk .row { padding: 11px 10px; }
   #desk article .head { font-size: 17px; }
+  /* the decision in reach: the acts stick to the screen's bottom while the
+     task scrolls under them (Aceitar as recomendadas, Concluir) */
+  #desk article > .acts { position: sticky; bottom: calc(-1 * max(24px, env(safe-area-inset-bottom))); z-index: 1; flex-wrap: nowrap; margin: 8px 0 0; padding: 8px 0 calc(8px + max(24px, env(safe-area-inset-bottom))); border-top: 1px solid var(--hair); background: var(--paper); }
+  #desk article > .acts .hint.told { display: none; }
+  #desk article > .acts button { padding: 6px 10px; }
+  #desk article > .acts .accept { flex: 1 1 auto; }
+  #desk article > .acts.unii { flex-wrap: wrap; }
+  #desk article > .acts.unii .hint { flex: 1 0 100%; }
+  #desk article > .acts.unii button { flex: 1 1 0; }
 }
 @media (hover: none) {
   #desk .keys, #desk article .thread .hint { display: none; }

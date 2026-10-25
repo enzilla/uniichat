@@ -216,6 +216,12 @@ function web_build(): string {
 // the server's timer for the chat's first schedule due (Chat.timed)
 let bell: ReturnType<typeof setTimeout> | undefined;
 
+// the user's resolutions of the pending list reach Unii on their own
+// (P1, 25/10/2026): the first one untold starts a wait of TELL.ms, and
+// all those resolved by its end go in one "[Pendências]" message
+// (Chat.tell_soon); its timer, while one waits
+export const TELL: { ms: number; timer: ReturnType<typeof setTimeout> | undefined } = { ms: 60000, timer: undefined };
+
 export namespace Chat {
 
   // the chat, opened at the start (the one before, if any, resumed by
@@ -254,6 +260,11 @@ export namespace Chat {
     mem.wait.add(() => Chat.progress(chat));
     chat.batch = Chat.resumed(chat);
     Chat.timed(chat);
+    // resolutions left untold by the server before (it stopped while
+    // one waited): told as any other
+    if (Tasks.tasks_untold(Tasks.tasks_load(mem.dir)).some((t) => !t.freed)) {
+      Chat.tell_soon(chat);
+    }
     Memory.pump(mem);
     Chat.progress(chat);
     Chat.resume(chat, mem.work).finally(() => Chat.change(chat)).catch((err) => console.error("unii: resuming the chat: " + (err?.message ?? err)));
@@ -1263,6 +1274,9 @@ export namespace Chat {
         if (t !== null || (go && was !== null && !was.told)) {
           Chat.resolved(chat, [was!], go);
         }
+        if (!go && t !== null) {
+          Chat.tell_soon(chat);
+        }
         Chat.change(chat);
         return {};
       }
@@ -1303,9 +1317,26 @@ export namespace Chat {
     return { error: "No act " + msg.$ + "." };
   }
 
+  // the user's resolutions untold, told by one message once TELL.ms pass
+  // from the first (those told meanwhile, by a turn or "Avisar o Unii
+  // agora", not again; none left: nothing)
+  export function tell_soon(chat: Chat): void {
+    if (TELL.timer !== undefined) {
+      return;
+    }
+    TELL.timer = setTimeout(() => {
+      TELL.timer = undefined;
+      const told = Tasks.tasks_tell(Tasks.tasks_load(chat.mem.dir));
+      if (told.length > 0) {
+        Chat.resolved(chat, told, true);
+      }
+    }, TELL.ms);
+    (TELL.timer as any).unref?.();
+  }
+
   // the user's resolutions of the pending list, in the chat: a note (Unii
-  // sees them in its next turn's block), or, go, told now by a
-  // "[Pendências]" message taken as a report is
+  // sees them in its next turn's block, or by tell_soon's message), or,
+  // go, told now by a "[Pendências]" message taken as a report is
   export function resolved(chat: Chat, tasks: Tasks.Task[], go: boolean): void {
     const text = tasks.map(Tasks.task_said).join("\n");
     if (!go) {

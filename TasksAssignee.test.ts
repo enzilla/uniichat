@@ -114,7 +114,7 @@ test("tools: task_add takes the turn's origin, says it; who and assignee both ac
   expect(JSON.stringify(props)).toContain("origin_url");
 });
 
-test("views: the open by assignee, the user's first; a task not the user's has Concluir quiet; origin a badge, escaped; a link only http(s)", () => {
+test("views: the open by assignee, the user's first; a task not the user's has only Cobrar agora and Pode fechar (P6); origin a badge, escaped; a link only http(s)", () => {
   const s = T.tasks_load(dir);
   add(s, { title: "Do Unii", assignee: "unii" }, "agent:Short<Rabbit");
   add(s, { title: "Minha", origin: "slack", origin_url: "https://numih.slack.com/archives/C1/p2?a=1&b=2" }, "chat");
@@ -131,7 +131,10 @@ test("views: the open by assignee, the user's first; a task not the user's has C
   expect(html.now[1]).toContain('<a class="origin" title="Origem" href="https://numih.slack.com/archives/C1/p2?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">Slack</a>');
   expect(html.now[1]).toContain('class="done"');
   expect(html.now[2]).toContain('<span class="origin" title="Origem">agendamento</span>');
-  expect(html.now[4]).toContain('class="done quiet"');
+  expect(html.now[4]).toContain('class="chase"');
+  expect(html.now[4]).toContain('>Pode fechar</button>');
+  expect(html.now[4]).not.toContain(">Concluir<");
+  expect(html.now[4]).not.toContain(">Descartar<");
   expect(html.now[4]).toContain("com o Unii");
   expect(html.now[4]).toContain('class="task other unii"');
   // the user's alone: no heading

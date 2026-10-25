@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import { AskAI, type Ask, type End } from "./AskAI.ts";
 import * as config from "./Config.ts";
 import { Memory } from "./Memory.ts";
-import { Chat } from "./Server.ts";
+import { Chat, TELL } from "./Server.ts";
 import * as Tasks from "./Tasks.ts";
 import { Tools } from "./Tools.ts";
 import * as View from "./View.ts";
@@ -284,4 +284,70 @@ test("the views' state carries the site's build (a page of another one reloads: 
   expect(typeof web).toBe("string");
   expect(web).toMatch(/^[0-9a-z]+\.[0-9a-z]+$/);
   expect((Chat.state(chat) as any).web).toBe(web);
+});
+
+// P1 (25/10/2026): the user's resolutions reach Unii on their own, in
+// one "[Pendências]" message once TELL.ms pass from the first
+test("resolutions without go: told on their own, together, once the wait ends; none left told meanwhile: nothing", async () => {
+  await idle();
+  clearTimeout(TELL.timer);
+  TELL.timer = undefined;
+  Tasks.tasks_tell(s);
+  const was = TELL.ms;
+  TELL.ms = 60;
+  try {
+    const a = Tasks.task_new(s, { title: "Lote A", choices: ["Sim, reinicie", "Depois"] }, "main", Date.now()) as Tasks.Task;
+    const b = Tasks.task_new(s, { title: "Lote B" }, "main", Date.now()) as Tasks.Task;
+    const before = ASKED.length;
+    expect(await act({ $: "task", task: a.id, state: "done", answer: "Sim, reinicie" })).toEqual({});
+    expect(await act({ $: "task", task: b.id, state: "dropped" })).toEqual({});
+    expect(TELL.timer).toBeDefined();
+    // no turn yet: only the notes
+    expect(ASKED.length).toBe(before);
+    await Bun.sleep(120);
+    await idle();
+    expect(ASKED.length).toBe(before + 1);
+    const turn = ASKED.at(-1)!.blocks.at(-1)!.text;
+    expect(turn).toContain("[Pendências] Pendência " + a.id + " concluída pelo usuário: “Lote A”. Resposta: Sim, reinicie.");
+    expect(turn).toContain("Pendência " + b.id + " descartada pelo usuário");
+    expect(Tasks.tasks_untold(s)).toEqual([]);
+    expect(TELL.timer).toBeUndefined();
+    // told meanwhile ("Avisar o Unii agora"): the wait ends with nothing
+    const c = Tasks.task_new(s, { title: "Lote C" }, "main", Date.now()) as Tasks.Task;
+    await act({ $: "task", task: c.id, state: "done" });
+    expect(await act({ $: "tasks_tell" })).toEqual({});
+    await idle();
+    const told = ASKED.length;
+    await Bun.sleep(120);
+    await idle();
+    expect(ASKED.length).toBe(told);
+  } finally {
+    TELL.ms = was;
+  }
+});
+
+// P6 (25/10/2026): on a task of Unii's, the user only asks after it or
+// tells Unii to close it
+test("a task of Unii's: dropping refused; Pode fechar closes it, said so; Cobrar agora is a message in its thread", async () => {
+  clearTimeout(TELL.timer);
+  TELL.timer = undefined;
+  const u = Tasks.task_new(s, { title: "Acompanhar a leva", assignee: "unii", agent: "WiseDolphin", fields: [{ id: "x", label: "X", kind: "text" }] }, "main", Date.now()) as Tasks.Task;
+  expect(await act({ $: "task", task: u.id, state: "dropped" })).toEqual({ error: "A pendência " + u.id + " está com o Unii: use “Cobrar agora” ou “Pode fechar”. Nada foi alterado." });
+  const v = View.view_new();
+  v.tasks = Tasks.tasks_view(s, Date.now());
+  expect(View.view_act(v, { $: "Task", task: u.id, state: "dropped" })).toEqual([]);
+  expect(View.view_act(v, { $: "TaskSay", task: u.id, text: View.CHASE })).toEqual([{ $: "task_say", task: u.id, text: View.CHASE }]);
+  const before = ASKED.length;
+  expect(await act({ $: "task_say", task: u.id, text: View.CHASE })).toEqual({});
+  await idle();
+  expect(ASKED.length).toBe(before + 1);
+  expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain(View.CHASE);
+  // the required field doesn't hold Pode fechar back; no comment: "Pode fechar"
+  expect(await act({ $: "task", task: u.id, state: "done" })).toEqual({});
+  const t = Tasks.task_find(s, u.id)!;
+  expect(t.state).toBe("done");
+  expect(t.note).toBe(Tasks.CLOSE);
+  expect(last().text).toBe("Pendência " + u.id + " concluída pelo usuário: “Acompanhar a leva”. Comentário: “Pode fechar”.");
+  clearTimeout(TELL.timer);
+  TELL.timer = undefined;
 });

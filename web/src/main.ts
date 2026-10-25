@@ -345,8 +345,12 @@ function click(ev: MouseEvent): void {
   }
   if (a !== undefined) {
     const made = JSON.parse(a) as View.Act;
-    if (made.$ === "TaskSay") {
+    if (made.$ === "TaskSay" && made.text !== "") {
+      act(made);
+    } else if (made.$ === "TaskSay") {
       task_say(made.task, el.closest<HTMLElement>("#tasks, #desk") ?? $("#tasks"));
+    } else if (made.$ === "TaskAccept") {
+      task_accept(el, made.task);
     } else if (made.$ === "Task" && made.state === "done" && task_missing(el)) {
       return;
     } else {
@@ -406,16 +410,51 @@ function left(ev: FocusEvent): void {
 }
 
 // a task's Concluir, Descartar or choice (Html.tasks_html) takes its
-// item's comment and "Avisar o Unii agora"
+// item's comment and answers (Unii is told on its own: Server.ts
+// Chat.tell_soon)
 function task_act(el: HTMLElement, a: View.Act): View.Act {
   const item = el.closest("[data-task]");
   if (a.$ !== "Task" || a.state === "open" || item === null) {
     return a;
   }
   const note = item.querySelector<HTMLInputElement>("input.note")?.value ?? "";
-  const go = item.querySelector<HTMLInputElement>(".go input")?.checked ?? false;
   const fields = a.state === "done" ? task_fields(item) : {};
-  return { ...a, note, go, ...(Object.keys(fields).length === 0 ? {} : { fields }) };
+  return { ...a, note, ...(Object.keys(fields).length === 0 ? {} : { fields }) };
+}
+
+// "Aceitar as recomendadas" (View.task_accept): the recommended answers
+// put in the item's empty fields (seen as picked), the required still
+// empty marked as Concluir marks them; else the task concluded with them
+// and the recommended choice
+function task_accept(el: HTMLElement, id: string): void {
+  const item = el.closest<HTMLElement>("[data-task]");
+  const t = v.tasks.find((x) => x.id === id);
+  if (item === null || t === undefined) {
+    return;
+  }
+  const fill = View.task_accept_fill(t, task_fields(item));
+  for (const set of item.querySelectorAll<HTMLElement>("fieldset.field")) {
+    const want = fill[set.dataset.field!];
+    if (want === undefined) {
+      continue;
+    }
+    if (set.dataset.kind === "text") {
+      const box = set.querySelector("textarea");
+      if (box !== null && box.value.trim() === "") {
+        box.value = String(want);
+      }
+      continue;
+    }
+    const picks = Array.isArray(want) ? want.map(String) : [String(want)];
+    for (const input of set.querySelectorAll<HTMLInputElement>("input")) {
+      input.checked = picks.includes(input.value);
+    }
+  }
+  if (task_missing(el)) {
+    return;
+  }
+  const note = item.querySelector<HTMLInputElement>("input.note")?.value ?? "";
+  act({ $: "TaskAccept", task: id, ...(note.trim() === "" ? {} : { note }), fields: task_fields(item) });
 }
 
 // a field's answer as its fieldset holds it (Html.fields_html): a text,
@@ -817,6 +856,15 @@ function desk_keys(ev: KeyboardEvent): void {
         row?.scrollIntoView({ block: "nearest" });
         row?.focus({ preventScroll: true });
       });
+    }
+    return;
+  }
+  // a: "Aceitar as recomendadas" of the task shown, if it offers it
+  if (ev.key === "a" && P.sel !== null) {
+    const accept = $("#desk .pane").querySelector<HTMLButtonElement>("button.accept");
+    if (accept !== null) {
+      ev.preventDefault();
+      accept.click();
     }
     return;
   }

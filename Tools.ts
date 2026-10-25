@@ -220,9 +220,12 @@ const OWN: Spec[] = [
 // a task's fields (Tasks.ts fields_read)
 const FIELDS_SPEC = {
   type: "array",
-  description: "Questions asked at once, each answered apart (at most 12): id (letters, digits, - or _), label (the question, in the user's language), kind: choice (one of choices), multi (any of choices), text, yesno (sim or não); choices for choice and multi (2 to 9); required (true by default: the user can't conclude without it).",
-  items: { type: "object", properties: { id: STR, label: STR, kind: { type: "string", enum: ["choice", "multi", "text", "yesno"] }, choices: { type: "array", items: STR }, required: { type: "boolean" } }, required: ["id", "label", "kind"] },
+  description: "Questions asked at once, each answered apart (at most 12): id (letters, digits, - or _), label (the question, in the user's language), kind: choice (one of choices), multi (any of choices), text, yesno (sim or não); choices for choice and multi (2 to 9); required (true by default: the user can't conclude without it); recommend: the answer you recommend, if any (one of its choices; for multi, a list of them; for yesno, sim or não; for text, a text), which the user takes with one click (\"Aceitar as recomendadas\") instead of writing \"(recomendado)\" in a choice.",
+  items: { type: "object", properties: { id: STR, label: STR, kind: { type: "string", enum: ["choice", "multi", "text", "yesno"] }, choices: { type: "array", items: STR }, required: { type: "boolean" }, recommend: { type: ["string", "array"], items: STR } }, required: ["id", "label", "kind"] },
 };
+
+// the choice Unii recommends (Tasks.ts recommend_read)
+const RECOMMEND_SPEC = { type: "string", description: "The choice you recommend (one of choices): the user sees it marked and takes it, with the fields' recommendations, in one click (\"Aceitar as recomendadas\"). Give it rather than writing \"(recomendado)\" in the choice." };
 
 // where a task came from, and its source's link (Tasks.ts)
 const ORIGIN_SPEC = { type: "string", description: "Where it came from: chat, timer, agent:<name>, slack or github. By default, where this turn came from: a schedule's message (timer), a subagent's report (agent:<name>), else chat." };
@@ -242,7 +245,7 @@ const BOSS: Spec[] = [
   spec("stop", "Stop a subagent at once, by name, whatever it is doing (mid-call, waiting on a usage limit, running a tool on a device: that job is cancelled). Others keep running. Its report says it was stopped; its chat and work dir stay, so a later tell resumes it.", { name: STR, why: { type: "string", description: "Why, for its report." } }, ["name"]),
   spec("resume", "Wake every call on this server waiting for an AI service's usage limit (your turn, summaries), when the user says a limit was reset early. Each asks again once; one still limited waits again. A subagent at a usage limit ends and reports it instead: tell it to go on.", {}, []),
   // the pending list (Tasks.ts)
-  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with assignee \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. When one can only be resolved after another (a token before a test, a merge before a deploy), give it after: the user then sees only what they can do now, and the tasks that free others come first. Several questions or decisions on one subject go in one task as fields (each answered apart, kept as a draft, all sent when the user concludes, in your next turn's block). The user may also talk with you in a task's thread without resolving it: their message reaches you marked \"[Pendência P7: …]\"; reply with task_reply. Title: short, the action or question, in the user's language.", {
+  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with assignee \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. When one can only be resolved after another (a token before a test, a merge before a deploy), give it after: the user then sees only what they can do now, and the tasks that free others come first. Several questions or decisions on one subject go in one task as fields (each answered apart, kept as a draft, all sent when the user concludes, in your next turn's block). The user may also talk with you in a task's thread without resolving it: their message reaches you marked \"[Pendência P7: …]\"; reply with task_reply. What the user resolves reaches you on its own, within a minute, in a \"[Pendências]\" message (several at once if they came together). On a task of yours (assignee \"unii\") the user can only ask after it (\"Cobrar agora\", a message in its thread) or tell you to close it (\"Pode fechar\", done by them): keep its agent set. Title: short, the action or question, in the user's language.", {
     title   : STR,
     detail  : { type: "string", description: "Markdown: the context needed to decide, with links." },
     assignee   : { type: "string", enum: ["user", "unii"], description: "Who is responsible, who must act; by default the user. (who: its older name, still read.)" },
@@ -250,6 +253,7 @@ const BOSS: Spec[] = [
     origin_url : ORIGIN_URL_SPEC,
     agent      : AGENT_SPEC,
     choices : { type: "array", items: STR, description: "Answers the user picks with one click (\"sim\", \"não\"), at most 9." },
+    recommend : RECOMMEND_SPEC,
     ref     : { type: "string", description: "What it belongs to: a project, an agent, a PR." },
     after   : { type: "array", items: STR, description: "Ids of the tasks this one waits for (\"P3\"), the user's or yours: while any is open it's hidden from the user and can't be resolved; once all are closed it shows, and your next turn is told it was freed." },
     fields  : FIELDS_SPEC,
@@ -263,6 +267,7 @@ const BOSS: Spec[] = [
     origin_url : { ...ORIGIN_URL_SPEC, description: "A link to its source; \"\" for none." },
     agent      : AGENT_SPEC,
     choices : { type: "array", items: STR },
+    recommend : { ...RECOMMEND_SPEC, description: RECOMMEND_SPEC.description + " \"\" for none." },
     ref     : STR,
     state   : { type: "string", enum: ["open", "done", "dropped"] },
     answer  : STR,
