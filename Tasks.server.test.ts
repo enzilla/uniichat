@@ -239,7 +239,8 @@ test("a talk in a task's thread: a marked message of the chat, a turn; Unii's re
   await act({ $: "task_say", task: t.id, text: "E agora?" });
   await idle();
   END = { ok: true, text: "", left: [] };
-  expect(Tasks.task_find(s, t.id)!.thread.at(-1)!.text).toBe("O Unii não respondeu aqui; veja a conversa principal.");
+  // its why said there, not "see the main chat" for a reply that isn't there
+  expect(Tasks.task_find(s, t.id)!.thread.at(-1)!.text).toBe("O Unii não conseguiu responder (down). Escreva de novo aqui para tentar outra vez.");
   expect(Tasks.task_find(s, t.id)!.talk).toBe("user");
 });
 

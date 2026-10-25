@@ -1131,9 +1131,12 @@ export function task_reply(s: Store, id: unknown, text: unknown, now: number): T
 }
 
 // a turn ended: each task still waiting for Unii gets its last reply
-// (reply; null: none, said so) in its thread, and it's the user's turn
-export function tasks_talked(s: Store, reply: string | null, now: number): Task[] {
-  const text = reply === null || text_body(reply, TALK) === "" ? "O Unii não respondeu aqui; veja a conversa principal." : text_body(reply, TALK);
+// (reply; null: none, said so; failed: the turn's error, said with it,
+// so the thread doesn't send the user to look for a reply that isn't
+// there) in its thread, and it's the user's turn
+export function tasks_talked(s: Store, reply: string | null, now: number, failed: string | null = null): Task[] {
+  const none = failed === null || failed.trim() === "" ? "O Unii não respondeu aqui; veja a conversa principal." : "O Unii não conseguiu responder (" + failed.trim() + "). Escreva de novo aqui para tentar outra vez.";
+  const text = reply === null || text_body(reply, TALK) === "" ? text_body(none, TALK) : text_body(reply, TALK);
   return s.tasks.filter((t) => t.talk === "unii").map((t) => task_talk(s, t, "unii", text, now));
 }
 
