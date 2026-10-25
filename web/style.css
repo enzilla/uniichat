@@ -455,8 +455,8 @@ body.desk footer > :not(#toast) { display: none; }
 #desk .list { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--hair); }
 #desk .find { display: flex; gap: 6px; padding: 12px 14px 8px; }
 #desk .find input, #desk .find select { min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 14px var(--sans); }
-#desk .find input { flex: 1; }
-#desk .find select { flex: 0 1 40%; }
+#desk .find input { flex: 1 1 0; }
+#desk .find select { flex: 0 1 auto; max-width: 48%; }
 #desk .rows { flex: 1; overflow: auto; padding: 0 8px 12px; }
 #desk .group { margin: 14px 6px 4px; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--mid); }
 #desk .group .n { font-weight: 400; }
@@ -498,7 +498,8 @@ body.desk footer > :not(#toast) { display: none; }
    a required field left empty at Concluir, framed red (main.ts
    task_missing); after one resolved, the next of Agora */
 :is(#tasks, #desk) .late { padding: 0 6px; border-radius: 6px; color: var(--red); border: 1px solid currentColor; font-weight: 500; }
-:is(#tasks, #desk) .pr { padding: 0 6px; border-radius: 6px; background: var(--block); font-family: var(--mono); font-size: .92em; }
+:is(#tasks, #desk) .pr { padding: 0 6px; border-radius: 6px; background: var(--block); white-space: nowrap; }
+:is(#tasks, #desk) :is(.late, .ref, .frees, .talk) { white-space: nowrap; }
 #desk article .prs { margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
 #desk article .prs a.pr { color: var(--ink); text-decoration: none; border: 1px solid var(--frame); padding: 2px 8px; }
 #desk article .prs a.pr:hover { background: var(--hover); }
@@ -519,6 +520,7 @@ body.desk footer > :not(#toast) { display: none; }
   #desk article :is(.field, .go) input { width: 20px; height: 20px; }
   #desk article .go { min-height: 44px; }
   #desk article .prs a.pr { padding: 10px 10px; }
+  #desk article a.origin { display: inline-block; padding: 8px 8px; }
 }
 @media (max-width: 760px) {
   #desk { grid-template-columns: minmax(0, 1fr); height: calc(100dvh - var(--head)); }
