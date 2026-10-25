@@ -147,6 +147,51 @@ test("verdict_of: a note in a paragraph counts; 'aprovei' approves (NuttyOyster 
   expect(Pipeline.verdict_of("Veredito: aprovado.\n\nA ressalva baixa do anterior: corrigida.").noted).toBe(false);
 });
 
+test("verdict_of: a note its label says fixed isn't open (WhitePelican 1, 25/10)", () => {
+  const none = { verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false };
+  // a paragraph labeled fixed: corrigida, resolvida, sanada
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\nRessalva baixa (corrigida): ok")).toEqual(none);
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Ressalva média (resolvida):** o cache.")).toEqual(none);
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Observação alta sanada:** x")).toEqual(none);
+  // an item labeled fixed: not counted; the open ones are
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n- **Ressalva média (resolvida):** x\n- Ressalva baixa: y").notes).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalvas:**\n1. Média (corrigida em abc1234): x\n2. Baixa: y").notes).toEqual({ high: 0, medium: 0, low: 1 });
+  // a heading on fixed notes: its items aren't open
+  const both = "Veredito: aprovado com ressalvas.\n\n**Ressalvas corrigidas:**\n1. Média: x\n2. Baixa: y\n\n**Ressalvas:**\n1. Baixa: z";
+  expect(Pipeline.verdict_of(both).notes).toEqual({ high: 0, medium: 0, low: 1 });
+  // not fixed: "não corrigida" in the label, or "corrigida" said of the text
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n- **Ressalva média (não corrigida):** x").notes.medium).toBe(1);
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n- **Ressalva média (ainda não resolvida):** x").notes.medium).toBe(1);
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n- Baixa: corrigida só em parte.").notes.low).toBe(1);
+  // a note that cites a fixed label in quotes is still a note (WhitePelican's own report)
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalvas baixas:**\n1. \"Ressalva baixa (corrigida): ok\" conta 1 nota.\n2. Outra.").notes.low).toBe(2);
+});
+
+test("verdict_of: 'com ressalvas' with none found counts the ones its line says, at least one (WhitePelican 2, 25/10)", () => {
+  const one = { verdict: "approved_with_notes", notes: { high: 0, medium: 0, low: 1 }, noted: true };
+  expect(Pipeline.verdict_of("Veredito: aprovado, com uma ressalva")).toEqual(one);
+  expect(Pipeline.verdict_of("Aprovado com ressalvas.")).toEqual(one);
+  // GreenWasp, ShinyZebra: the severity on the verdict's line
+  expect(Pipeline.verdict_of("**Veredito: APROVADO com ressalvas baixas** para o PR #16.\n\n**O que rodei**\n- bun test.")).toEqual(one);
+  expect(Pipeline.verdict_of("A NUM-3308 foi **aprovada com ressalvas, todas baixas**.")).toEqual(one);
+  expect(Pipeline.verdict_of("Veredito: aprovado com duas ressalvas médias.").notes).toEqual({ high: 0, medium: 2, low: 0 });
+  expect(Pipeline.verdict_of("Veredito: aprovado com 3 ressalvas.").notes).toEqual({ high: 0, medium: 0, low: 3 });
+  // a severity it denies isn't theirs
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas (nenhuma alta).").notes).toEqual({ high: 0, medium: 0, low: 1 });
+  // found ones win over the line's count
+  expect(Pipeline.verdict_of("Veredito: aprovado com 2 ressalvas.\n- Ressalva média: x").notes).toEqual({ high: 0, medium: 1, low: 0 });
+  // a rejection or an approval without notes gains none
+  expect(Pipeline.verdict_of("Veredito: REPROVADO, por um único bloqueio.").noted).toBe(false);
+  expect(Pipeline.verdict_of("Veredito: aprovado.").noted).toBe(false);
+});
+
+test("verdict_of: under another heading, an item that only cites notes isn't one (WhitePelican, HappyFish, NuttyOyster)", () => {
+  const cites = "**Veredito: aprovado, com 2 ressalvas baixas.**\n\n**O que conferi:**\n- **Relatos:**\n  - Mudaram:\n    - PolarKoala foi de aprovado para aprovado com ressalvas, com 1 baixa.\n\n**Ressalvas baixas:**\n1. a\n2. b";
+  expect(Pipeline.verdict_of(cites).notes).toEqual({ high: 0, medium: 0, low: 2 });
+  // one that opens with its label still counts there
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**O que conferi:**\n- **Ressalva média:** o cache.").notes.medium).toBe(1);
+});
+
 test("verdict_of: an item under 'Não testado' never a note; '1. A: baixa' under the verdict's line one (HappyFish, 25/10)", () => {
   // a severity that's a word of the sentence, under another heading: none
   const untested = "**Veredito: aprovado com ressalvas.**\n\n**Ressalvas**\n1. Média: x.\n\n**Não testado:**\n- Baixa cobertura de iPhone.\n- Alta: carga real.";
