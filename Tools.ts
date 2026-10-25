@@ -278,7 +278,7 @@ const BOSS: Spec[] = [
     after   : { type: "array", items: STR, description: "Ids of the tasks this one waits for (\"P3\"), the user's or yours: while any is open it's hidden from the user and can't be resolved; once all are closed it shows, and your next turn is told it was freed." },
     fields  : FIELDS_SPEC,
   }, ["title", "origin"]),
-  spec("task_edit", "Change a task of the pending list, by its id (P7): its texts, choices, ref or the tasks it waits for (after), or its state: close (done, dropped) one that you resolved or that no longer applies, or open one again. Done is refused while it waits for open tasks (drop it, or change its after). A change by the user you haven't been told of yet stays to tell, even if you change the state meanwhile.", {
+  spec("task_edit", "Change a task of the pending list, by its id (P7): its texts, choices, ref or the tasks it waits for (after), or its state: close (done, dropped) one that you resolved or that no longer applies, or open one again. Done is refused while it waits for open tasks (drop it, or change its after). A closed task keeps its kind, choices and acts (what the user picked from): open it again to change them. A change by the user you haven't been told of yet stays to tell, even if you change the state meanwhile.", {
     id      : STR,
     title   : STR,
     detail  : STR,

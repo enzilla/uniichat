@@ -849,15 +849,17 @@ export function ref_args(s: Store, args: Edit): { ref?: string | null; added?: s
 // whose title or detail cites a GitHub pull, whatever its kind (a kind
 // given doesn't get round the contract). A task of Unii's (assignee
 // unii) follows a PR up, it doesn't ask the user to approve it: held
-// only by its kind. Else why not
+// only by the kind given (pr), never by a link, in its title or its
+// detail alike. Else why not
 export function pr_sound(t: { title: string; detail?: string; assignee?: Assignee | null; kind: Deps.TaskKind | null; prs: PrCheck[] }): string | null {
   if (t.prs.length > 0) {
     return null;
   }
-  if (Deps.kind_of({ id: "", state: "open", made: "", title: t.title, kind: t.kind }) === "pr") {
+  const unii = (t.assignee ?? "user") === "unii";
+  if (unii ? t.kind === "pr" : Deps.kind_of({ id: "", state: "open", made: "", title: t.title, kind: t.kind }) === "pr") {
     return "A PR's approval (kind pr" + (t.kind === "pr" ? "" : ", as its title's PR link says") + ") needs prs: [{url: the GitHub pull link, head: the commit verified (7 to 40 hex), verdict, verifier, notes: [{sev, text}], untested: [...]}]. Refused: no PR given with its link and head.";
   }
-  const link = (t.assignee ?? "user") === "unii" ? null : (Deps.PR_LINK.exec(t.title) ?? Deps.PR_LINK.exec(t.detail ?? ""));
+  const link = unii ? null : (Deps.PR_LINK.exec(t.title) ?? Deps.PR_LINK.exec(t.detail ?? ""));
   if (link === null) {
     return null;
   }
@@ -1392,6 +1394,17 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
     }
     next.answer = answer === "" ? null : answer;
   }
+  // what the user picked from stays as they saw it: a closed task (and
+  // staying closed) keeps its kind, choices and who acts on each; else
+  // Unii could turn the user's pick into a leave they never gave
+  // (Restart.check: a restart with agents at work). Open it again first
+  const fixed = task.state !== "open" && next.state !== "open";
+  const was = { kind: task.kind ?? null, choices: task.choices, acts: acts_clean(task.acts, task.choices) };
+  const moved = (k: "kind" | "choices" | "acts"): boolean => same_json(was[k], next[k] ?? null) === false;
+  const touched = fixed ? (["kind", "choices", "acts"] as const).filter(moved) : [];
+  if (touched.length > 0) {
+    return task.id + " is closed (" + task.state + "): its " + touched.join(", ") + " can't change, the user picked from them as they were. Open it again (state open) to change them; the user picks again.";
+  }
   const waits = Deps.waits(s.tasks, next);
   if (next.state === "done" && task.state === "open" && waits.length > 0) {
     return task.id + " waits for " + waits.join(", ") + ", still open: it can't be done before them. Close those first, change its after, or drop it if it no longer applies.";
@@ -1401,6 +1414,12 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
   }
   const untold = !task.told && !task.freed;
   return task_put(s, task, next, now, next.state !== task.state && !untold ? true : null);
+}
+
+// two values alike as JSON, objects' keys in any order
+function same_json(a: unknown, b: unknown): boolean {
+  const norm = (x: unknown): unknown => Array.isArray(x) ? x.map(norm) : typeof x === "object" && x !== null ? Object.fromEntries(Object.entries(x).sort(([p], [q]) => p < q ? -1 : p > q ? 1 : 0).map(([k, v]) => [k, norm(v)])) : x;
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
 }
 
 // what a task of Unii's closed by the user says, with no comment typed

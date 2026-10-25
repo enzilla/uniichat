@@ -54,7 +54,9 @@ export const PRIORITIES: Priority[] = ["high", "normal", "low"];
 // priority nor ready)
 export type Timed = Dep & { title?: string; detail?: string; origin_url?: string | null; made: string; kind?: TaskKind | null; priority?: Priority | null; ready?: string | null };
 
-export const PR_LINK = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
+// as people write it: https or http or no scheme, www. or not, any case
+// (not part of another host or path: evil.com/github.com/... isn't one)
+export const PR_LINK = /(?<![\w.\/@-])(?:https?:\/\/)?(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/i;
 
 // a task's kind: the one given, else as its title says (a PR link in
 // it, or opening with "Teste"); null: none

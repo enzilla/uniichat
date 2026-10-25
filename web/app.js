@@ -926,7 +926,7 @@ var KINDS = ["pr", "decision", "test", "action", "restart", "info"];
 var H = 60 * 60 * 1000;
 var LATE_BY = { pr: 24 * H, decision: 72 * H, test: 2 * H, action: 24 * H, restart: 24 * H, info: Infinity };
 var PRIORITIES = ["high", "normal", "low"];
-var PR_LINK = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
+var PR_LINK = /(?<![\w.\/@-])(?:https?:\/\/)?(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/i;
 function kind_of(t) {
   if (t.kind != null && KINDS.includes(t.kind)) {
     return t.kind;

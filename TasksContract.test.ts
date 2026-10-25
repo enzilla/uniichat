@@ -362,3 +362,75 @@ test("the Mesa's list: a row says what it waits for outside and a PR rejected", 
   const list = Html.desk_html(T.tasks_view(T.tasks_load(dir), NOW), "", "", null, NOW).list.join("");
   expect(list).toContain('<span class="late">1 PR reprovado</span> · <span class="waits-for">aguarda: CI do #18</span>');
 });
+
+test("a closed task's kind, choices and acts stay as the user picked from them: no leave to restart made after the pick", async () => {
+  (tools.agents as Map<string, any>).set("CalmCow", { name: "CalmCow", label: "uniichat-ux-r4-impl", call: {} });
+  // (a) the user closes a restart with "Eu reinicio depois" (theirs); Unii
+  // gives that button its own act: refused, and no restart
+  const s = T.tasks_load(dir);
+  const a = T.task_new(s, { title: "Reiniciar com agentes rodando?", kind: "restart" }, "main", NOW) as T.Task;
+  T.task_resolve(s, a.id, "done", T.RESTART_LATER, null, NOW);
+  expect(T.tasks_load(dir).tasks.find((x) => x.id === a.id)!.closed_by).toBe("user");
+  const ra = await call("task_edit", { id: a.id, acts: { [T.RESTART_YES]: "unii", [T.RESTART_LATER]: "unii" } });
+  expect(ra.fail).toBe(true);
+  expect(ra.text).toContain("is closed (done): its acts can't change");
+  expect(T.task_act(T.tasks_load(dir).tasks.find((x) => x.id === a.id)!)).toBe("user");
+  expect(Tools.restart(tools, { why: "x", task: a.id }, "exit").fail).toBe(true);
+  // (b) the user closes any decision with "Sim"; Unii makes it a restart
+  // with "Sim" Unii's: refused, together or one by one, and no restart
+  const b = T.task_new(s, { title: "Seguir com a R6?", kind: "decision", choices: ["Sim", "Não"] }, "main", NOW) as T.Task;
+  T.task_resolve(s, b.id, "done", "Sim", null, NOW);
+  const rb = await call("task_edit", { id: b.id, kind: "restart", acts: { Sim: "unii" } });
+  expect(rb.fail).toBe(true);
+  expect(rb.text).toContain("its kind, acts can't change");
+  expect((await call("task_edit", { id: b.id, kind: "restart" })).fail).toBe(true);
+  expect((await call("task_edit", { id: b.id, acts: { Sim: "unii" } })).fail).toBe(true);
+  expect((await call("task_edit", { id: b.id, choices: ["Sim", "Não", "Talvez"] })).fail).toBe(true);
+  // closing and changing in one edit (dropped to done) doesn't get round it
+  const c = T.task_new(s, { title: "Outra decisão", kind: "decision", choices: ["Sim", "Não"] }, "main", NOW) as T.Task;
+  T.task_resolve(s, c.id, "dropped", null, null, NOW);
+  expect((await call("task_edit", { id: c.id, state: "done", answer: "Sim", kind: "restart", acts: { Sim: "unii" } })).fail).toBe(true);
+  const kept = T.tasks_load(dir).tasks.find((x) => x.id === b.id)!;
+  expect(kept.kind).toBe("decision");
+  expect(kept.acts).toEqual({});
+  expect(Tools.restart(tools, { why: "x", task: b.id }, "exit").fail).toBe(true);
+  expect(restarts).toEqual([]);
+  // the rest of a closed task still edits (a note; the same kind given again)
+  expect((await call("task_edit", { id: b.id, note: "visto", kind: "decision" })).fail).toBe(false);
+  expect(T.tasks_load(dir).tasks.find((x) => x.id === b.id)!.closed_by).toBe("user");
+  // opened again, it changes; then only the user's new pick lets a restart
+  expect((await call("task_edit", { id: b.id, state: "open", kind: "restart", acts: { Sim: "unii" } })).fail).toBe(false);
+  expect(T.tasks_load(dir).tasks.find((x) => x.id === b.id)!.closed_by).toBeNull();
+  expect(Tools.restart(tools, { why: "x", task: b.id }, "exit").fail).toBe(true);
+  T.task_resolve(T.tasks_load(dir), b.id, "done", "Sim", null, NOW);
+  expect(Tools.restart(tools, { why: "x", task: b.id }, "exit").fail).toBe(false);
+});
+
+test("a PR link is known as people write it: http, no scheme, www., any case; not inside another host or path", async () => {
+  const D = await import("./TaskDeps.ts");
+  for (const l of ["http://github.com/a/b/pull/3", "github.com/a/b/pull/3", "https://www.github.com/a/b/pull/3", "HTTPS://GITHUB.COM/A/B/PULL/3", "www.GitHub.com/a/b/pull/3", "(ver github.com/a/b/pull/3)"]) {
+    expect(D.PR_LINK.test(l)).toBe(true);
+    expect(D.kind_of({ id: "", state: "open", made: "", title: "Mesclar " + l })).toBe("pr");
+    const r = await call("task_add", { title: "Decidir", detail: "Contexto: " + l, origin: "chat", kind: "decision" });
+    expect(r.fail).toBe(true);
+    expect(r.text).toContain("in its detail");
+  }
+  for (const l of ["https://evil.com/github.com/a/b/pull/3", "https://notgithub.com/a/b/pull/3", "https://github.com/a/b/issues/3", "x@github.com/a/b/pull/3"]) {
+    expect(D.PR_LINK.test(l)).toBe(false);
+  }
+  expect(T.tasks_load(dir).tasks.length).toBe(0);
+});
+
+test("a task of Unii's follows a PR up: a link in its title or detail needs no prs; only kind pr given does", async () => {
+  const titled = await call("task_add", { title: "Seguir " + PR, origin: "chat", assignee: "unii", agent: "CalmCow" });
+  expect(titled.fail).toBe(false);
+  expect((await call("task_add", { title: "Seguir github.com/a/b/pull/3", detail: "e " + PR, origin: "chat", assignee: "unii", agent: "CalmCow" })).fail).toBe(false);
+  const given = await call("task_add", { title: "Aprovar a R6", origin: "chat", assignee: "unii", agent: "CalmCow", kind: "pr" });
+  expect(given.fail).toBe(true);
+  expect(given.text).toContain("needs prs");
+  // handed to the user, the link makes it theirs to approve: prs needed
+  const id = T.tasks_load(dir).tasks[0].id;
+  const hand = await call("task_edit", { id, assignee: "user" });
+  expect(hand.fail).toBe(true);
+  expect(hand.text).toContain("as its title's PR link says");
+});
