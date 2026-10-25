@@ -1419,8 +1419,46 @@ test("verdict_of: the counts after the verdict go on across lines and sentences 
   expect(said("Veredito: aprovado. 2 baixas, 2 corrigidas.")).toEqual(["approved", 0, 0, 0]);
   // the part's fix qualified: all of them (the safe side)
   expect(said("Veredito: aprovado. 5 baixas, 2 corrigidas, mas falha no Safari.")).toEqual(["approved_with_notes", 0, 0, 5]);
-  // a sentence about something else ends them (limit: what follows it is the report's)
+  // a later sentence about something else doesn't end them (RoughHeron 2, 25/10): the count after it is read
   expect(said("Veredito: aprovado. 2 baixas corrigidas. 3 testes novos.")).toEqual(["approved", 0, 0, 0]);
-  expect(said("Veredito: aprovado. Sem commit nem push. 2 baixas.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. Sem commit nem push. 2 baixas.")).toEqual(["approved_with_notes", 0, 0, 2]);
   expect(said("Veredito: aprovado sem ressalvas. 2 baixas corrigidas.")).toEqual(["approved", 0, 0, 0]);
+});
+
+test("verdict_of: a severity said open without a count, a fix said of another count or before it, a parenthesis, and counts past a sentence about something else (RoughHeron 1, 2, 4, 25/10)", () => {
+  const said = (s: string) => {
+    const v = Pipeline.verdict_of(s);
+    return [v.verdict, v.notes.high, v.notes.medium, v.notes.low];
+  };
+  // B1: a severity named and said open, no count: one of it, never lowered
+  expect(said("Veredito: aprovado com ressalvas. 2 baixas corrigidas. A média continua aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas. A média continua aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. A alta segue pendente.")).toEqual(["approved_with_notes", 1, 0, 0]);
+  expect(said("Veredito: aprovado. A ressalva média não foi corrigida.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. A média foi corrigida, mas a baixa continua aberta.")).toEqual(["approved_with_notes", 0, 0, 1]);
+  expect(said("Veredito: aprovado. A média foi corrigida.")).toEqual(["approved", 0, 0, 0]);
+  // B1: the sentence's parenthesis
+  expect(said("Veredito: aprovado com ressalvas. (2 baixas corrigidas). 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. (2 baixas corrigidas). 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // B1: a fix said of another severity, after the count, is not the count's
+  expect(said("Veredito: aprovado com ressalvas. 2 baixas corrigidas, 1 média aberta, a alta foi corrigida")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas, 1 média aberta, a alta foi corrigida.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 3 baixas da V19 corrigidas.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. 2 baixas foram tratadas, mas 1 média não.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // B2: a later sentence about something else doesn't end them
+  expect(said("Veredito: aprovado. 2 baixas corrigidas. Testei no Safari. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas. 2 baixas corrigidas. Testei no Safari. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas.\nTestei no Safari.\n1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // but the verdict's own sentence about something else still ends them (YellowHare: its list counts)
+  expect(said("Veredito: aprovo o PR #18, sem ressalvas de severidade média ou alta. Há uma observação baixa.")).toEqual(["approved", 0, 0, 0]);
+  // B4: a fix said right before the first count
+  expect(said("Veredito: aprovado. Corrigidas 2 baixas. Falta 1 média.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas. Corrigidas 2 baixas. Falta 1 média.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. Corrigi as 2 baixas.")).toEqual(["approved", 0, 0, 0]);
+  // only the first count, and only if nothing after it qualifies it; denied, none fixed
+  expect(said("Veredito: aprovado. Corrigidas 2 baixas e 1 média.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. Corrigidas 2 baixas, mas o Safari falha.")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(said("Veredito: aprovado. Não corrigidas 2 baixas.")).toEqual(["approved_with_notes", 0, 0, 2]);
+  // none said is still none
+  expect(said("Veredito: aprovado. Nenhuma alta. Nenhuma média. Nenhuma baixa.")).toEqual(["approved", 0, 0, 0]);
 });

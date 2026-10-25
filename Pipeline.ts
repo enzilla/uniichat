@@ -351,6 +351,14 @@ function counts_of(text: string): { open: string[]; said: boolean; rest: string 
   const open: string[] = [];
   let said = false;
   let rest = text;
+  // the verdict's own sentence, what its word's line says before its
+  // first end: if about something else, it ends the counts ("aprovo o PR
+  // #18, sem ressalvas de severidade média ou alta. Há uma observação
+  // baixa.", YellowHare: approved, its list counts). A later sentence
+  // about something else doesn't: the counts after it are read too
+  // ("aprovado. 2 baixas corrigidas. Testei no Safari. 1 média aberta."
+  // 1 medium, RoughHeron 2, 25/10), the safe side
+  let own = true;
   while (rest !== "") {
     const end = rest.search(SENTENCE_END);
     const sentence = end < 0 ? rest : rest.slice(0, end);
@@ -358,10 +366,14 @@ function counts_of(text: string): { open: string[]; said: boolean; rest: string 
     const at = [...sentence.matchAll(COUNT_START)].map((p) => p.index! + p[0].length - p[1].length).filter((s) => !/^0+\s/.test(sentence.slice(s)));
     if (at.length > 0) {
       said = true;
-      open.push(...open_counts(sentence.slice(at[0], at[0] + 160)));
-    } else if (!/^[\s*_`.,:;!?—–()\[\]\/-]*$/.test(sentence) && !NONE_SAID.test(sentence) && !says_fixed(plain.replace(/^[\s.,:;!?—–()\[\]\/-]+/, ""))) {
+      open.push(...open_counts(sentence.slice(0, at[0] + 160)));
+    } else if (sev_open(plain).length > 0) {
+      said = true;
+      open.push(...sev_open(plain));
+    } else if (own && !/^[\s*_`.,:;!?—–()\[\]\/-]*$/.test(sentence) && !NONE_SAID.test(sentence) && !says_fixed(plain.replace(/^[\s.,:;!?—–()\[\]\/-]+/, ""))) {
       break;
     }
+    own = false;
     rest = end < 0 ? "" : rest.slice(end + 1);
   }
   return { open, said, rest };
@@ -387,14 +399,40 @@ function summary_of(lines: string[], k: number): string {
 // stretch goes to the next count; it is fixed if it says a fix, not
 // denied, followed only by references (refs_only), else it counts (the
 // safe side: "2 baixas tratadas, mas falha no Safari" counts)
+// A fix said right before the first count, with nothing between them but
+// an article ("Corrigidas 2 baixas. Falta 1 média.", "Corrigi as 2
+// baixas", RoughHeron 4, 25/10), says it of that count only, if nothing
+// after the count qualifies it ("Corrigidas 2 baixas, mas o Safari
+// falha" counts): the counts after it are their own
 function open_counts(sentence: string): string[] {
   const starts = [...sentence.matchAll(COUNT_START)].map((p) => p.index! + p[0].length - p[1].length);
+  const before = starts.length === 0 ? "" : sentence.slice(0, starts[0]).replace(/[*_`]/g, "");
+  const fixed_before = FIX_BEFORE.test(before) && !NOT_FIXED_BEFORE.test(before);
   return starts
     .map((s, k) => sentence.slice(s, starts[k + 1] ?? sentence.length))
+    .filter((piece, k) => !(k === 0 && fixed_before && refs_only(piece.replace(COUNT_HEAD, "").replace(TAIL, ""))))
     .filter((piece) => !/^0+\s/.test(piece))
     .map(part_fixed)
     .filter((piece) => !count_fixed(piece))
     .map((piece) => piece.replace(TAIL, ""));
+}
+// a count and its severity at a text's start: "2 baixas", "1 ressalva média"
+const COUNT_HEAD = /^(?:\d+|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b/;
+// a severity said without a count, by its article or a note's name, and
+// said open in its clause ("A média continua aberta.", "a alta segue
+// pendente", "a ressalva média não foi corrigida", RoughHeron 1, 25/10):
+// one note of it, the least it can be. Its clause goes to the next
+// severity so said ("A média foi corrigida, mas a baixa continua aberta"
+// 1 low); one said fixed, or said neither way ("A média é do Safari"),
+// none. Never zero for a note said open, the safe side. On a folded text
+const SEV_NAMED = /(?:^|[^\w])(?:a|as|uma|ressalvas?|observac(?:ao|oes))\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(altas?|medias?|baixas?)\b/g;
+const OPEN_WORD = /\b(?:abert\w*|pendente\w*|continu\w*|segue|seguem|persist\w*|falt\w*|resta|restam|ainda|nao)\b/;
+function sev_open(plain: string): string[] {
+  const starts = [...plain.matchAll(SEV_NAMED)];
+  return starts
+    .map((p, k) => ({ sev: p[1], clause: plain.slice(p.index!, starts[k + 1]?.index ?? plain.length) }))
+    .filter((c) => OPEN_WORD.test(c.clause))
+    .map((c) => "1 " + c.sev.replace(/s$/, ""));
 }
 // a count, then how many of it are fixed ("5 baixas, 2 corrigidas", "5
 // baixas (2 já tratadas)", "5 baixas, das quais 2 corrigidas", GentleTrout
@@ -419,9 +457,17 @@ function part_fixed(piece: string): string {
 const COUNT_START = /(?:^|[\s,:;(]|\be\b)((?:\d+|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b)/g;
 // what joins a count's stretch to the next: ", e", ", mas", " and "
 const TAIL = /[\s,;:—–-]*(?:\b(?:e|mas|porem|and|but)\b[\s,;:—–-]*)?$/;
+// The fix must be said of the count: between them only a few words that
+// say no other severity and no open state ("2 baixas da V19 corrigidas",
+// "2 baixas foram tratadas"); "1 média aberta, a alta foi corrigida" says
+// the fix of the high, and the medium stays open (RoughHeron 1, 25/10)
 function count_fixed(piece: string): boolean {
   const m = FIXED_WORD.exec(piece);
   if (m === null || NOT_FIXED.test(piece)) {
+    return false;
+  }
+  const between = piece.slice(0, m.index).replace(COUNT_HEAD, "");
+  if (between.length > 40 || OPEN_WORD.test(between) || /\b(?:altas?|medias?|baixas?|high|medium|low)\b/.test(between)) {
     return false;
   }
   // a parenthesis opened before the fix closes after it ("1 baixa
@@ -434,9 +480,11 @@ function count_fixed(piece: string): boolean {
   let depth = 0;
   for (const c of piece.slice(m.index)) {
     depth += c === "(" ? 1 : c === ")" ? -1 : 0;
-    if (depth < 0 && open > 0) {
+    // a close with no open before the count ("(2 baixas corrigidas). 1
+    // média aberta", RoughHeron 1, 25/10): the sentence's parenthesis
+    if (depth < 0) {
       depth = 0;
-      open -= 1;
+      open = Math.max(0, open - 1);
       rest += " ";
       continue;
     }
@@ -875,6 +923,10 @@ const FIXED_WORD = new RegExp(String.raw`\b` + FIX);
 // corrigida**", JuicyTuna, 25/10)
 const STATUS = /^[\s>#*_`\[(]*(?:(?:todas?|tudo|ambas)\s+)?(?:(?:as|os|a|o)\s+(?:(?:\d+|duas|tres|quatro|cinco)\s+)?)?(?:(?:ressalvas?|observac(?:ao|oes)|notas?)\b[\s*_`]*)?(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?(?:\s*(?:,|\be\b)\s*[a-z]?\d+[a-z]?)*\b[\s*_`]*)?(?:[(\[,;:—–.)-]\s*)*(?:(?:altas?|high|medias?|medium|baixas?|low)\b(?:\s*(?:,|\be\b|\bou\b)\s*(?:altas?|medias?|baixas?)\b)*)?[\s*_`()\[\],;:—–.-]*(?:(?:ja|foram|estao|foi|esta|todas?|tudo|ambas|as|os|duas|tres|quatro|cinco|\d+)\s+)*$/;
 const NOT_FIXED = new RegExp(String.raw`\b(?:nao|not|unfixed)\s+(?:\w+\s+){0,2}` + FIX);
+// a fix said, then only an article, ":" or a dash, to the end of the text
+// (open_counts): "corrigidas ", "foram corrigidas as ", "Corrigi: "
+const FIX_BEFORE = new RegExp(String.raw`(?:^|[\s(,;:—–-])(?:` + FIX + String.raw`\w*|corrigi|resolvi|tratei|fixed|resolved)[\s,:—–-]*(?:(?:as|os|the)\s+)?$`);
+const NOT_FIXED_BEFORE = new RegExp(String.raw`\b(?:nao|not)\s+(?:\w+\s+){0,2}(?:` + FIX + String.raw`\w*|corrigi|resolvi|tratei)[\s,:—–-]*(?:(?:as|os|the)\s+)?$`);
 // what follows a state that says fixed keeps the note open (open_after)
 // unless it is only a reference to the fix or to its check (refs_only):
 // a hash, a token with a digit, "#", "." or ":" ("#19", "PR #19",
