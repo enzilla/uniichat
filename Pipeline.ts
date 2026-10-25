@@ -324,22 +324,41 @@ function verdict_said(s: string): Verdict | null {
 // baixas", "Sem altas. Nenhuma média. 1 baixa", CleverTaco 2, 25/10)
 const BARE_COUNT = /^[\s*_`.,:;—–()\[\]-]*(?:(?:nenhum[a]?|zero|0|sem|no|none)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b(?:\s*(?:,|\be\b|\bnem\b|\bou\b|\bor\b)\s*(?:altas?|medias?|baixas?|high|medium|low)\b)*[\s,;.]*(?:(?:e|and)\s+)?)*(?=(?:[1-9]\d*|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b)/;
 function bare_count(said: string): string | null {
-  const m = BARE_COUNT.exec(said.replace(/^\w+/, ""));
-  if (m === null) {
-    return null;
+  const open = counts_of(said.replace(/^\w+/, "")).open;
+  return open.length === 0 ? null : open.join(", ");
+}
+// the counts said from the start of a text, sentence by sentence: not
+// only the first one ("aprovado. 2 baixas corrigidas; 1 média ainda
+// aberta", "…corrigidas. 1 média aberta.": 1 medium, CleverMango 1,
+// 25/10), but each next sentence that opens with a count too (or with
+// none said of some severities, then a count); the first one that doesn't
+// ends them. open: their stretches not said fixed; said: some count was;
+// rest: what follows them (the next line may go on with them: count_next)
+function counts_of(text: string): { open: string[]; said: boolean; rest: string } {
+  const open: string[] = [];
+  let said = false;
+  let rest = text;
+  for (let m = BARE_COUNT.exec(rest); m !== null; m = BARE_COUNT.exec(rest)) {
+    said = true;
+    const body = rest.slice(m[0].length);
+    const end = body.search(/\.(?!\w)|[;\n]/);
+    open.push(...open_counts((end < 0 ? body : body.slice(0, end)).slice(0, 160)));
+    rest = end < 0 ? "" : body.slice(end);
   }
-  const sentence = said.replace(/^\w+/, "").slice(m[0].length).split(/[.;\n]/)[0].slice(0, 160);
-  // each count is its own: a fix said of one is said of it only, not of
-  // the others ("2 baixas já tratadas e 1 média aberta", "2 baixas foram
-  // tratadas, mas 1 média não": 1 medium, CleverTaco 1, 25/10). A count's
-  // stretch goes to the next count; it is fixed if it says a fix, not
-  // denied, followed only by references (refs_only), else it counts (the
-  // safe side: "2 baixas tratadas, mas falha no Safari" counts)
+  return { open, said, rest };
+}
+// each count is its own: a fix said of one is said of it only, not of
+// the others ("2 baixas já tratadas e 1 média aberta", "2 baixas foram
+// tratadas, mas 1 média não": 1 medium, CleverTaco 1, 25/10). A count's
+// stretch goes to the next count; it is fixed if it says a fix, not
+// denied, followed only by references (refs_only), else it counts (the
+// safe side: "2 baixas tratadas, mas falha no Safari" counts)
+function open_counts(sentence: string): string[] {
   const starts = [...sentence.matchAll(COUNT_START)].map((p) => p.index! + p[0].length - p[1].length);
-  const open = starts
+  return starts
     .map((s, k) => sentence.slice(s, starts[k + 1] ?? sentence.length))
-    .filter((piece) => !count_fixed(piece));
-  return open.length === 0 ? null : open.map((piece) => piece.replace(TAIL, "")).join(", ");
+    .filter((piece) => !count_fixed(piece))
+    .map((piece) => piece.replace(TAIL, ""));
 }
 // where a count starts, as SAID_PAIR reads it (notes_said)
 const COUNT_START = /(?:^|[\s,:;(]|\be\b)((?:\d+|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b)/g;
@@ -421,12 +440,18 @@ export function verdict_line(report: string): { verdict: Verdict; at: number; co
 // with notes, the count said there (count, the line's index), as on the
 // verdict's line (bare_count); not a heading, an item, a bold label, a
 // quote or a table there, nor a count it says fixed
+// So on the next line after counts all said fixed ("aprovado. 2 baixas
+// corrigidas\n1 média aberta.", CleverMango 1, 25/10), and after "com
+// ressalvas" that says no count ("aprovado com ressalvas.\n2 baixas já
+// tratadas e 1 média aberta.", CleverMango 2, 25/10)
 function count_next(top: string[], k: number, verdict: Verdict): { verdict: Verdict; at: number; count?: number } {
-  if (verdict !== "approved") {
+  const a = top[k].search(APPROVED);
+  if (a < 0) {
     return { verdict, at: k };
   }
-  const a = top[k].search(APPROVED);
-  if (a < 0 || !/^[\s*_`.,:;!—–-]*$/.test(top[k].slice(a).replace(/^\w+/, ""))) {
+  const after = top[k].slice(a).replace(/^\w+/, "");
+  const alone = verdict === "approved" ? /^[\s*_`.,:;!—–-]*$/.test(counts_of(after).rest) : verdict === "approved_with_notes" && WITH_ALONE.test(after);
+  if (!alone) {
     return { verdict, at: k };
   }
   const j = top.findIndex((l, n) => n > k && l.trim() !== "");
@@ -435,6 +460,8 @@ function count_next(top: string[], k: number, verdict: Verdict): { verdict: Verd
   }
   return { verdict: "approved_with_notes", at: k, count: j };
 }
+// "com ressalvas" with no count, nothing said after it on its line
+const WITH_ALONE = /^[\s*_`]*,?\s*(?:com|c\/|with)\s*(?:ressalvas?|observac(?:ao|oes)|notes?)[\s*_`.,:;!—–-]*$/;
 
 // "sem ressalvas" said of all of them: not followed by a word that
 // qualifies which ("bloqueantes", "altas", "novas", "de merge"); on a
@@ -1146,20 +1173,41 @@ function notes_said(line: string): Sevs {
     // a parenthesis right after the notes said gives their count
     // ("com ressalvas (1 média, 2 baixas)", WoodenKangaroo 2, 25/10); any
     // other ends what says them, as a sentence's end does
-    const stretch = bare ?? line.slice(a + from!.index).replace(SAID_PAREN, "$1, $2").split(/[.;(\n]/)[0].slice(0, 160);
+    const with_ = from === null ? "" : line.slice(a + from.index);
+    let stretch = bare ?? with_.replace(SAID_PAREN, "$1, $2").split(/[.;(\n]/)[0].slice(0, 160);
+    // no count said with them: the sentences right after say it, if they
+    // open with one ("aprovado com ressalvas. 2 baixas já tratadas e 1
+    // média aberta.": 1 medium, CleverMango 2, 25/10)
+    const end = with_.search(/\.(?!\w)|[;\n]/);
+    if (bare === null && [...stretch.matchAll(SAID_PAIR)].length === 0 && end >= 0 && !SAID_PAREN.test(with_)) {
+      const next = bare_count("x" + with_.slice(end));
+      stretch = next === null ? stretch : stretch + ", " + next;
+    }
+    // of what it says, only the counts not said fixed ("com ressalvas (2
+    // baixas já tratadas, 1 média aberta)": 1 medium)
+    const counted = bare ?? open_counts(stretch).join(", ");
+    const amount = (p: RegExpMatchArray) => (/^\d+$/.test(p[1]) ? Number(p[1]) : COUNT_WORD[p[1]]);
     let sum = 0;
-    for (const p of stretch.matchAll(SAID_PAIR)) {
-      const k = /^\d+$/.test(p[1]) ? Number(p[1]) : COUNT_WORD[p[1]];
+    for (const p of counted.matchAll(SAID_PAIR)) {
+      const k = amount(p);
       if (k > 0) {
         out[sev_in(p[2])!] += k;
         sum += k;
       }
     }
-    if (sum > 0) {
+    // a total said above what its pairs add up to, fixed or not, gives the
+    // rest as low ("com 3 ressalvas, 1 média corrigida": 2 low)
+    let all = 0;
+    for (const p of stretch.matchAll(SAID_PAIR)) {
+      all += Math.max(0, amount(p));
+    }
+    if (all > 0) {
       const total = /(?:com|c\/|with)\s*(\d+|uma?|dois|duas|tres|quatro|cinco)\s*(?:ressalvas|observacoes|notes)\b/.exec(stretch);
       const n = total === null ? 0 : /^\d+$/.test(total[1]) ? Number(total[1]) : COUNT_WORD[total[1]];
-      out.low += Math.max(0, n - sum);
-      return out;
+      out.low += Math.max(0, n - all);
+      if (sum > 0 || out.low > 0) {
+        return out;
+      }
     }
   }
   const m = /(?:com|c\/|with)\s*(\d+|uma?|dois|duas|tres|quatro|cinco)?\s*(?:ressalvas?|observac(?:ao|oes)|notes?)([^.;(\n]{0,30})/.exec(line);

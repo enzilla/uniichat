@@ -1350,3 +1350,39 @@ test("verdict_of: a fix said of one count is said of it only; severities said no
   expect(of("**Média**\n- Baixa: x\n- Baixa: y\n")).toEqual({ high: 0, medium: 1, low: 2 });
   expect(of("**Média**\n\n- Baixa: x\n- Baixa: y\n\n**Alta**\n- z\n")).toEqual({ high: 1, medium: 1, low: 2 });
 });
+
+test("verdict_of: the counts said after the verdict go on past their first sentence, and after 'com ressalvas' that says none (CleverMango 1-2, 25/10)", () => {
+  const said = (s: string) => {
+    const v = Pipeline.verdict_of(s);
+    return [v.verdict, v.notes.high, v.notes.medium, v.notes.low];
+  };
+  // 1: the medium left open in the next sentence, after ";", ".", or on the next line, counts
+  expect(said("Veredito: aprovado. 2 baixas corrigidas; 1 média ainda aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas\n1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas.\n\n1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas. Nenhuma alta. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 1 baixa. 1 média.")).toEqual(["approved_with_notes", 0, 1, 1]);
+  // a dot inside a version or a file name doesn't end the sentence
+  expect(said("Veredito: aprovado. 1 baixa corrigida em v1.2.3. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // all said fixed, or what follows not a count: none
+  expect(said("Veredito: aprovado. 2 baixas corrigidas; 1 média corrigida em abc1234.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas.\n1 média corrigida em abc1234.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas. 3 testes novos.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas\n\n## Conferido\n- 1 média")).toEqual(["approved", 0, 0, 0]);
+  // limit: a count in a sentence that doesn't open with it isn't read
+  expect(said("Veredito: aprovado. 2 baixas corrigidas. O resto passou com 1 média.")).toEqual(["approved", 0, 0, 0]);
+  // 2: "com ressalvas" with no count: the sentences after it give it
+  expect(said("Veredito: aprovado com ressalvas. 2 baixas já tratadas e 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado, com ressalvas. 2 baixas corrigidas. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas.\n2 baixas já tratadas e 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com 1 ressalva. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // in a parenthesis, the ones said fixed don't count
+  expect(said("Veredito: aprovado com ressalvas (2 baixas já tratadas, 1 média aberta).")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // a total above its pairs, fixed or not: the rest low
+  expect(said("Veredito: aprovado com 3 ressalvas, 1 média corrigida.")).toEqual(["approved_with_notes", 0, 0, 2]);
+  // all said fixed, or none said: at least the one its verdict says (the safe side)
+  expect(said("Veredito: aprovado com ressalvas. 2 baixas já tratadas.")).toEqual(["approved_with_notes", 0, 0, 1]);
+  expect(said("Veredito: aprovado com ressalvas.\n2 baixas já tratadas.")).toEqual(["approved_with_notes", 0, 0, 1]);
+  expect(said("Veredito: aprovado com ressalvas.\nNenhuma.")).toEqual(["approved_with_notes", 0, 0, 1]);
+});
