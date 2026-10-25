@@ -175,8 +175,10 @@ export function timers_html(timers: Timer.Timer[]): string[] {
 
 // the pending list (the aside, or the header's ✓ popover; Tasks.ts):
 // each open task's title, ref, detail (Markdown, as messages are), its
-// choices (each concludes with it), a comment, Concluir and Descartar (main.ts adds the comment
-// and "avisar" to the act); each closed lately, how, and Reabrir. No
+// choices (each concludes with it; the one recommended marked), a comment, "Aceitar as
+// recomendadas" if it has any (View.task_accept), Concluir and Descartar (main.ts adds the
+// comment and the answers to the act; Unii is told on its own, Server.ts Chat.tell_soon);
+// a task of Unii's, only Cobrar agora and Pode fechar; each closed lately, how, and Reabrir. No
 // time ago in it: an item's markup changes only as the task does, so
 // a comment being typed stays (main.ts markup). Those that wait for
 // others (TaskDeps.ts) apart, without acts, each with what it waits for;
@@ -254,16 +256,39 @@ function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(),
     ...(agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]),
     ...(stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`]),
   ];
-  // a choice concludes the task at once (with the comment typed): said
-  const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map((c) => task_button(t, "done", c, "opt", c)).join("")}</div>`;
-  const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
-  const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
-  const acts = `<div class="acts">${go}${task_button(t, "done", "Concluir", mine ? "done" : "done quiet")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
   const said = desk ? View.task_talk_wait_said(t, now, turn) : View.task_talk_said(t);
   const talk = said === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(said)}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
   const tag = desk ? "article" : "li";
-  return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
+  const head = `${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
+  // a task of Unii's (P6): only "Cobrar agora" (a message in its thread,
+  // a turn) and "Pode fechar" (done; Unii told as of any resolution)
+  if (!mine) {
+    // already asked, not replied: Cobrar disabled, why said in the hint
+    // (visible, and the button's description), not in a title alone
+    const asked = t.talk === "unii";
+    const why = `chase-why-${desk ? "desk" : "list"}-${esc(t.id)}`; // the aside and the Mesa may both hold it: an id each
+    const chase = `<button class="chase"${asked ? ` disabled aria-describedby="${why}"` : ""}${act_html({ $: "TaskSay", task: t.id, text: View.CHASE })}>${asked ? "Cobrado: aguardando o Unii" : "Cobrar agora"}</button>`;
+    const close = task_button(t, "done", "Pode fechar", "close");
+    const hint = asked ? `<span class="hint" id="${why}">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>` : `<span class="hint">Com o Unii. Você pode cobrar o andamento ou liberá-lo para fechar.</span>`;
+    const acts = `<div class="acts unii">${hint}${chase}${close}</div>`;
+    return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${acts}${thread_html(t, desk)}</${tag}>`;
+  }
+  // a choice concludes the task at once (with the comment typed): said;
+  // the one recommended marked (View.task_rec)
+  const rec = View.task_rec(t);
+  const opt = (c: string) => {
+    const on = View.rec_is(rec, c);
+    const tagged = on && !View.rec_marked(c) ? ` <span class="rec-tag">recomendada</span>` : "";
+    return `<button class="opt${on ? " rec" : ""}"${act_html({ $: "Task", task: t.id, state: "done", answer: c })}>${esc(c)}${tagged}</button>`;
+  };
+  const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map(opt).join("")}</div>`;
+  const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
+  // "Aceitar as recomendadas" (View.task_accept): one act, key a
+  const accept = View.task_accepts(t) ? `<button class="accept" aria-keyshortcuts="a" title="Atalho: a"${act_html({ $: "TaskAccept", task: t.id })}>${esc(View.task_accept_said(t))}</button>` : "";
+  const told = `<span class="hint told">O Unii é avisado sozinho em até 1 min.</span>`;
+  const acts = `<div class="acts">${told}${accept}${task_button(t, "done", "Concluir", "done")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
+  return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
 }
 
 // the pull requests a task points to (View.task_prs), each a link by
@@ -277,7 +302,7 @@ function task_prs_html(t: Task): string {
 // a task closed lately: how, and Reabrir (desk: with its detail, its
 // answers and its thread, to read)
 function task_closed_html(t: Task, desk: boolean): string {
-  const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii ainda não viu"])];
+  const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii será avisado em até 1 min"])];
   const acts = `<div class="acts">${task_button(t, "open", "Reabrir", "reopen")}</div>`;
   if (!desk) {
     return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${acts}</li>`;
@@ -395,11 +420,19 @@ function fields_html(t: Task): string {
     const legend = `<legend>${esc(f.label)}${req}</legend>`;
     const must = f.required ? ` data-required="true"` : "";
     if (f.kind === "text") {
-      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text"${must}>${legend}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
+      const rec = View.field_rec(f);
+      const hint = typeof rec === "string" ? `<p class="rec-text"><span class="rec-tag">recomendado</span> ${esc(rec)}</p>` : "";
+      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text"${must}>${legend}${hint}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
     }
     const type = f.kind === "multi" ? "checkbox" : "radio";
     const on = (c: string) => (Array.isArray(v) ? v.includes(c) : v === c);
-    const boxes = f.choices.map((c) => `<label><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> ${esc(c)}</label>`).join("");
+    const rec = View.field_rec(f);
+    const label = (c: string) => {
+      const r = View.rec_is(rec, c);
+      const tagged = r && !View.rec_marked(c) ? ` <span class="rec-tag">recomendada</span>` : "";
+      return `<label${r ? ` class="rec"` : ""}><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> ${esc(c)}${tagged}</label>`;
+    };
+    const boxes = f.choices.map(label).join("");
     return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}"${must}>${legend}<div class="picks">${boxes}</div></fieldset>`;
   };
   return `<div class="fields">${fields.map(one).join("")}</div>`;

@@ -90,6 +90,7 @@ export type Task = {
   agent      : string | null; // the agent at work on it, by name (a task of Unii's: who follows it up now)
   by      : string;
   choices : string[];
+  recommend? : string | null; // the choice Unii recommends (one of choices; null or none: none)
   answer  : string | null;
   note    : string | null;
   ref     : string | null;
@@ -115,9 +116,10 @@ export type Heard = { state: State; answer: string | null; note: string | null; 
 
 // a question of a task: its id (letters, digits, - and _), its label,
 // its kind (one choice, many, a text, yes or no), its choices (yes or
-// no: sim, não), whether it must be answered to conclude
+// no: sim, não), whether it must be answered to conclude, and the answer
+// Unii recommends, if any ("Aceitar as recomendadas" takes it)
 export type Kind  = "choice" | "multi" | "text" | "yesno";
-export type Field = { id: string; label: string; kind: Kind; choices: string[]; required: boolean };
+export type Field = { id: string; label: string; kind: Kind; choices: string[]; required: boolean; recommend?: Value };
 
 // answers by field id: a choice or a text, or the choices picked
 export type Value  = string | string[];
@@ -141,6 +143,7 @@ export type Edit = {
   origin_url? : unknown;
   agent?      : unknown;
   choices? : unknown;
+  recommend? : unknown;
   ref?     : unknown;
   state?   : unknown;
   answer?  : unknown;
@@ -285,6 +288,7 @@ export function task_read(x: unknown, now: number): Task | null {
     agent      : agent_read(o.agent),
     by      : text(o.by, 40, text_line) || "main",
     choices,
+    recommend : typeof o.recommend === "string" && choices.includes(o.recommend) ? o.recommend : null,
     answer  : state === "done" && choices.includes(answer) ? answer : null,
     note    : note === "" ? null : note,
     ref     : ref === "" ? null : ref,
@@ -576,11 +580,25 @@ function choices_read(x: unknown): string[] | string {
   return all.length > CHOICES ? "At most " + CHOICES + " choices." : all;
 }
 
+// the choice recommended, as given: one of choices (null: none; ""
+// clears); else why not
+function recommend_read(x: unknown, choices: string[]): { v: string | null } | string {
+  if (x === undefined || x === null || x === "") {
+    return { v: null };
+  }
+  const said = typeof x === "string" || typeof x === "number" ? text_line(String(x), CHOICE) : "";
+  const got = choices.find((c) => c === said) ?? choices.find((c) => c.toLowerCase() === said.toLowerCase());
+  if (got === undefined) {
+    return choices.length === 0 ? "recommend is one of the task's choices, and it has none." : "recommend is one of the choices: " + choices.join(" | ") + ".";
+  }
+  return { v: got };
+}
+
 // Fields
 // ------
 
-// a fields list as given: each {id, label, kind, choices?, required?}
-// (required by default; yesno's choices: sim, não; choice and multi: at
+// a fields list as given: each {id, label, kind, choices?, required?,
+// recommend?} (recommend: an answer it takes, as value_read; required by default; yesno's choices: sim, não; choice and multi: at
 // least 2), at most FIELDS, no id twice (in any case). fields: those
 // that are sound; why: the first that isn't (null: all are). A hand
 // edit's file keeps the sound ones; a tool refuses the list
@@ -628,7 +646,17 @@ export function fields_read(x: unknown): { fields: Field[]; why: string | null }
       }
       choices = got;
     }
-    fields.push({ id, label, kind, choices, required: o.required !== false });
+    const field: Field = { id, label, kind, choices, required: o.required !== false };
+    if (o.recommend !== undefined && o.recommend !== null && o.recommend !== "") {
+      const rec = value_read(field, o.recommend);
+      if (typeof rec === "string") {
+        return no("Field " + id + ": recommend must be " + (kind === "multi" ? "a list of its choices" : kind === "text" ? "a text" : "one of its choices") + " (" + rec + ")");
+      }
+      if (rec.v !== null) {
+        field.recommend = rec.v;
+      }
+    }
+    fields.push(field);
   });
   if (fields.length > FIELDS) {
     no("At most " + FIELDS + " fields.");
@@ -787,6 +815,10 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   if (fields.why !== null) {
     return fields.why;
   }
+  const recommend = recommend_read(args.recommend, choices);
+  if (typeof recommend === "string") {
+    return recommend;
+  }
   const open = s.tasks.filter((t) => t.state === "open");
   const twin = open.find((t) => t.title.toLowerCase() === title.toLowerCase());
   if (twin !== undefined) {
@@ -801,7 +833,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   const at = new Date(now).toISOString();
   const ref = text_line(args.ref, REF);
   const task: Task = {
-    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, agent: whose.agent ?? null, by, choices, answer: null, note: null,
+    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, agent: whose.agent ?? null, by, choices, recommend: recommend.v, answer: null, note: null,
     ref: ref === "" ? null : ref, made: at, changed: at, moved: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
     fields: fields.fields, draft: {}, answers: null, thread: [], talk: null,
   };
@@ -941,6 +973,15 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
     }
     next.choices = choices;
   }
+  if (args.recommend !== undefined) {
+    const recommend = recommend_read(args.recommend, next.choices);
+    if (typeof recommend === "string") {
+      return recommend;
+    }
+    next.recommend = recommend.v;
+  } else if (next.recommend != null && !next.choices.includes(next.recommend)) {
+    next.recommend = null;
+  }
   if (args.ref !== undefined) {
     const ref = text_line(args.ref, REF);
     next.ref = ref === "" ? null : ref;
@@ -993,6 +1034,9 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
   return task_put(s, task, next, now, next.state !== task.state && !untold ? true : null);
 }
 
+// what a task of Unii's closed by the user says, with no comment typed
+export const CLOSE = "Pode fechar";
+
 // a task resolved by the user: done (answer: one of its choices), dropped
 // or opened again, with a comment; null: so already (an act done again
 // changes nothing), else the task, else why not
@@ -1009,7 +1053,14 @@ export function task_resolve(s: Store, id: unknown, state: unknown, answer: unkn
   if (said !== null && !task.choices.includes(said)) {
     return "A pendência " + task.id + " não tem a opção " + JSON.stringify(said) + ".";
   }
-  const comment = note === undefined || note === null ? null : text_body(note, NOTE) || null;
+  // a task of Unii's (P6): the user tells it to close it ("Pode fechar",
+  // done) or asks after it in its thread ("Cobrar agora"); not dropped
+  const theirs = task.assignee !== "user" && task.state === "open";
+  if (theirs && to === "dropped") {
+    return "A pendência " + task.id + " está com o Unii: use “Cobrar agora” ou “Pode fechar”. Nada foi alterado.";
+  }
+  const typed = note === undefined || note === null ? null : text_body(note, NOTE) || null;
+  const comment = theirs && to === "done" && typed === null ? CLOSE : typed;
   const waits = Deps.waits(s.tasks, task);
   if (to !== "open" && task.state === "open" && waits.length > 0) {
     return "A pendência " + task.id + " aguarda " + waits.join(", ") + ": resolva " + (waits.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
@@ -1027,7 +1078,7 @@ export function task_resolve(s: Store, id: unknown, state: unknown, answer: unkn
   if (typeof draft === "string") {
     return draft + " Nada foi alterado.";
   }
-  const missing = to === "done" && task.state === "open" ? fields_missing(task, draft) : [];
+  const missing = to === "done" && task.state === "open" && !theirs ? fields_missing(task, draft) : [];
   if (missing.length > 0) {
     return "Responda " + (missing.length === 1 ? "o campo obrigatório" : "os campos obrigatórios") + " da pendência " + task.id + " antes de concluir: " + missing.map((f) => "“" + f.label + "”").join(", ") + ". Nada foi alterado.";
   }
@@ -1245,16 +1296,26 @@ export function task_said(t: Task): string {
   return "Pendência " + t.id + " " + SAID[t.state] + " pelo usuário: “" + t.title + "”." + answer + (answers === "" ? "" : " Respostas: " + answers + ".") + note;
 }
 
+// resolutions already said by their notes (each without go has one), as
+// the batch's message names them (Server.ts Chat.tell_soon): each id,
+// how and its answer, not the title, the fields or the comment again
+// (R4: the batch half as long, the notes holding the whole)
+export function tasks_noted_said(tasks: Task[]): string {
+  const one = (t: Task) => t.id + " " + SAID[t.state] + (t.answer === null ? "" : " (" + t.answer + ")");
+  return "O usuário resolveu, como dizem as notas acima: " + tasks.map(one).join("; ") + ".";
+}
+
 // a task as a line of the tasks tool or the block (all: the list it's
 // of, for whom it waits and frees; none given, those not said)
 export function task_line(t: Task, now: number, whole = false, all: Task[] | null = null): string {
   const waits = all === null ? [] : Deps.waits(all, t);
   const frees = all === null ? [] : Deps.frees_direct(all, t);
   const deps = (waits.length === 0 ? "" : " waits for " + waits.join(", ")) + (frees.length === 0 ? "" : " frees " + frees.join(", ")) + (all === null && t.after.length > 0 ? " after " + t.after.join(", ") : "");
-  const kind = (f: Field) => f.kind + (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.join(" | ") : "");
+  const rec = (f: Field) => (f.recommend === undefined ? "" : ", recommended: " + (Array.isArray(f.recommend) ? f.recommend.join(" + ") : f.recommend));
+  const kind = (f: Field) => f.kind + (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.join(" | ") : "") + rec(f);
   const fields = t.fields.length === 0 ? "" : " fields: " + t.fields.map((f) => f.id + (f.required ? "*" : "") + " " + JSON.stringify(f.label) + " (" + kind(f) + ")").join("; ");
   const talk = t.talk === "unii" ? " [the user wrote in its thread: reply with task_reply]" : "";
-  const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ")) + fields + deps + talk;
+  const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ") + (t.recommend == null ? "" : " (recommended: " + t.recommend + ")")) + fields + deps + talk;
   const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), (t.agent ?? null) === null ? "" : "agent " + t.agent, ago(t.made, now)].filter((x) => x !== "").join(", ");
   const how   = [t.state, t.answer === null ? "" : "answer: " + t.answer, t.note === null ? "" : "note: " + JSON.stringify(t.note)].filter((x) => x !== "");
   const state = t.state === "open" ? "" : " (" + how.join(", ") + ")";

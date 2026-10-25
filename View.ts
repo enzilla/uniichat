@@ -175,6 +175,7 @@ export type Act =
   | { $: "Task"; task: string; state: Task["state"]; answer?: string; note?: string; go?: boolean; fields?: Record<string, unknown> } // a pending task's Concluir, Descartar, Reabrir, or a choice
   | { $: "TaskDraft"; task: string; fields: Record<string, unknown> } // a task's field answered (not concluded)
   | { $: "TaskSay"; task: string; text: string }  // a message in a task's thread
+  | { $: "TaskAccept"; task: string; note?: string; fields?: Record<string, unknown> } // "Aceitar as recomendadas": the choice and the fields' answers Unii recommends (fields: those given, kept), concluded
   | { $: "TasksTell" }                          // Avisar o Unii agora
 
 // what a page draws, top to bottom
@@ -477,6 +478,10 @@ export function view_act(v: View, act: Act): Client[] {
         v.notes.push("A pendência " + t.id + " não tem a opção “" + act.answer + "”.");
         return [];
       }
+      if (act.state === "dropped" && t.state === "open" && t.assignee !== "user") {
+        v.notes.push("A pendência " + t.id + " está com o Unii: use “Cobrar agora” ou “Pode fechar”.");
+        return [];
+      }
       const waits = Deps.waits(v.tasks, t);
       if (act.state !== "open" && t.state === "open" && waits.length > 0) {
         v.notes.push(task_waits_said(t, waits));
@@ -502,6 +507,25 @@ export function view_act(v: View, act: Act): Client[] {
         return [];
       }
       return [{ $: "task_say", task: t.id, text }];
+    }
+    case "TaskAccept": {
+      const t = v.tasks.find((x) => x.id === act.task);
+      if (t === undefined) {
+        v.notes.push("Pendência " + act.task + " não encontrada.");
+        return [];
+      }
+      // choices, none recommended (task_accept_mode "fill"): the fields'
+      // recommended answers kept as a draft, the choice left to the user
+      if (task_accept_mode(t) === "fill") {
+        v.notes.push(task_fill_said(t));
+        return view_act(v, { $: "TaskDraft", task: t.id, fields: task_accept_fill(t, act.fields ?? t.draft ?? {}) });
+      }
+      const got = task_accept(t, act.fields ?? t.draft ?? {});
+      if (typeof got === "string") {
+        v.notes.push(got);
+        return [];
+      }
+      return view_act(v, { $: "Task", task: t.id, state: "done", ...(got.answer === undefined ? {} : { answer: got.answer }), ...(act.note === undefined ? {} : { note: act.note }), fields: got.fields });
     }
     case "TasksTell": {
       return [{ $: "tasks_tell" }];
@@ -941,6 +965,125 @@ export function task_agent_said(t: Task): string {
   return a !== null ? "agente " + a : t.state === "open" && t.assignee !== "user" ? "sem agente" : "";
 }
 
+// Recommendations
+// ---------------
+// Unii recommends a task's choice (recommend) and a field's answer
+// (Field.recommend); a task of before, a choice marked "(recomendado)"
+// or "(recomendada)" in its text (the only one so marked: for a multi,
+// all those). "Aceitar as recomendadas" (task_accept) concludes with
+// them in one act (P2, 25/10/2026)
+
+const REC_MARK = /\(\s*recomendad[oa]s?\s*\)/i;
+
+// whether a choice's own text says it's recommended
+export function rec_marked(c: string): boolean {
+  return REC_MARK.test(c);
+}
+
+// the choice of a task recommended (null: none)
+export function task_rec(t: Task): string | null {
+  if (t.recommend != null && t.choices.includes(t.recommend)) {
+    return t.recommend;
+  }
+  const marked = t.choices.filter(rec_marked);
+  return marked.length === 1 ? marked[0] : null;
+}
+
+// the answer of a field recommended (undefined: none)
+export function field_rec(f: Field): Values[string] | undefined {
+  if (f.recommend !== undefined && f.recommend.length > 0) {
+    return f.recommend;
+  }
+  const marked = f.choices.filter(rec_marked);
+  if (f.kind === "multi") {
+    return marked.length > 0 ? marked : undefined;
+  }
+  return (f.kind === "choice" || f.kind === "yesno") && marked.length === 1 ? marked[0] : undefined;
+}
+
+// whether a choice (of the task, or of a field) is the one recommended
+export function rec_is(rec: Values[string] | string | null | undefined, c: string): boolean {
+  return rec === c || (Array.isArray(rec) && rec.includes(c));
+}
+
+// what "Aceitar as recomendadas" does to a task: null, not offered (not
+// open, not the user's, nothing recommended); "conclude", concludes it
+// with the recommended (its choice, if it has choices, recommended);
+// "fill", only fills its fields' recommended answers, as a draft: it has
+// choices, none recommended, and fields recommended, so the user still
+// picks the choice that concludes it (R1, GreenWasp)
+export type AcceptMode = "conclude" | "fill";
+export function task_accept_mode(t: Task): AcceptMode | null {
+  if (t.state !== "open" || t.assignee !== "user") {
+    return null;
+  }
+  const fields = (t.fields ?? []).some((f) => field_rec(f) !== undefined);
+  if (t.choices.length === 0) {
+    return fields ? "conclude" : null;
+  }
+  return task_rec(t) !== null ? "conclude" : fields ? "fill" : null;
+}
+
+// whether a task offers "Aceitar as recomendadas" (task_accept_mode)
+export function task_accepts(t: Task): boolean {
+  return task_accept_mode(t) !== null;
+}
+
+// the button's words: one recommendation, many, or only filled
+export function task_accept_said(t: Task): string {
+  return task_accept_mode(t) === "fill" ? "Preencher as recomendadas" : t.fields.length === 0 ? "Aceitar a recomendada" : "Aceitar as recomendadas";
+}
+
+// what the user is told once the recommended answers are filled and a
+// choice is still theirs to pick
+export function task_fill_said(t: Task): string {
+  return "Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: " + t.choices.join(" | ") + " (no terminal: /ok " + t.id + " opção).";
+}
+
+// an answer not given: none, an empty text, no choice
+function value_empty(x: unknown): boolean {
+  return x === undefined || x === null || (typeof x === "string" && x.trim() === "") || (Array.isArray(x) && x.length === 0);
+}
+
+// the answers given so far (by field id), each empty one that has a
+// recommendation taking it
+export function task_accept_fill(t: Task, values: Record<string, unknown>): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  for (const f of t.fields ?? []) {
+    const given = Object.hasOwn(values, f.id) ? values[f.id] : undefined;
+    const rec = field_rec(f);
+    if (!value_empty(given)) {
+      fields[f.id] = given;
+    } else if (rec !== undefined) {
+      fields[f.id] = rec;
+    }
+  }
+  return fields;
+}
+
+// "Aceitar as recomendadas" over the answers given so far (values: by
+// field id; those given stay, the empty take the recommended): the
+// choice and the answers to conclude with, else why not (the user's
+// words: a required field with no answer and none recommended)
+export function task_accept(t: Task, values: Record<string, unknown>): { answer?: string; fields: Record<string, unknown> } | string {
+  if (!task_accepts(t)) {
+    return "A pendência " + t.id + " não tem recomendação para aceitar.";
+  }
+  const fields = task_accept_fill(t, values);
+  if (task_accept_mode(t) === "fill") {
+    return task_fill_said(t);
+  }
+  const missing = (t.fields ?? []).filter((f) => f.required && value_empty(fields[f.id]));
+  if (missing.length > 0) {
+    return "Sem recomendação para " + (missing.length === 1 ? "o campo obrigatório " : "os campos obrigatórios ") + missing.map((f) => "“" + f.label + "”").join(", ") + ": responda " + (missing.length === 1 ? "esse campo" : "esses campos") + " e conclua.";
+  }
+  const answer = task_rec(t);
+  return { ...(answer === null ? {} : { answer }), fields };
+}
+
+// what "Cobrar agora" says in a task of Unii's thread (P6)
+export const CHASE = "Cobrança: qual é o andamento desta pendência e o próximo passo?";
+
 // the GitHub pull requests a task points to (its detail, its origin's
 // link), each once, in order, at most LINKS: the link and "repo#n"
 export const LINKS = 8;
@@ -1007,7 +1150,7 @@ export function task_whole(t: any): Task {
 export function tasks_md(v: View, one: Task | null = null, waiting = false): string {
   const STATE = { open: "aberta", done: "concluída", dropped: "descartada" };
   const tag = (t: Task) => (t.ref === null ? "" : " · " + t.ref) + (origin_said(t) === "" ? "" : " · origem: " + origin_said(t));
-  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c).join("  "));
+  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c + (rec_is(task_rec(t), c) && !rec_marked(c) ? " (recomendada)" : "")).join("  "));
   if (one !== null) {
     const said = [one.answer === null ? "" : "Resposta: " + one.answer + ".", one.note === null ? "" : "Comentário: " + one.note].filter((x) => x !== "").join(" ");
     const waits = Deps.waits(v.tasks, one);
@@ -1033,7 +1176,7 @@ export function tasks_md(v: View, one: Task | null = null, waiting = false): str
     open.length === 0 ? tasks_none_said(wait.length) : tasks_by_assignee(open).map(group).join("\n\n"),
     wait.length === 0 ? "" : "_" + tasks_waiting_said(wait.length) + "_ · `/p aguardando` mostra quais",
     closed.length === 0 ? "" : "**Resolvidas recentemente**\n\n" + closed.slice(0, 10).map(done).join("\n"),
-    "`/p P7` detalha · `/ok P7 [opção] [campo=valor] [comentário]` conclui · `/ok!` conclui e avisa o Unii · `/rascunho P7 campo=valor` · `/conversa P7 mensagem` · `/descartar P7` · `/reabrir P7` · `/avisar`",
+    "`/p P7` detalha · `/ok P7 [opção] [campo=valor] [comentário]` conclui · `/ok!` conclui e avisa o Unii na hora · `/aceitar P7` aceita as recomendadas · `/cobrar P7` cobra o Unii · `/rascunho P7 campo=valor` · `/conversa P7 mensagem` · `/descartar P7` · `/reabrir P7` · `/avisar`",
   ];
   return parts.filter((x) => x !== "").join("\n\n");
 }
@@ -1051,7 +1194,8 @@ function fields_md(t: Task): string {
     const v = Object.hasOwn(values, f.id) ? values[f.id] : undefined;
     return v === undefined || v.length === 0 ? "_sem resposta_" : Array.isArray(v) ? v.join(", ") : v;
   };
-  const opts = (f: Field) => (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.map((c, k) => k + 1 + ") " + c).join("  ") : "");
+  const rec = (f: Field, c: string) => (rec_is(field_rec(f), c) && !rec_marked(c) ? " (recomendada)" : "");
+  const opts = (f: Field) => (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.map((c, k) => k + 1 + ") " + c + rec(f, c)).join("  ") : f.kind === "text" && typeof field_rec(f) === "string" ? ", recomendado: “" + field_rec(f) + "”" : "");
   const head = t.state === "done" ? "**Respostas**" : "**Campos** (respostas salvas como rascunho até concluir)";
   return head + "\n\n" + fields.map((f, k) => k + 1 + ". " + f.label + " `" + f.id + "` (" + KIND[f.kind] + opts(f) + (f.required ? ", obrigatório" : "") + ") — " + said(f)).join("\n");
 }

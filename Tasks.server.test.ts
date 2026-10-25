@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import { AskAI, type Ask, type End } from "./AskAI.ts";
 import * as config from "./Config.ts";
 import { Memory } from "./Memory.ts";
-import { Chat } from "./Server.ts";
+import { Chat, TELL } from "./Server.ts";
 import * as Tasks from "./Tasks.ts";
 import { Tools } from "./Tools.ts";
 import * as View from "./View.ts";
@@ -284,4 +284,122 @@ test("the views' state carries the site's build (a page of another one reloads: 
   expect(typeof web).toBe("string");
   expect(web).toMatch(/^[0-9a-z]+\.[0-9a-z]+$/);
   expect((Chat.state(chat) as any).web).toBe(web);
+});
+
+// P1 (25/10/2026): the user's resolutions reach Unii on their own, in
+// one "[Pendências]" message once TELL.ms pass from the first
+test("resolutions without go: told on their own, together, once the wait ends; none left told meanwhile: nothing", async () => {
+  await idle();
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
+  Tasks.tasks_tell(s);
+  const was = TELL.ms;
+  TELL.ms = 60;
+  try {
+    const a = Tasks.task_new(s, { title: "Lote A", choices: ["Sim, reinicie", "Depois"] }, "main", Date.now()) as Tasks.Task;
+    const b = Tasks.task_new(s, { title: "Lote B" }, "main", Date.now()) as Tasks.Task;
+    const before = ASKED.length;
+    expect(await act({ $: "task", task: a.id, state: "done", answer: "Sim, reinicie" })).toEqual({});
+    expect(await act({ $: "task", task: b.id, state: "dropped" })).toEqual({});
+    expect(chat.tell).toBeDefined();
+    // no turn yet: only the notes
+    expect(ASKED.length).toBe(before);
+    await Bun.sleep(120);
+    await idle();
+    expect(ASKED.length).toBe(before + 1);
+    const turn = ASKED.at(-1)!.blocks.at(-1)!.text;
+    // the batch names them only (R4): their whole text is in the notes before it
+    expect(turn).toContain("[Pendências] O usuário resolveu, como dizem as notas acima: " + a.id + " concluída (Sim, reinicie); " + b.id + " descartada.");
+    expect(turn).not.toContain("“Lote A”");
+    const notes = [Memory.message(chat.mem, chat.mem.count - 3)!, Memory.message(chat.mem, chat.mem.count - 2)!].map((m) => m.kind + ": " + m.text);
+    expect(notes).toEqual(["note: Pendência " + a.id + " concluída pelo usuário: “Lote A”. Resposta: Sim, reinicie.", "note: Pendência " + b.id + " descartada pelo usuário: “Lote B”."]);
+    expect(Tasks.tasks_untold(s)).toEqual([]);
+    expect(chat.tell).toBeUndefined();
+    // told meanwhile ("Avisar o Unii agora"): the wait ends with nothing
+    const c = Tasks.task_new(s, { title: "Lote C" }, "main", Date.now()) as Tasks.Task;
+    await act({ $: "task", task: c.id, state: "done" });
+    expect(await act({ $: "tasks_tell" })).toEqual({});
+    await idle();
+    const told = ASKED.length;
+    await Bun.sleep(120);
+    await idle();
+    expect(ASKED.length).toBe(told);
+  } finally {
+    TELL.ms = was;
+  }
+});
+
+// R2 (GreenWasp): the wait is each chat's own, not the module's: one
+// chat's wait running holds no other's back
+test("tell_soon: each chat its own wait (one running doesn't stop another's)", () => {
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
+  const other = { ...chat, tell: undefined } as any;
+  try {
+    Chat.tell_soon(other);
+    expect(other.tell).toBeDefined();
+    expect(chat.tell).toBeUndefined();
+    Chat.tell_soon(chat);
+    expect(chat.tell).toBeDefined();
+    expect(chat.tell).not.toBe(other.tell);
+    // a second call while one waits: the same wait
+    const was = chat.tell;
+    Chat.tell_soon(chat);
+    expect(chat.tell).toBe(was);
+  } finally {
+    clearTimeout(other.tell);
+    clearTimeout(chat.tell);
+    chat.tell = undefined;
+  }
+});
+
+// R4: those left untold by a server before may have no note: told whole
+test("tell_soon for those left untold at start (noted false): the batch says them whole", async () => {
+  await idle();
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
+  Tasks.tasks_tell(s);
+  const was = TELL.ms;
+  TELL.ms = 30;
+  try {
+    const a = Tasks.task_new(s, { title: "Antes do reinício", choices: ["Sim", "Não"] }, "main", Date.now()) as Tasks.Task;
+    // resolved, as a server that stopped before its note and its batch
+    Tasks.task_resolve(s, a.id, "done", "Sim", null, Date.now());
+    const before = ASKED.length;
+    Chat.tell_soon(chat, false);
+    await Bun.sleep(80);
+    await idle();
+    expect(ASKED.length).toBe(before + 1);
+    expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain("[Pendências] Pendência " + a.id + " concluída pelo usuário: “Antes do reinício”. Resposta: Sim.");
+  } finally {
+    TELL.ms = was;
+    clearTimeout(chat.tell);
+    chat.tell = undefined;
+  }
+});
+
+// P6 (25/10/2026): on a task of Unii's, the user only asks after it or
+// tells Unii to close it
+test("a task of Unii's: dropping refused; Pode fechar closes it, said so; Cobrar agora is a message in its thread", async () => {
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
+  const u = Tasks.task_new(s, { title: "Acompanhar a leva", assignee: "unii", agent: "WiseDolphin", fields: [{ id: "x", label: "X", kind: "text" }] }, "main", Date.now()) as Tasks.Task;
+  expect(await act({ $: "task", task: u.id, state: "dropped" })).toEqual({ error: "A pendência " + u.id + " está com o Unii: use “Cobrar agora” ou “Pode fechar”. Nada foi alterado." });
+  const v = View.view_new();
+  v.tasks = Tasks.tasks_view(s, Date.now());
+  expect(View.view_act(v, { $: "Task", task: u.id, state: "dropped" })).toEqual([]);
+  expect(View.view_act(v, { $: "TaskSay", task: u.id, text: View.CHASE })).toEqual([{ $: "task_say", task: u.id, text: View.CHASE }]);
+  const before = ASKED.length;
+  expect(await act({ $: "task_say", task: u.id, text: View.CHASE })).toEqual({});
+  await idle();
+  expect(ASKED.length).toBe(before + 1);
+  expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain(View.CHASE);
+  // the required field doesn't hold Pode fechar back; no comment: "Pode fechar"
+  expect(await act({ $: "task", task: u.id, state: "done" })).toEqual({});
+  const t = Tasks.task_find(s, u.id)!;
+  expect(t.state).toBe("done");
+  expect(t.note).toBe(Tasks.CLOSE);
+  expect(last().text).toBe("Pendência " + u.id + " concluída pelo usuário: “Acompanhar a leva”. Comentário: “Pode fechar”.");
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
 });
