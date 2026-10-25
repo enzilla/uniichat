@@ -297,7 +297,9 @@ function fold(s: string): string {
 // "reprovo")
 const REJECTED = /reprovad|reprovei|\breprovo\b|rejeitad|rejeitei|\brejeito\b|\brejected\b|\bnao\s+aprov(?:ad|ou|ei|o\b)/;
 const APPROVED = /aprovad|aprovou|aprovei|\baprovo\b|\bapproved\b/;
-const WITH_NOTES = /^(?:aprovad[oa]s?\s*,?\s*(?:com|c\/)\s*(?:(?:\d+|uma|duas|tres)\s*)?(?:ressalva|observac)|aprov(?:ou|ei|o)\b(?:\s+(?:o|a|os|as)\s+[^.;:\n]{0,80}?)?\s*,?\s*(?:com|c\/)\s*(?:(?:\d+|uma|duas|tres)\s*)?(?:ressalva|observac)|approved with)/;
+// "com 5 baixas", a count then a severity, is "com 5 ressalvas baixas"
+// (MagicWhale, 25/10); without a count ("com média de…") it isn't
+const WITH_NOTES = /^(?:aprovad[oa]s?\s*,?\s*(?:com|c\/)\s*(?:(?:(?:\d+|uma|duas|tres)\s*)?(?:ressalva|observac)|(?:\d+|uma|duas|tres|quatro|cinco)\s+(?:baixa|media|alta))|aprov(?:ou|ei|o)\b(?:\s+(?:o|a|os|as)\s+[^.;:\n]{0,80}?)?\s*,?\s*(?:com|c\/)\s*(?:(?:(?:\d+|uma|duas|tres)\s*)?(?:ressalva|observac)|(?:\d+|uma|duas|tres|quatro|cinco)\s+(?:baixa|media|alta))|approved with)/;
 function verdict_said(s: string): Verdict | null {
   const r = s.search(REJECTED);
   const a = s.search(APPROVED);
@@ -398,8 +400,14 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     // first may qualify a fixed state ("**Ressalva baixa (corrigida em
     // abc1234)**\n   — mas o Safari falha", BraveTiger 3, 25/10)
     const after = lines[at + 1] ?? "";
-    const goes_on = after.trim() !== "" && !/^\s*(?:\d+[.)]|[-*•])\s/.test(after) && (item === null ? raw.trim() !== "" && !/^\s*(?:#|\*\*|__|>|\|)/.test(after) : /^\s/.test(after));
-    const next_open = goes_on && !raw.includes(":") && open_next(after);
+    // an item's line goes on unindented too (markdown's lazy continuation:
+    // "1. **Média** (corrigida)\nO iPhone não foi visto.", DarkGiraffe 3,
+    // 25/10), unless it opens a heading, a bold label, a quote or a table
+    const goes_on = after.trim() !== "" && !/^\s*(?:\d+[.)]|[-*•])\s/.test(after) && raw.trim() !== "" && ((item !== null && /^\s/.test(after)) || !/^\s*(?:#|\*\*|__|>|\|)/.test(after));
+    // with or without a ":" on this line: a fixed state followed by only
+    // references, then a line that says more ("…:\nfalta o iPhone",
+    // "(corrigida)\nO iPhone não foi visto.", DarkGiraffe 3, 25/10)
+    const next_open = goes_on && open_next(after);
     // an item that opens with its label in code, a severity or a note's
     // label with one, then ":" or a dash ("1. `MÉDIA`: a", "- `Ressalva 1
     // (média)`: b", SleepyMoose, 25/10), says it: the label is not cited
@@ -469,7 +477,10 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
         // `1. **MÉDIA** a` conta 1 média"), not notes
         within = "other";
         given = null;
-      } else if (/ressalva|observa[cç]/i.test(line)) {
+      } else if (/ressalva|observa[cç]/i.test(line) || (para === null && !lead && SEV_HEADING.test(fold(line)))) {
+        // a heading of notes by their severity alone ("**Baixas**",
+        // "**Baixas** (nenhuma nos relatos reais):", "### Médias",
+        // MagicWhale, 25/10) opens their list as "**Ressalvas baixas:**"
         within = "notes";
         given = own;
       } else if (/^\s*(\*\*|#|_)/.test(line) || /:\s*$/.test(line)) {
@@ -643,29 +654,16 @@ function refs_only(text: string): boolean {
 function open_after(text: string): boolean {
   return !refs_only(text);
 }
-// the line after a label that says fixed, without ":": its text is the
-// note's own, a description, unless it goes on the label's sentence (a
-// connector, punctuation or a lower case word first: "…**\n   — mas o
-// Safari falha", "…**\n   e continua quebrando"), read as open_after, or
-// says something left ("…**\nMas o Safari ainda falha.", "…**\nO teste
-// falha no iPhone.", BraveTiger 3, 25/10). Not on a folded text: its
-// case says if it goes on
-const PENDING_LEAD = String.raw`mas|porem|contudo|entretanto|todavia|no\s+entanto|embora|exceto|salvo|ainda|falta|faltam|pendente|todo|but|except|still|missing|pending`;
-const PENDING_WORD = String.raw`falta|faltam|faltando|falte|faltem|pendentes?|em\s+aberto|falha|falham|falhando|quebra|quebram|quebrando|persiste|persistem|regrediu|regride|regressao|continua|continuam|nao\s+(?:funciona|testad|verificad|validad|consegui)\w*|sem\s+(?:teste|testar|verificar|validac|ci\b|cobertura)\w*|parcia\w*|em\s+parte|incomplet\w*|todo\b|fixme|a\s+(?:revisar|verificar|confirmar|testar)|em\s+andamento|desconhecid\w*|fails?|failing|broken|missing|pending|untested|unverified`;
-const NEXT_PENDING = new RegExp(String.raw`^(?:` + PENDING_LEAD + String.raw`)\b|\b(?:` + PENDING_WORD + String.raw`)\b`);
-// after a label's ":", its text is the note's own (a description, as
-// "**Ressalva 1, resolvida:** quando o Unii edita…", CrispyWasp), open
-// only if it opens by going on the state with what is left: "mas falha
-// no Safari", "falta o iPhone", "e continua quebrando", "sem teste no
-// iPhone", "não testada" (MagicWhale 3, 25/10). On a folded text
-const COLON_PENDING = new RegExp(String.raw`^[\s,;.—–-]*(?:e\s+|and\s+)?(?:` + PENDING_LEAD + String.raw`|` + PENDING_WORD + String.raw`)\b`);
+// the line after a label that says fixed, that goes on its text (an
+// item's indented line, a paragraph's next line): read as what follows
+// the state on the label's line (open_after), whatever its case. Only
+// references keep the note fixed ("…**\n   e testada no iPhone", "…**\n
+// (bun 262/0)"); anything else keeps it open, a pending word or not
+// ("…**\nMas o Safari ainda falha.", "…:\nfalta o iPhone", "…**\nO
+// iPhone não foi visto.", DarkGiraffe 3, 25/10): no list of pending
+// words, the safe side (a description on the next line is a false alarm)
 function open_next(line: string): boolean {
-  const t = line.replace(/[*_`]/g, "").trim();
-  const f = fold(t);
-  if (/^(?:[\p{Ll}(\[,;.—–-])/u.test(t)) {
-    return open_after(f);
-  }
-  return NEXT_PENDING.test(f);
+  return open_after(fold(line.replace(/[*_`]/g, "").trim()));
 }
 function fixed(label: string): boolean {
   const m = FIXED_WORD.exec(label);
@@ -814,22 +812,31 @@ function note_state(f: string): "fixed" | "open" | "none" {
   // a parenthesis that opens the text, after the bold or the dash, says
   // the label's state too ("**Ressalva baixa** (corrigida em abc1234)")
   const paren = /^\([^()\n]*\)/.exec(text);
-  // after a colon, the text is the note's own, its description
-  // ("**Ressalva baixa (corrigida):** só o título mudava", "**Média**
-  // (corrigida em abc1234): texto"), open only if it opens going on the
-  // state with what's left (COLON_PENDING: "**Ressalva baixa
-  // (corrigida):** mas falha no Safari", MagicWhale 3, 25/10); without
-  // one, what qualifies the state keeps it open (open_after)
+  // after the state, with a colon or without one, only references keep
+  // it fixed (open_after): "**Ressalva baixa (corrigida):** ok",
+  // "**Média** (corrigida em abc1234): (item 2)" are; "**Média**
+  // (corrigida em abc1234): não foi testada no iPhone", "…: só no
+  // Chromium", "**Ressalva média (corrigida):** o Safari ainda falha"
+  // (DarkGiraffe 1-2, 25/10) and also a description ("…: só o título
+  // mudava", CrispyWasp) aren't: the safe side, a false alarm, never a
+  // note lost
   const colon = sep !== null && (sep[0] === ":" || /^[*_`]*\s*:/.test(f.slice(end + sep[0].length)));
   if (fixed(label)) {
-    return (colon ? !COLON_PENDING.test(text) : !open_after(dashed)) ? "fixed" : "open";
+    return !open_after(dashed) ? "fixed" : "open";
   }
   if (paren !== null && fixed(label + " " + paren[0])) {
-    const rest = text.slice(paren[0].length);
-    return (/^\s*:/.test(rest) ? !COLON_PENDING.test(rest.replace(/^\s*:/, "")) : !open_after(rest)) ? "fixed" : "open";
+    const rest = text.slice(paren[0].length).replace(/^\s*:/, "");
+    return !open_after(rest) ? "fixed" : "open";
   }
   if (named !== null && text !== "" && ALL_FIXED.test(text)) {
     return "fixed";
+  }
+  // a bold severity, then a dash or a space and its text that opens with
+  // its state ("**Média** — corrigida em abc1234", DarkGiraffe 4, 25/10):
+  // as a named note's, fixed only if what follows only refers; after a
+  // ":" ("**Baixa:** corrigida em abc") the text is the note's, it counts
+  if (named === null && !colon && sep !== null && /^(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/.test(text)) {
+    return refs_only(text) ? "fixed" : "open";
   }
   // a numbered or labeled note whose text opens with its state, with no
   // bold ("Ressalva 2 corrigida, falta o iPhone", "Ressalva 1 corrigida
@@ -907,13 +914,14 @@ function qualified_after(line: string): boolean {
   if (m !== null && !m[2].includes(":") && !/^\s*:/.test(m[3])) {
     return open_after(fold(m[3]));
   }
-  // after the label's ":" (label_of), its text is the note's own, open
-  // only if it opens going on the state with what's left (COLON_PENDING:
-  // "1. **Ressalva baixa (corrigida):** mas falha no Safari", MagicWhale
-  // 3, 25/10); not "…:** só o título mudava"
-  const body = fold(line.slice(0, 160)).replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").replace(/`[^`\n]*`/g, (s) => " ".repeat(s.length));
+  // after the label's ":" (label_of), the same: only references keep it
+  // fixed ("1. **Ressalva baixa (corrigida):** ok"); any other text, a
+  // pending one ("…:** mas falha no Safari", "…:** o Safari ainda
+  // falha") or a description ("…:** só o título mudava"), keeps it open
+  // (DarkGiraffe 1-2, 25/10)
+  const body = fold(line).replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").replace(/`[^`\n]*`/g, (s) => " ".repeat(s.length));
   const colon = body.indexOf(":");
-  return colon >= 0 && COLON_PENDING.test(body.slice(colon + 1).replace(/[*_`]/g, ""));
+  return colon >= 0 && open_after(body.slice(colon + 1));
 }
 
 // how many notes, and of what severity, a verdict's line says it has:
@@ -924,7 +932,9 @@ const COUNT_WORD: Record<string, number> = { um: 1, uma: 1, dois: 2, duas: 2, tr
 function notes_said(line: string): { n: number; sev: keyof Sevs } {
   const m = /(?:com|c\/|with)\s*(\d+|uma?|dois|duas|tres|quatro|cinco)?\s*(?:ressalvas?|observac(?:ao|oes)|notes?)([^.;(\n]{0,30})/.exec(line);
   if (m === null) {
-    return { n: 1, sev: "low" };
+    // "com 5 baixas" (WITH_NOTES): that many, of that severity
+    const s = /(?:com|c\/)\s*(\d+|uma|duas|tres|quatro|cinco)\s+(altas?|medias?|baixas?)\b/.exec(line);
+    return s === null ? { n: 1, sev: "low" } : { n: /^\d+$/.test(s[1]) ? Math.max(1, Number(s[1])) : COUNT_WORD[s[1]], sev: sev_in(s[2])! };
   }
   const n = m[1] === undefined ? 1 : /^\d+$/.test(m[1]) ? Math.max(1, Number(m[1])) : COUNT_WORD[m[1]];
   // the severity said right after it, "baixas", ", todas baixas"; not
@@ -994,6 +1004,12 @@ const SEV_FIRST = /^\s*(?:\d+[.)]|[-*•])\s+[*_`(\[]*\s*(?:[A-Z]\d*\s*[(:.—-]
 // an item that opens with a severity, said as it may go on ("- **Baixas e
 // informativas:**")
 const SEV_HEAD = /^\s*(?:\d+[.)]|[-*•])\s+[*_`(\[]*\s*(altas?|high|m[eé]dias?|medium|baixas?|low)(?![\p{L}\d])/iu;
+
+// a line that heads notes by their severity, plural, and only that:
+// "**Baixas**", "**Baixas:**", "### Médias", "**Baixas** (nenhuma nos
+// relatos reais):" (MagicWhale, 25/10); not "**Média**" alone nor "**Baixas
+// e informativas:**". On a folded line
+const SEV_HEADING = /^[\s>]*(?:#{1,6}\s+)?[*_]*\s*(?:altas|medias|baixas)\b[\s*_`]*(?:\([^)\n]*\))?[\s*_`]*:?[\s*_`]*$/;
 
 // the first severity a text says ("MÉDIA", "baixas", "high")
 function sev_in(s: string): keyof Sevs | null {

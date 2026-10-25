@@ -151,11 +151,13 @@ test("verdict_of: a note its label says fixed isn't open (WhitePelican 1, 25/10)
   const none = { verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false };
   // a paragraph labeled fixed: corrigida, resolvida, sanada
   expect(Pipeline.verdict_of("Veredito: aprovado.\n\nRessalva baixa (corrigida): ok")).toEqual(none);
-  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Ressalva média (resolvida):** o cache.")).toEqual(none);
-  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Observação alta sanada:** x")).toEqual(none);
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Ressalva média (resolvida):** em abc1234.")).toEqual(none);
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Observação alta sanada:** (item 2)")).toEqual(none);
+  // after its ':' any text but a reference keeps it open, the safe side (DarkGiraffe 1-2, 25/10)
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Ressalva média (resolvida):** o cache.").notes).toEqual({ high: 0, medium: 1, low: 0 });
   // an item labeled fixed: not counted; the open ones are
-  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n- **Ressalva média (resolvida):** x\n- Ressalva baixa: y").notes).toEqual({ high: 0, medium: 0, low: 1 });
-  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalvas:**\n1. Média (corrigida em abc1234): x\n2. Baixa: y").notes).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n- **Ressalva média (resolvida):** ok\n- Ressalva baixa: y").notes).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalvas:**\n1. Média (corrigida em abc1234): (PR #19)\n2. Baixa: y").notes).toEqual({ high: 0, medium: 0, low: 1 });
   // a heading on fixed notes: its items aren't open
   const both = "Veredito: aprovado com ressalvas.\n\n**Ressalvas corrigidas:**\n1. Média: x\n2. Baixa: y\n\n**Ressalvas:**\n1. Baixa: z";
   expect(Pipeline.verdict_of(both).notes).toEqual({ high: 0, medium: 0, low: 1 });
@@ -243,7 +245,7 @@ test("verdict_of: numbered notes, each with its severity, in lines or paragraphs
   expect(of("### Ressalva 1 — média\n- detalhe a\n- detalhe b\n\n### Ressalva 2 — baixa\nTexto.")).toEqual(both);
   expect(of("Ressalva A1 (alta): x\nObservação 2 — baixa: y")).toEqual({ high: 1, medium: 0, low: 1 });
   // one fixed: only the other
-  expect(of("**Ressalva 1 (média, corrigida):** x\n\n**Ressalva 2 (baixa):** y")).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(of("**Ressalva 1 (média, corrigida):** ok\n\n**Ressalva 2 (baixa):** y")).toEqual({ high: 0, medium: 0, low: 1 });
   expect(of("**Ressalva 1 (alta)** corrigida em abc1234.\n**Ressalva 2 (média):** y")).toEqual({ high: 0, medium: 1, low: 0 });
   // as items, as before
   expect(of("- Ressalva 1 (média): x\n- Ressalva 2 (baixa): y")).toEqual(both);
@@ -369,8 +371,12 @@ test("verdict_of: a fix is only said with references after it; any other word ke
   }
   // a label that says fixed: the same, from its fixed word to its parenthesis' end
   const l = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalvas:**\n1. " + s + "\n2. Baixa: y").notes;
-  for (const t of ["Média (corrigida em abc1234): x", "**Ressalva 1 (média, corrigida):** x", "**Ressalva média (resolvida):** x", "**Ressalva 1 (média, corrigida no PR #19):** x"]) {
+  for (const t of ["Média (corrigida em abc1234): ok", "**Ressalva 1 (média, corrigida):** (item 2)", "**Ressalva média (resolvida):** abc1234", "**Ressalva 1 (média, corrigida no PR #19):**"]) {
     expect(l(t)).toEqual(low);
+  }
+  // after ':' a text that isn't a reference keeps it open (DarkGiraffe 1-2, 25/10)
+  for (const t of ["Média (corrigida em abc1234): x", "**Ressalva 1 (média, corrigida):** x"]) {
+    expect(l(t)).toEqual(both);
   }
   for (const t of ["Média (corrigida só em parte): x", "Média (corrigida, iOS desconhecido): x", "**Ressalva 1 (média, corrigida em parte):** x", "**Ressalva média (corrigida; falta iOS):** x"]) {
     expect(l(t)).toEqual(both);
@@ -422,7 +428,7 @@ test("verdict_of: a label alone of one note and its severity heads its details, 
   // a sentence in bold that says "corrigida" isn't a label: the item is a note (LongCow's own report)
   expect(of("**Ressalvas, todas baixas:**\n1. **Anula nota.** x\n2. **Mantém aberta uma nota que já estava corrigida.** y\n3. **NeatWombat.** z")).toEqual({ high: 0, medium: 0, low: 3 });
   // a label that names the note still says it fixed
-  expect(of("**Ressalvas:**\n1. **MÉDIA (corrigida):** x\n2. Baixa: y")).toEqual(one);
+  expect(of("**Ressalvas:**\n1. **MÉDIA (corrigida):** ok\n2. Baixa: y")).toEqual(one);
 });
 
 test("verdict_of: 'corrigida' is a label's state only after a note's name, number and severity; a title that says more keeps the note (SweetSheep 1, 25/10)", () => {
@@ -440,8 +446,8 @@ test("verdict_of: 'corrigida' is a label's state only after a note's name, numbe
   expect(of("1. **Média: texto da nota corrigida** x")).toEqual({ high: 0, medium: 1, low: 1 });
   // the label's state: fixed
   for (const t of [
-    "1. **MÉDIA (corrigida):** x", "1. **Ressalva média (resolvida):** x", "1. **Ressalva 1 (média, corrigida):** x", "1. **A1 (ALTA, corrigida)**: x",
-    "1. Média — corrigida: x", "1. **Ressalva B2 — baixa, corrigida em abc1234**: x", "1. **Ressalvas 1 e 2 (baixas, corrigidas)**: x",
+    "1. **MÉDIA (corrigida):** ok", "1. **Ressalva média (resolvida):** (item 2)", "1. **Ressalva 1 (média, corrigida):** abc1234", "1. **A1 (ALTA, corrigida)**: PR #19",
+    "1. Média — corrigida: ok", "1. **Ressalva B2 — baixa, corrigida em abc1234**:", "1. **Ressalvas 1 e 2 (baixas, corrigidas)**: (bun 262/0)",
     "1. **MÉDIA (corrigida)**", "1. **A1 (ALTA, corrigida)** (commit abc1234)",
   ]) {
     expect([t, of(t)]).toEqual([t, one]);
@@ -479,7 +485,7 @@ const juicy_list = (t: string) => Pipeline.verdict_of(`**Veredito: APROVADO com 
 const juicy_para = (t: string) => Pipeline.verdict_of(`**Veredito: APROVADO com ressalvas.**\n\n${t}\n\n**Ressalva média: outra coisa aberta.**\n`).notes;
 
 test("verdict_of: a note's number may end in '.' or ')' before its fixed severity (JuicyTuna 1, 25/10)", () => {
-  for (const t of ["**1. Média corrigida.**: x", "**1. Média, corrigida.**", "**1) Média corrigida**: x", "**1 — Média corrigida** (abc1234)", "**A1. Alta, resolvida.**: x"]) {
+  for (const t of ["**1. Média corrigida.**: ok", "**1. Média, corrigida.**", "**1) Média corrigida**: (item 2)", "**1 — Média corrigida** (abc1234)", "**A1. Alta, resolvida.**: abc1234"]) {
     expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 1 }]);
   }
   // a title that says more still keeps it (SweetSheep 1)
@@ -497,11 +503,15 @@ test("verdict_of: what qualifies a fixed state after it keeps the note open (Jui
   ]) {
     expect([t, juicy_list(t), juicy_para(t)]).toEqual([t, { high: 0, medium: 0, low: 2 }, { high: 0, medium: 1, low: 1 }]);
   }
-  // text that only describes the note, or follows a ':', doesn't
+  // after ':' too: a description keeps it open, the safe side (DarkGiraffe 1-2, 25/10)
+  for (const t of ["**Ressalva baixa (corrigida em abc1234):** o parser lia mal", "**Ressalva baixa (corrigida):** só o título mudava", "**Ressalva baixa (corrigida):** o parser"]) {
+    expect([t, juicy_list(t), juicy_para(t)]).toEqual([t, { high: 0, medium: 0, low: 2 }, { high: 0, medium: 1, low: 1 }]);
+  }
+  // only references after it don't
   for (const t of [
     "**Ressalva baixa (corrigida em abc1234)**", "**Ressalva baixa** (corrigida em abc1234)", "### Ressalva baixa (corrigida em abc1234)",
-    "**Ressalva baixa (corrigida em abc1234)**.", "**Ressalva baixa (corrigida em abc1234):** o parser lia mal",
-    "**Ressalva 1 (média, corrigida):** só o título mudava", "**MÉDIA (corrigida):** o parser",
+    "**Ressalva baixa (corrigida em abc1234)**.", "**Ressalva baixa (corrigida em abc1234):** (item 2)",
+    "**Ressalva 1 (média, corrigida):** ok", "**MÉDIA (corrigida):** PR #19",
     // where it was tested, in a parenthesis, is a reference, as "corrigida e
     // testada no iPhone" (LongCow; BraveTiger 1, 25/10)
     "**Ressalva baixa** (corrigida em abc1234) (testada no iPhone)",
@@ -538,14 +548,14 @@ test("verdict_of: a title without severity under a list without one isn't a note
   expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Baixa:**\n\n**Baixas:**\n").notes).toEqual({ high: 0, medium: 0, low: 0 });
 });
 
-test("verdict_of: only a reference after its fixed label, or the note's text after ':', doesn't keep it open (BraveTiger 1, 25/10; GentleShrimp 1, 25/10)", () => {
+test("verdict_of: only a reference after its fixed label, with ':' or not, doesn't keep it open (BraveTiger 1, 25/10; GentleShrimp 1, 25/10; DarkGiraffe 1-2, 25/10)", () => {
   const fixed_list = { high: 0, medium: 0, low: 1 };
   const fixed_para = { high: 0, medium: 1, low: 0 };
   for (const label of ["**Ressalva baixa (corrigida em abc1234)**", "**Ressalva 1 (corrigida em abc1234)**", "**Média** (corrigida em abc1234)"]) {
     for (const after of [
-      " (item 2)", " (commit abc1234)", " (PR #19)", " [testada]", " e verificada", " e testada em def5678", ": o botão não aparecia",
+      " (item 2)", " (commit abc1234)", " (PR #19)", " [testada]", " e verificada", " e testada em def5678", ": (item 2)",
       " (bun 262/0)", " #19", " no PR #19", " e testada no iPhone", " (testada no Chromium)", ", CI verde", " — ver abc1234", " e depois testada",
-      " com teste", ".", " (ok)", ": o parser falhava, mas agora lê",
+      " com teste", ".", " (ok)", ": abc1234",
     ]) {
       const t = label + after;
       expect([t, juicy_list(t)]).toEqual([t, fixed_list]);
@@ -560,6 +570,9 @@ test("verdict_of: only a reference after its fixed label, or the note's text aft
     " ainda não verificada no iPhone", " apenas no Chromium", " mas sem teste", " exceto no Safari", " só no Safari", " falta teste no iPhone",
     " (a confirmar)", " (iOS desconhecido)", " (mas não no iOS)", " e outra coisa", " (testada em parte)", "; sem teste",
     " sem teste", " não testada no iPhone", " (testada no Chromium apenas)", " (parcialmente)", " — pendente o Safari", " e segue aberta",
+    // after ':', the same (DarkGiraffe 1-2, 25/10): a pending word anywhere or a description
+    ": o botão não aparecia", ": o parser falhava, mas agora lê", ": não testada no iPhone", ": não foi testada no iPhone",
+    ": só no Chromium", ": apenas no Chromium", ": o Safari ainda falha", ": no iOS ainda falha",
   ]) {
     const t = "**Ressalva baixa (corrigida em abc1234)**" + after;
     expect([t, juicy_list(t), juicy_para(t)]).toEqual([t, { high: 0, medium: 0, low: 2 }, { high: 0, medium: 1, low: 1 }]);
@@ -597,11 +610,14 @@ test("verdict_of: a paragraph labeled by a severity, its fix qualified, and a qu
     expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 2 }]);
   }
   expect(juicy_para("**Ressalva baixa (corrigida em abc1234)**\nMas o Safari ainda falha.")).toEqual({ high: 0, medium: 1, low: 1 });
-  // a next line that only describes it, or the text after a ':', doesn't
-  for (const t of ["**Ressalva baixa (corrigida em abc1234)**\n   O parser lia mal a lista.", "**Ressalva baixa (corrigida em abc1234):** o parser\n   mas o Safari falha"]) {
-    expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 1 }]);
+  // a next line that only describes it keeps it open too, the safe side, and
+  // so does one after a ':' (DarkGiraffe 3, 25/10)
+  for (const t of ["**Ressalva baixa (corrigida em abc1234)**\n   O parser lia mal a lista.", "**Ressalva baixa (corrigida em abc1234):** o parser\n   mas o Safari falha", "**Ressalva baixa (corrigida em abc1234):**\n   falta o iPhone"]) {
+    expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 2 }]);
   }
-  expect(juicy_para("**Ressalva baixa (corrigida em abc1234)**\nO parser lia mal a lista.")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(juicy_para("**Ressalva baixa (corrigida em abc1234)**\nO parser lia mal a lista.")).toEqual({ high: 0, medium: 1, low: 1 });
+  // a next line of references only doesn't
+  expect(juicy_list("**Ressalva baixa (corrigida em abc1234):**\n   (bun 262/0)")).toEqual({ high: 0, medium: 0, low: 1 });
 });
 
 test("verdict_of: 'aprovo' approves, 'reprovo' rejects (ProudCougar 2b: YellowHare, 25/10)", () => {
@@ -1027,12 +1043,11 @@ test("verdict_of: the next line goes on the fixed label's sentence or says somet
     const t = "**Ressalva baixa (corrigida em abc1234)**\n   " + next;
     expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 1 }]);
   }
-  // a sentence of its own is the note's text: open only if it says something left
-  for (const next of ["No entanto, falta o teste.", "Embora falte teste no iPhone.", "O problema persiste no iOS.", "TODO: o iPhone.", "Regrediu no Safari."]) {
+  // a sentence of its own keeps it open, whatever it says: no list of pending words (DarkGiraffe 3, 25/10)
+  for (const next of ["No entanto, falta o teste.", "Embora falte teste no iPhone.", "O problema persiste no iOS.", "TODO: o iPhone.", "Regrediu no Safari.", "O iPhone não foi visto.", "O parser lia mal a lista."]) {
     const t = "**Ressalva baixa (corrigida em abc1234)**\n" + next;
     expect([t, juicy_para(t)]).toEqual([t, { high: 0, medium: 1, low: 1 }]);
   }
-  expect(juicy_para("**Ressalva baixa (corrigida em abc1234)**\nO parser lia mal a lista.")).toEqual({ high: 0, medium: 1, low: 0 });
 });
 
 // MagicWhale (V17, 25/10): a paragraph, bold or not, numbered or not, as a list's item
@@ -1071,12 +1086,18 @@ test("verdict_of: a bold severity with its text, in a paragraph, counts as in a 
   expect(v17("**Média** (corrigida em abc1234)")).toEqual([0, 0, 0]);
 });
 
-test("verdict_of: after ':' the text is the note's own; open only if it goes on the state with what's left (MagicWhale 3, 25/10)", () => {
+test("verdict_of: after ':' only references keep a fixed note fixed; any other text keeps it open (MagicWhale 3; DarkGiraffe 1-2, 25/10)", () => {
   for (const t of ["**Ressalva baixa (corrigida):** mas falha no Safari", "**Média** (corrigida em abc1234): mas falha no Safari", "**Ressalva baixa (corrigida em abc1234)**: falta o iPhone", "**Ressalva baixa (corrigida):** e continua quebrando no Safari", "**Ressalva baixa (corrigida):** sem teste no iPhone", "**Ressalva baixa (corrigida):** não testada no Safari", "**Ressalva baixa (corrigida):** ainda falha no iOS", "Ressalva baixa (corrigida): mas falha no Safari"]) {
     expect([t, v17(t)]).toEqual([t, [1, 1, 1]]);
   }
-  // a description after ':' (a real report's, CrispyWasp: "2. **Ressalva 1, resolvida:** quando o Unii edita…")
-  for (const t of ["**Média** (corrigida em abc1234): texto", "**Ressalva baixa (corrigida em abc1234)**: texto", "**Ressalva baixa (corrigida):** só o título mudava", "**Ressalva 1, resolvida:** quando o Unii edita o detalhe, a resolução fica", "**Ressalva baixa (corrigida):** O título não renderizava."]) {
+  // a description after ':' too, the safe side: a false alarm, never a note
+  // lost (a real report's, CrispyWasp: "2. **Ressalva 1, resolvida:** quando
+  // o Unii edita…", now counted)
+  for (const t of ["**Média** (corrigida em abc1234): texto", "**Ressalva baixa (corrigida em abc1234)**: texto", "**Ressalva baixa (corrigida):** só o título mudava", "**Ressalva 1, resolvida:** quando o Unii edita o detalhe, a resolução fica", "**Ressalva baixa (corrigida):** O título não renderizava.", "**Ressalva média (corrigida):** o Safari ainda falha", "**Média** (corrigida em abc1234): não foi testada no iPhone", "**Média** (corrigida em abc1234): não testada no iPhone", "**Média** (corrigida em abc1234): só no Chromium", "**Média** (corrigida em abc1234): apenas no Chromium"]) {
+    expect([t, v17(t)]).toEqual([t, [1, 1, 1]]);
+  }
+  // only references after ':' don't
+  for (const t of ["**Média** (corrigida em abc1234): (item 2)", "**Ressalva baixa (corrigida):** ok", "**Ressalva baixa (corrigida em abc1234)**: PR #19", "**Ressalva 1, resolvida:** em abc1234 e testada no iPhone"]) {
     expect([t, v17(t)]).toEqual([t, [0, 0, 0]]);
   }
 });
@@ -1085,4 +1106,61 @@ test("verdict_of: references after a fixed label stay fixed in list, numbered an
   for (const t of ["Ressalva baixa corrigida em abc1234", "**Média** (corrigida em abc1234)", "**Ressalva baixa (corrigida)** (item 2)", "**Ressalva baixa (corrigida)** (PR #19)", "**Ressalva baixa (corrigida)** bun 262/0", "**Ressalva baixa (corrigida)** CI verde", "**Ressalva baixa (corrigida)** testada no iPhone", "**Ressalva baixa (corrigida)** e testada em def5678"]) {
     expect([t, v17(t)]).toEqual([t, [0, 0, 0]]);
   }
+});
+
+// DarkGiraffe (V18, 25/10): after "corrigida" or ":", only references keep a
+// note fixed; any other text keeps it open, the safe side; on the next line too
+test("verdict_of: after a fixed state, with ':' or not, only references keep the note fixed (DarkGiraffe 1-2, 25/10)", () => {
+  // 1: consistent among themselves, in list, numbered list and paragraph
+  for (const t of [
+    "**Média** (corrigida em abc1234): não testada no iPhone", "**Média** (corrigida em abc1234): não foi testada no iPhone",
+    "**Média** (corrigida em abc1234): só no Chromium", "**Média** (corrigida em abc1234): apenas no Chromium",
+    // 2: a pending word not at the start
+    "**Ressalva média (corrigida):** o Safari ainda falha", "**Média** (corrigida): no iOS ainda falha",
+  ]) {
+    expect([t, v17(t)]).toEqual([t, [1, 1, 1]]);
+    expect([t, v17_para(t)]).toEqual([t, { high: 0, medium: 1, low: 0 }]);
+  }
+});
+
+test("verdict_of: a fixed state's next line keeps it open unless it only refers, in list or paragraph (DarkGiraffe 3, 25/10)", () => {
+  for (const t of ["**Média** (corrigida em abc1234): texto\nmas o Safari falha", "**Média** (corrigida em abc1234):\nfalta o iPhone", "**Média** (corrigida)\nO iPhone não foi visto.", "**Ressalva média (corrigida em abc1234)**\nO iPhone não foi visto."]) {
+    expect([t, v17(t)]).toEqual([t, [1, 1, 1]]);
+  }
+  // an item's next line, indented or not (lazy continuation)
+  expect(Pipeline.verdict_of("Veredito: aprovado\n\n**Ressalvas:**\n1. **Média** (corrigida)\n   O iPhone não foi visto.\n").notes).toEqual({ high: 0, medium: 1, low: 0 });
+  // a next line of references only doesn't
+  for (const t of ["**Média** (corrigida em abc1234):\n(PR #19)", "**Média** (corrigida)\ne testada no iPhone"]) {
+    expect([t, v17(t)]).toEqual([t, [0, 0, 0]]);
+  }
+});
+
+test("verdict_of: a bold severity, a dash and its fixed state with only references is fixed (DarkGiraffe 4, 25/10)", () => {
+  for (const t of ["**Média** — corrigida em abc1234", "**Média** – corrigida em abc1234", "**Média** corrigida em abc1234", "**Média** — corrigida"]) {
+    expect([t, v17(t)]).toEqual([t, [0, 0, 0]]);
+  }
+  // qualified, open
+  for (const t of ["**Média** — corrigida em abc1234, falta teste", "**Média** — corrigida em parte"]) {
+    expect([t, v17(t)]).toEqual([t, [1, 1, 1]]);
+  }
+  // after ':' the text is the note's: it counts (the safe side)
+  expect(v17_para("**Média**: corrigida em abc1234")).toEqual({ high: 0, medium: 1, low: 0 });
+});
+
+test("verdict_of: notes under a heading of their severity alone count; 'com 5 baixas' says notes (MagicWhale's own report, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("**Veredito da Verificação 17: aprovado com 5 baixas, sem média nem alta.**\n\n**O que conferi**:\n- **Testes:** ok.\n\n" + s);
+  for (const head of ["**Baixas**", "**Baixas:**", "**Baixas** (nenhuma aparece nos relatos reais):", "### Baixas"]) {
+    const t = head + "\n1. a\n2. \"**Média** o botão some\", em parágrafo\n3. c\n\n**Não testado:** iPhone.\n";
+    expect([head, of(t)]).toEqual([head, { verdict: "approved_with_notes", notes: { high: 0, medium: 0, low: 3 }, noted: true }]);
+  }
+  // an item that opens with its own severity keeps it
+  expect(of("**Baixas**\n- a\n- **Média:** b\n").notes).toEqual({ high: 0, medium: 1, low: 1 });
+  expect(of("### Médias\n- a\n").notes).toEqual({ high: 0, medium: 1, low: 0 });
+  // none listed: the count the verdict says, of its severity
+  expect(of("Nada listado.\n").notes).toEqual({ high: 0, medium: 0, low: 5 });
+  expect(Pipeline.verdict_of("Veredito: aprovado com duas médias.\n").notes).toEqual({ high: 0, medium: 2, low: 0 });
+  // a severity without a count isn't a note ("com média de 3 testes")
+  expect(Pipeline.verdict_of("Veredito: aprovado com média de 3 testes.\n").verdict).toBe("approved");
+  // a severity alone, singular, isn't a heading
+  expect(v17_para("**Média**")).toEqual({ high: 0, medium: 0, low: 0 });
 });
