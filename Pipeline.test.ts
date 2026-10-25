@@ -99,6 +99,24 @@ test("verdict_of: 'Veredito: Aprovado sem ressalvas' lists none (NeatOrca B2, 25
   expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n- Baixa: x").noted).toBe(true);
 });
 
+test("verdict_of: 'sem ressalvas bloqueantes' or 'novas' qualifies which: its list counts (LunarWhale, 25/10)", () => {
+  const low4 = "\n\n**Observações baixas, que não bloqueiam:**\n1. Link de PR.\n2. Desempate.\n3. Lembrete.\n4. Inglês.";
+  const four = { verdict: "approved", notes: { high: 0, medium: 0, low: 4 }, noted: true };
+  // GoldenJay (#17), StormyPony (#13)
+  expect(Pipeline.verdict_of("**Veredito: APROVADO, sem ressalvas bloqueantes.** Verifiquei o #17." + low4)).toEqual(four);
+  expect(Pipeline.verdict_of("Veredito: aprovado, sem ressalvas novas." + low4)).toEqual(four);
+  expect(Pipeline.verdict_of("Veredito: aprovado sem ressalvas de merge.\n- Baixa: x").notes.low).toBe(1);
+  expect(Pipeline.verdict_of("Veredito: aprovado sem ressalvas altas ou médias.\n- Ressalva baixa: x").notes.low).toBe(1);
+  expect(Pipeline.verdict_of("Veredito: aprovado sem ressalvas impeditivas.\n- Ressalva baixa: x").notes.low).toBe(1);
+  // 'sem ressalvas novas' listing the old ones fixed, no severity said: none (RubyTrout, KindSloth)
+  expect(Pipeline.verdict_of("**Veredito: aprovado, sem ressalvas novas.**\n\n- **Ressalva 1:** corrigida.\n- **Ressalva 2:** corrigida.")).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false });
+  // unqualified: none, whatever its list
+  expect(Pipeline.verdict_of("Veredito: Aprovado sem ressalvas" + low4)).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false });
+  expect(Pipeline.verdict_of("Veredito: aprovado, sem ressalvas. Alta cobertura.\n- Ressalva baixa: x").noted).toBe(false);
+  expect(Pipeline.verdict_of("Veredito: aprovado sem ressalvas, alta confiança.\n- Ressalva baixa: x").noted).toBe(false);
+  expect(Pipeline.verdict_of("Veredito: aprovado sem nenhuma ressalva.\n- Ressalva baixa: x").noted).toBe(false);
+});
+
 test("verdict_of: an item under 'Não testado' never a note; '1. A: baixa' under the verdict's line one (HappyFish, 25/10)", () => {
   // a severity that's a word of the sentence, under another heading: none
   const untested = "**Veredito: aprovado com ressalvas.**\n\n**Ressalvas**\n1. Média: x.\n\n**Não testado:**\n- Baixa cobertura de iPhone.\n- Alta: carga real.";

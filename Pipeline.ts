@@ -352,6 +352,12 @@ export function verdict_line(report: string): { verdict: Verdict; at: number } |
   return null;
 }
 
+// "sem ressalvas" said of all of them: not followed by a word that
+// qualifies which ("bloqueantes", "altas", "novas", "de merge"); on a
+// folded text (lower case, no accents). A lookahead, not a lookbehind
+// (Safari before 16.4)
+const NO_NOTES = /sem\s+(?:nenhuma\s+)?(?:ressalvas|ressalva(?!s))(?![\s*_`]*(?:que\s+)?(?:bloquei|bloqueant|impeditiv|impeca|critic|alta|media|grave|serias?\b|nova|novo|adiciona|relevant|significativ|importante|maior|de\s+merge|para\s+(?:o\s+)?merge|ao\s+merge))/;
+
 // a report's verdict (verdict_line) and its notes by severity: the list
 // items after its verdict's line under a heading on notes, each by the
 // first severity it says, and the items that open with their severity
@@ -418,8 +424,10 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     notes[sev] += 1;
     noted = true;
   }
-  // approved without notes: none, and none listed (noted only for notes)
-  if (verdict === "approved" && /sem ressalvas/.test(top)) {
+  // approved without notes: none, and none listed (noted only for notes);
+  // not "sem ressalvas bloqueantes" or "sem ressalvas novas", that
+  // qualify which ones it hasn't: its list counts (GoldenJay, LunarWhale)
+  if (verdict === "approved" && NO_NOTES.test(top)) {
     return { verdict, notes: zero(), noted: false };
   }
   return { verdict, notes, noted };
