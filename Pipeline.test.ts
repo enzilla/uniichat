@@ -249,6 +249,35 @@ test("verdict_of: numbered notes, each with its severity, in lines or paragraphs
   expect(of("- Ressalva 1 (média): x\n- Ressalva 2 (baixa): y")).toEqual(both);
 });
 
+test("verdict_of: under a list given a severity, an item has its own only if it opens with it; an item's items are its details (LemonRobin 1: ProudCougar, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n" + s).notes;
+  // a severity the item only cites is the list's
+  expect(of("**Ressalvas baixas**\n1. O relato perde a média dos itens.\n2. Outra.")).toEqual({ high: 0, medium: 0, low: 2 });
+  // one it opens with, or its note label gives, is its own
+  expect(of("**Ressalvas baixas:**\n1. **MÉDIA:** a\n2. b")).toEqual({ high: 0, medium: 1, low: 1 });
+  expect(of("**Ressalvas baixas:**\n- **Ressalva média:** a\n- b")).toEqual({ high: 0, medium: 1, low: 1 });
+  // the items under a note are its details, even when they cite one (ProudCougar's (a) and (b))
+  expect(of("**Ressalvas baixas:**\n1. **Erro.** a\n2. **Pré-existentes:**\n   - (a) `Ressalva 1 (média)` e `Ressalva 2 (baixa)` dão 1 baixa.\n   - (b) YellowHare.")).toEqual({ high: 0, medium: 0, low: 2 });
+  expect(of("**Ressalvas:**\n1. Média: a\n   - detalhe com ressalva baixa\n2. Baixa: b")).toEqual({ high: 0, medium: 1, low: 1 });
+  // a note's label in code is cited, not said: none under another heading
+  expect(of("**O que conferi:**\n- `Ressalva 1 (média)` e `Ressalva 2 (baixa)` somam.\n\n**Ressalvas baixas:**\n1. a\n2. b")).toEqual({ high: 0, medium: 0, low: 2 });
+  // a ':' in code isn't the item's label: "corrigida" there doesn't fix it
+  expect(of("**Ressalvas baixas:**\n1. **Borda.** `**Ressalva 1 (média)** — corrigida` (sem `:`) anula.\n2. b")).toEqual({ high: 0, medium: 0, low: 2 });
+});
+
+test("verdict_of: a note whose text says it fixed isn't open, with ':' or not (LemonRobin 2, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n" + s + "\n**Ressalva 2 (baixa):** y").notes;
+  const low = { high: 0, medium: 0, low: 1 };
+  for (const fixed of ["**Ressalva 1 (média)** — corrigida em abc", "**Ressalva 1 (média):** corrigida em abc", "**Ressalva 1 (média)**: corrigida em abc", "Ressalva 1 (média) — corrigida em `abc`.", "Ressalva 1 (média): resolvida.", "**Ressalva média:** resolvida.", "- **Ressalva 1 (média):** corrigida em abc"]) {
+    expect(of(fixed)).toEqual(low);
+  }
+  // a text that says more, or not fixed, or "corrigido" of something else: open
+  const both = { high: 0, medium: 1, low: 1 };
+  for (const open of ["**Ressalva 1 (média):** corrigida só em parte", "**Ressalva 1 (média)** — o teste corrigido não cobre x", "**Ressalva 1 (média):** a correção foi corrigida, mas falta y", "**Ressalva 1 (média):** não corrigida", "**Ressalva 1 (média)** — não corrigida", "- **Ressalva 1 (média):** corrigida só em parte"]) {
+    expect(of(open)).toEqual(both);
+  }
+});
+
 test("verdict_of: 'aprovo' approves, 'reprovo' rejects (ProudCougar 2b: YellowHare, 25/10)", () => {
   expect(Pipeline.verdict_of("Veredito: aprovo o PR #18.")).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false });
   expect(Pipeline.verdict_of("Veredito: aprovo o PR morum/uniichat#18 com ressalvas.\n- Baixa: x").verdict).toBe("approved_with_notes");

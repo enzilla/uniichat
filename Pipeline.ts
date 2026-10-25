@@ -387,12 +387,18 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   let within: "none" | "notes" | "other" = "none";
   let given: keyof Sevs | null = null;
   let group: keyof Sevs | null = null;
+  // the last top-level item counted as a note: its items are its details
+  let counted = false;
   for (const line of report.split("\n").slice(found.at + 1)) {
     const item = /^(\s*)(\d+[.)]|[-*•])\s/.exec(line);
     const own = sev_in(line.slice(0, 160));
     if (item === null) {
       if (line.trim() !== "") {
         group = null;
+      }
+      // a line not indented ends the items: a new list's are no one's details
+      if (/^\S/.test(line)) {
+        counted = false;
       }
       // a paragraph labeled by a note and its severity, its text on the
       // same line ("**Ressalva baixa (…):** em verdict_of…", LunarWhale,
@@ -402,8 +408,11 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
       // WhitePelican) isn't open: none
       // a numbered note, its text on the line or on the next ("**Ressalva
       // 1 (média)**\nTexto", ProudCougar): one note too
+      // fixed by its label or by its text, with ":" or not ('**Ressalva 1
+      // (média)** — corrigida em abc' as '**Ressalva 1 (média):**
+      // corrigida em abc', LemonRobin): note_fixed
       const para = NOTE_PARA.exec(fold(line)) ?? NOTE_NUM.exec(fold(line));
-      if (para !== null && !fixed(para[0])) {
+      if (para !== null && !note_fixed(fold(line))) {
         notes[sev_in(para[1]) ?? "low"] += 1;
         noted = true;
       }
@@ -412,7 +421,7 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
       if (/ressalva|observa[cç]/i.test(line) && fixed(label_of(line))) {
         within = "other";
         given = null;
-      } else if (para !== null && /^[\s>#*_`]*(?:ressalva|observacao)\s/.test(fold(line))) {
+      } else if (para !== null && /^[\s>#*_]*(?:ressalva|observacao)\s/.test(fold(line))) {
         // one note, said on its line ("**Ressalva baixa:** um título
         // …", WarmParrot): its items are its details ("- `### …` com
         // `1. **MÉDIA** a` conta 1 média"), not notes
@@ -429,13 +438,16 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     }
     // an item its label says fixed ("- **Ressalva média (resolvida):**
     // …") isn't open: none, nor what it heads
-    if (fixed(label_of(line))) {
-      if (item[1].length < 2) {
+    // so is one labeled a note with its severity whose text says it fixed
+    // ("- **Ressalva 1 (média):** corrigida em abc"), as its paragraph
+    const top_level = item[1].length < 2;
+    if (fixed(label_of(line)) || note_fixed(fold(line).replace(/^\s*(?:\d+[.)]|[-*•])\s+/, ""))) {
+      if (top_level) {
         group = null;
+        counted = false;
       }
       continue;
     }
-    const top_level = item[1].length < 2;
     // an item that heads its own list by a severity ("- **Baixas e
     // informativas:**"), under no heading: its items count by it, it not
     // (under a heading on notes, an item is a note, its items its words)
@@ -456,14 +468,30 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     // cites notes ("- PolarKoala foi de aprovado para aprovado com
     // ressalvas, com 1 baixa", WhitePelican) isn't one: it must open
     // with its label ("- **Ressalva média:** …")
+    // under a list of notes, an item under one that counted is its
+    // detail ("2. **Pré-existentes:**\n   - **Ressalvas numeradas:**
+    // `Ressalva 1 (média)` …", ProudCougar): not a note
+    if (!top_level && within === "notes" && counted) {
+      continue;
+    }
     const cites = /ressalva|observa[cç]/i.test(line);
     const says = (within === "other" ? cites && NOTE_ITEM.test(fold(line)) : cites) || (top_level && within !== "other" && SEV_FIRST.test(line));
-    const sev = own ?? (within === "notes" ? given : null);
+    // under a list given a severity ("**Ressalvas baixas**"), an item
+    // has its own only if it opens with it ("1. MÉDIA: …", "- **Ressalva
+    // média:** …"); one it only cites ("… e perde a média dos itens",
+    // ProudCougar) is the list's
+    const sev = within === "notes" && given !== null ? sev_first(line) ?? given : own ?? (within === "notes" ? given : null);
     if (sev === null || !(says || (within === "notes" && top_level))) {
+      if (top_level) {
+        counted = false;
+      }
       continue;
     }
     notes[sev] += 1;
     noted = true;
+    if (top_level) {
+      counted = true;
+    }
   }
   // approved without notes: none, and none listed (noted only for notes);
   // not "sem ressalvas bloqueantes" or "sem ressalvas novas", that
@@ -498,6 +526,48 @@ function fixed(label: string): boolean {
 // 25/10). On a folded text, without its marks
 const ALL_FIXED = /^\s*(?:(?:todas?|tudo|ambas|as\s+(?:\d+|duas|tres|quatro|cinco))\s+(?:(?:as\s+)?ressalvas\s+)?)?(?:(?:ja\s+)?(?:foram|estao)\s+)?(?:corrigid|resolvid|sanad|fixed|resolved)\w*(?:\s*\([^)]*\)|\s+(?:em|no|na|pelo|pela|por|in)\s+[^,;]*)?\s*\.?\s*$/;
 
+// the start of a line labeled a note with its severity, to the severity:
+// "**Ressalva 1 (média", "### Ressalva 2 — baixa", "Observação alta";
+// on a folded line
+const NOTE_HEAD = /^[\s>#*_]*(?:ressalvas?|observac(?:ao|oes))\s+(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,—–-]?\s*)?(?:altas?|medias?|baixas?)\b/;
+
+// a line labeled a note with its severity is fixed, by its label
+// ("**Ressalva 1 (média, corrigida):** x") or by its text, that says
+// only that (ALL_FIXED: "corrigida em abc"), whether a ":" ends the
+// label or not: "**Ressalva 1 (média):** corrigida em abc", "**Ressalva
+// 1 (média)** — corrigida em abc", "Ressalva 1 (alta) corrigida." all
+// are (LemonRobin, 25/10); "…: corrigida só em parte" or "… — o teste
+// corrigido não cobre x" aren't. Its label ends after the severity and
+// its parenthesis, at its first ":", bold's end or dash. On a folded line
+function note_fixed(f: string): boolean {
+  const head = NOTE_HEAD.exec(f);
+  if (head === null) {
+    return false;
+  }
+  let i = head[0].length;
+  const close = f.slice(i).search(/[)\]]/);
+  const open = f.slice(i).search(/[(\[]/);
+  if (close >= 0 && (open < 0 || open > close)) {
+    i += close + 1;
+  }
+  const sep = /:|\*\*|__|\s[—–-]\s|^\s*[—–]/.exec(f.slice(i));
+  const end = sep === null ? i : i + sep.index;
+  const label = f.slice(0, end);
+  const text = f.slice(sep === null ? end : end + sep[0].length).replace(/[*_`]/g, "").replace(/^[\s:—–-]+/, "");
+  return fixed(label) || (text !== "" && ALL_FIXED.test(text));
+}
+
+// the severity an item opens with (SEV_FIRST: "1. MÉDIA: …"), or the one
+// its note label gives ("- **Ressalva média:** …", "- Ressalva 1 (alta): …")
+function sev_first(line: string): keyof Sevs | null {
+  const first = SEV_FIRST.exec(line);
+  if (first !== null) {
+    return sev_in(first[1]);
+  }
+  const head = NOTE_HEAD.exec(fold(line).replace(/^\s*(?:\d+[.)]|[-*•])\s+/, ""));
+  return head === null ? null : sev_in(head[0]);
+}
+
 // a line's label, folded: a heading's whole title ("### Ressalvas
 // corrigidas", "## Ressalvas (corrigidas)", WarmParrot), up to its ":"
 // if it has one, with what follows only if that says all fixed
@@ -518,7 +588,9 @@ function label_of(line: string): string {
     const rest = title.slice(colon + 1);
     return ALL_FIXED.test(rest) ? title.slice(0, colon) + " " + rest.trim() : title.slice(0, colon);
   }
-  const f = fold(line.slice(0, 160)).replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "");
+  // a code span is cited, its ":" not the label's ("2. **Borda.** `**Ressalva
+  // 1 (média)** — corrigida` (sem `:`)", LemonRobin)
+  const f = fold(line.slice(0, 160)).replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").replace(/`[^`\n]*`/g, "");
   // a quote opens it: what it says is cited, not its label
   // ("1. \"Ressalva baixa (corrigida): ok\" conta 1 nota", WhitePelican)
   if (/^[\s*_]*["“”'‘’«]/.test(f)) {
@@ -550,23 +622,24 @@ function notes_said(line: string): { n: number; sev: keyof Sevs } {
 }
 
 // an item that opens with a note's label: "- **Ressalva média:** …",
-// "1. Observação baixa — …"; on a folded line
-const NOTE_ITEM = /^\s*(?:\d+[.)]|[-*•])\s+[*_`]*\s*(?:ressalvas?|observac(?:ao|oes))\b/;
+// "1. Observação baixa — …"; not one in code ("- `Ressalva 1 (média)` e
+// `Ressalva 2` somam", LemonRobin): it cites it. On a folded line
+const NOTE_ITEM = /^\s*(?:\d+[.)]|[-*•])\s+[*_]*\s*(?:ressalvas?|observac(?:ao|oes))\b/;
 
 // a paragraph that opens with a label on a note with its severity, then
 // says it on the same line: "**Ressalva baixa (o problema…):** em…",
 // "Observação média: …", one numbered with its severity after its number
 // ("Ressalva 1 (média): …", "**Observação B2 — baixa:** …", ProudCougar);
 // not "**Ressalva 1:** corrigida" (no severity), nor "**Ressalvas
-// baixas:**" alone (a heading). On a folded line
-const NOTE_PARA = /^[\s>*_`]*(?:ressalvas?|observac(?:ao|oes))\s+(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,—–-]?\s*)?(altas?|medias?|baixas?)\b[^:\n]{0,160}:[*_`\s]*[^*_`\s]/;
+// baixas:**" alone (a heading), nor one in code (cited). On a folded line
+const NOTE_PARA = /^[\s>*_]*(?:ressalvas?|observac(?:ao|oes))\s+(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,—–-]?\s*)?(altas?|medias?|baixas?)\b[^:\n]{0,160}:[*_`\s]*[^*_`\s]/;
 
 // a line that labels one note by its number and severity, its text
 // maybe on the next line: "**Ressalva 1 (média)**", "### Ressalva 2 —
 // baixa"; to its ":" or its end, so a "(corrigida)" after its severity
 // is in it (fixed). Singular: "Ressalvas 1 e 2 (baixas)" heads a list.
 // On a folded line
-const NOTE_NUM = /^[\s>#*_`]*(?:ressalva|observacao)\s+(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,—–-]?\s*(alta|media|baixa)\b[^:\n]*/;
+const NOTE_NUM = /^[\s>#*_]*(?:ressalva|observacao)\s+(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,—–-]?\s*(alta|media|baixa)\b[^:\n]*/;
 
 // an item that opens with its severity: "1. MÉDIA: …", "- **A1 (ALTA,
 // bloqueante)** …", "1. A: baixa", "- Baixa — …"; not a word that
