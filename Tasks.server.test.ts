@@ -290,8 +290,8 @@ test("the views' state carries the site's build (a page of another one reloads: 
 // one "[Pendências]" message once TELL.ms pass from the first
 test("resolutions without go: told on their own, together, once the wait ends; none left told meanwhile: nothing", async () => {
   await idle();
-  clearTimeout(TELL.timer);
-  TELL.timer = undefined;
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
   Tasks.tasks_tell(s);
   const was = TELL.ms;
   TELL.ms = 60;
@@ -301,17 +301,20 @@ test("resolutions without go: told on their own, together, once the wait ends; n
     const before = ASKED.length;
     expect(await act({ $: "task", task: a.id, state: "done", answer: "Sim, reinicie" })).toEqual({});
     expect(await act({ $: "task", task: b.id, state: "dropped" })).toEqual({});
-    expect(TELL.timer).toBeDefined();
+    expect(chat.tell).toBeDefined();
     // no turn yet: only the notes
     expect(ASKED.length).toBe(before);
     await Bun.sleep(120);
     await idle();
     expect(ASKED.length).toBe(before + 1);
     const turn = ASKED.at(-1)!.blocks.at(-1)!.text;
-    expect(turn).toContain("[Pendências] Pendência " + a.id + " concluída pelo usuário: “Lote A”. Resposta: Sim, reinicie.");
-    expect(turn).toContain("Pendência " + b.id + " descartada pelo usuário");
+    // the batch names them only (R4): their whole text is in the notes before it
+    expect(turn).toContain("[Pendências] O usuário resolveu, como dizem as notas acima: " + a.id + " concluída (Sim, reinicie); " + b.id + " descartada.");
+    expect(turn).not.toContain("“Lote A”");
+    const notes = [Memory.message(chat.mem, chat.mem.count - 3)!, Memory.message(chat.mem, chat.mem.count - 2)!].map((m) => m.kind + ": " + m.text);
+    expect(notes).toEqual(["note: Pendência " + a.id + " concluída pelo usuário: “Lote A”. Resposta: Sim, reinicie.", "note: Pendência " + b.id + " descartada pelo usuário: “Lote B”."]);
     expect(Tasks.tasks_untold(s)).toEqual([]);
-    expect(TELL.timer).toBeUndefined();
+    expect(chat.tell).toBeUndefined();
     // told meanwhile ("Avisar o Unii agora"): the wait ends with nothing
     const c = Tasks.task_new(s, { title: "Lote C" }, "main", Date.now()) as Tasks.Task;
     await act({ $: "task", task: c.id, state: "done" });
@@ -326,11 +329,60 @@ test("resolutions without go: told on their own, together, once the wait ends; n
   }
 });
 
+// R2 (GreenWasp): the wait is each chat's own, not the module's: one
+// chat's wait running holds no other's back
+test("tell_soon: each chat its own wait (one running doesn't stop another's)", () => {
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
+  const other = { ...chat, tell: undefined } as any;
+  try {
+    Chat.tell_soon(other);
+    expect(other.tell).toBeDefined();
+    expect(chat.tell).toBeUndefined();
+    Chat.tell_soon(chat);
+    expect(chat.tell).toBeDefined();
+    expect(chat.tell).not.toBe(other.tell);
+    // a second call while one waits: the same wait
+    const was = chat.tell;
+    Chat.tell_soon(chat);
+    expect(chat.tell).toBe(was);
+  } finally {
+    clearTimeout(other.tell);
+    clearTimeout(chat.tell);
+    chat.tell = undefined;
+  }
+});
+
+// R4: those left untold by a server before may have no note: told whole
+test("tell_soon for those left untold at start (noted false): the batch says them whole", async () => {
+  await idle();
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
+  Tasks.tasks_tell(s);
+  const was = TELL.ms;
+  TELL.ms = 30;
+  try {
+    const a = Tasks.task_new(s, { title: "Antes do reinício", choices: ["Sim", "Não"] }, "main", Date.now()) as Tasks.Task;
+    // resolved, as a server that stopped before its note and its batch
+    Tasks.task_resolve(s, a.id, "done", "Sim", null, Date.now());
+    const before = ASKED.length;
+    Chat.tell_soon(chat, false);
+    await Bun.sleep(80);
+    await idle();
+    expect(ASKED.length).toBe(before + 1);
+    expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain("[Pendências] Pendência " + a.id + " concluída pelo usuário: “Antes do reinício”. Resposta: Sim.");
+  } finally {
+    TELL.ms = was;
+    clearTimeout(chat.tell);
+    chat.tell = undefined;
+  }
+});
+
 // P6 (25/10/2026): on a task of Unii's, the user only asks after it or
 // tells Unii to close it
 test("a task of Unii's: dropping refused; Pode fechar closes it, said so; Cobrar agora is a message in its thread", async () => {
-  clearTimeout(TELL.timer);
-  TELL.timer = undefined;
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
   const u = Tasks.task_new(s, { title: "Acompanhar a leva", assignee: "unii", agent: "WiseDolphin", fields: [{ id: "x", label: "X", kind: "text" }] }, "main", Date.now()) as Tasks.Task;
   expect(await act({ $: "task", task: u.id, state: "dropped" })).toEqual({ error: "A pendência " + u.id + " está com o Unii: use “Cobrar agora” ou “Pode fechar”. Nada foi alterado." });
   const v = View.view_new();
@@ -348,6 +400,6 @@ test("a task of Unii's: dropping refused; Pode fechar closes it, said so; Cobrar
   expect(t.state).toBe("done");
   expect(t.note).toBe(Tasks.CLOSE);
   expect(last().text).toBe("Pendência " + u.id + " concluída pelo usuário: “Acompanhar a leva”. Comentário: “Pode fechar”.");
-  clearTimeout(TELL.timer);
-  TELL.timer = undefined;
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
 });

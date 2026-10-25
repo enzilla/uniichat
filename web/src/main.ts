@@ -425,7 +425,8 @@ function task_act(el: HTMLElement, a: View.Act): View.Act {
 // "Aceitar as recomendadas" (View.task_accept): the recommended answers
 // put in the item's empty fields (seen as picked), the required still
 // empty marked as Concluir marks them; else the task concluded with them
-// and the recommended choice
+// and the recommended choice. With choices and none recommended, only
+// filled (kept as a draft), the choice left to the user (R1)
 function task_accept(el: HTMLElement, id: string): void {
   const item = el.closest<HTMLElement>("[data-task]");
   const t = v.tasks.find((x) => x.id === id);
@@ -449,6 +450,13 @@ function task_accept(el: HTMLElement, id: string): void {
     for (const input of set.querySelectorAll<HTMLInputElement>("input")) {
       input.checked = picks.includes(input.value);
     }
+  }
+  // choices, none recommended (View.task_accept_mode "fill"): the
+  // answers filled are kept as a draft, and the choice is the user's
+  if (View.task_accept_mode(t) === "fill") {
+    act({ $: "TaskDraft", task: id, fields: task_fields(item) });
+    toast(View.task_fill_said(t));
+    return;
   }
   if (task_missing(el)) {
     return;

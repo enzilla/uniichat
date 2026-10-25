@@ -514,6 +514,12 @@ export function view_act(v: View, act: Act): Client[] {
         v.notes.push("Pendência " + act.task + " não encontrada.");
         return [];
       }
+      // choices, none recommended (task_accept_mode "fill"): the fields'
+      // recommended answers kept as a draft, the choice left to the user
+      if (task_accept_mode(t) === "fill") {
+        v.notes.push(task_fill_said(t));
+        return view_act(v, { $: "TaskDraft", task: t.id, fields: task_accept_fill(t, act.fields ?? t.draft ?? {}) });
+      }
       const got = task_accept(t, act.fields ?? t.draft ?? {});
       if (typeof got === "string") {
         v.notes.push(got);
@@ -1000,15 +1006,38 @@ export function rec_is(rec: Values[string] | string | null | undefined, c: strin
   return rec === c || (Array.isArray(rec) && rec.includes(c));
 }
 
-// whether a task offers "Aceitar as recomendadas": open, the user's,
-// with something recommended, and, having choices, one of them
-export function task_accepts(t: Task): boolean {
+// what "Aceitar as recomendadas" does to a task: null, not offered (not
+// open, not the user's, nothing recommended); "conclude", concludes it
+// with the recommended (its choice, if it has choices, recommended);
+// "fill", only fills its fields' recommended answers, as a draft: it has
+// choices, none recommended, and fields recommended, so the user still
+// picks the choice that concludes it (R1, GreenWasp)
+export type AcceptMode = "conclude" | "fill";
+export function task_accept_mode(t: Task): AcceptMode | null {
   if (t.state !== "open" || t.assignee !== "user") {
-    return false;
+    return null;
   }
   const fields = (t.fields ?? []).some((f) => field_rec(f) !== undefined);
-  const choice = task_rec(t);
-  return t.choices.length === 0 ? fields : choice !== null;
+  if (t.choices.length === 0) {
+    return fields ? "conclude" : null;
+  }
+  return task_rec(t) !== null ? "conclude" : fields ? "fill" : null;
+}
+
+// whether a task offers "Aceitar as recomendadas" (task_accept_mode)
+export function task_accepts(t: Task): boolean {
+  return task_accept_mode(t) !== null;
+}
+
+// the button's words: one recommendation, many, or only filled
+export function task_accept_said(t: Task): string {
+  return task_accept_mode(t) === "fill" ? "Preencher as recomendadas" : t.fields.length === 0 ? "Aceitar a recomendada" : "Aceitar as recomendadas";
+}
+
+// what the user is told once the recommended answers are filled and a
+// choice is still theirs to pick
+export function task_fill_said(t: Task): string {
+  return "Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: " + t.choices.join(" | ") + ".";
 }
 
 // an answer not given: none, an empty text, no choice
@@ -1041,6 +1070,9 @@ export function task_accept(t: Task, values: Record<string, unknown>): { answer?
     return "A pendência " + t.id + " não tem recomendação para aceitar.";
   }
   const fields = task_accept_fill(t, values);
+  if (task_accept_mode(t) === "fill") {
+    return task_fill_said(t);
+  }
   const missing = (t.fields ?? []).filter((f) => f.required && value_empty(fields[f.id]));
   if (missing.length > 0) {
     return "Sem recomendação para " + (missing.length === 1 ? "o campo obrigatório " : "os campos obrigatórios ") + missing.map((f) => "“" + f.label + "”").join(", ") + ": responda " + (missing.length === 1 ? "esse campo" : "esses campos") + " e conclua.";

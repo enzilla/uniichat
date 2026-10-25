@@ -98,8 +98,13 @@ test("accept: who offers it; the given answers kept, the empty take the recommen
   expect(got).toEqual({ answer: "Pode seguir", fields: { aviso: "sempre, em lote de 60 s", dias: ["ter"], pt: "sim", obs: "nenhuma", prazo: "sexta" } });
   // the fill alone (main.ts puts it in the form even with a required one left): hom taken, prazo empty
   expect(View.task_accept_fill(t, { dias: [] })).toEqual({ aviso: "sempre, em lote de 60 s", dias: ["seg", "qua"], pt: "sim", obs: "nenhuma" });
-  // choices with none recommended: not offered (it would conclude without the choice)
-  expect(View.task_accepts(add(s, { title: "Sem", choices: ["a", "b"], fields: [{ id: "a", label: "A", kind: "yesno", recommend: "não" }] }))).toBe(false);
+  // choices with none recommended, fields recommended: offered, only to fill (R1)
+  const fill = add(s, { title: "Sem", choices: ["a", "b"], fields: [{ id: "a", label: "A", kind: "yesno", recommend: "não" }] });
+  expect(View.task_accepts(fill)).toBe(true);
+  expect(View.task_accept_mode(fill)).toBe("fill");
+  expect(View.task_accept_mode(t)).toBe("conclude");
+  // choices with nothing recommended at all: not offered
+  expect(View.task_accept_mode(add(s, { title: "Nada", choices: ["a", "b"], fields: [{ id: "a", label: "A", kind: "yesno" }] }))).toBeNull();
   // fields alone: offered
   expect(View.task_accepts(add(s, { title: "Só campos", fields: [{ id: "a", label: "A", kind: "yesno", recommend: "não" }] }))).toBe(true);
   // Unii's, or closed: not offered
@@ -143,7 +148,10 @@ test("web: the recommended choice framed and tagged (not twice if its text says 
   // Unii already asked, not replied: Cobrar disabled, said why
   T.task_say(s, u.id, View.CHASE, NOW);
   const asked = Html.desk_html(T.tasks_view(s, NOW), "", "", u.id, NOW).detail.join("");
-  expect(asked).toContain('<button class="chase" disabled title="O Unii ainda não respondeu à última mensagem"');
+  // why: visible text, the button's description (R3), not a title alone
+  expect(asked).toContain('<button class="chase" disabled aria-describedby="chase-why-desk-' + u.id + '"');
+  expect(asked).toContain('<span class="hint" id="chase-why-desk-' + u.id + '">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>');
+  expect(asked).not.toContain('title="O Unii ainda não respondeu');
   expect(asked).toContain(">Cobrado: aguardando o Unii</button>");
   // terminal
   const v = View.view_new();
@@ -151,4 +159,47 @@ test("web: the recommended choice framed and tagged (not twice if its text says 
   expect(View.tasks_md(v)).toContain("1) Pode seguir (recomendada)  2) Espere");
   expect(View.tasks_md(v)).toContain("1) Corrija antes (recomendado)  2) Mesclado");
   expect(View.tasks_md(v, tasks.find((x) => x.id === t.id)!)).toContain("1) seg (recomendada)  2) ter  3) qua (recomendada)");
+});
+
+test("accept with choices and only the fields recommended (R1): fills the fields as a draft, never concludes; the choice is the user's", () => {
+  const s = T.tasks_load(dir);
+  const t = add(s, { title: "Escolha", choices: ["Mesclar", "Esperar"], fields: [{ id: "pt", label: "Interface em português?", kind: "yesno", recommend: "sim" }, { id: "obs", label: "Obs", kind: "text", required: false, recommend: "nenhuma" }] });
+  expect(View.task_accept(t, {})).toBe("Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: Mesclar | Esperar.");
+  const v = View.view_new();
+  v.tasks = T.tasks_view(s, NOW);
+  // the act: a draft with the recommended (the given kept), not a Task done
+  expect(View.view_act(v, { $: "TaskAccept", task: t.id, fields: { obs: "minha" } })).toEqual([{ $: "task_draft", task: t.id, fields: { pt: "sim", obs: "minha" } }]);
+  expect(v.notes.at(-1)).toBe("Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: Mesclar | Esperar.");
+  // the server keeps it as the draft; the task stays open
+  T.task_draft(s, t.id, { pt: "sim", obs: "minha" });
+  const after = T.tasks_view(s, NOW).find((x) => x.id === t.id)!;
+  expect(after.state).toBe("open");
+  expect(after.draft).toEqual({ pt: "sim", obs: "minha" });
+  // the web: the button says it only fills
+  const html = Html.desk_html(T.tasks_view(s, NOW), "", "", t.id, NOW).detail.join("");
+  expect(html).toContain(">Preencher as recomendadas</button>");
+  expect(html).not.toContain(">Aceitar as recomendadas</button>");
+});
+
+test("contrast (R3): the accent of .rec-tag and .accept, and the disabled Cobrar's text, at least 4.5:1 on every fill they may sit on, light and dark (style.css)", () => {
+  const css = fs.readFileSync(import.meta.dir + "/web/style.css", "utf8");
+  const dark = css.indexOf("@media (prefers-color-scheme: dark)");
+  const vars = (part: string) => Object.fromEntries([...part.matchAll(/--([a-z]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  const light = vars(css.slice(0, dark));
+  const night = { ...light, ...vars(css.slice(dark, css.indexOf("}\n}", dark))) };
+  const hex = (x: Record<string, string>, k: string): string => (x[k].startsWith("var(--") ? hex(x, x[k].slice(6, -1)) : x[k]);
+  const lum = (h: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const ratio = (a: string, b: string) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+  expect(css).toMatch(/\.rec-tag \{[^}]*color: var\(--accent\)/);
+  expect(css).toMatch(/\.acts \.accept \{[^}]*color: var\(--accent\)/);
+  expect(css).toMatch(/\.chase:disabled \{[^}]*background: var\(--block\); color: var\(--mid\)/);
+  for (const x of [light, night]) {
+    for (const fill of ["paper", "lift", "block", "hover"]) {
+      expect(ratio(hex(x, "accent"), hex(x, fill))).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(ratio(hex(x, "mid"), hex(x, "block"))).toBeGreaterThanOrEqual(4.5);
+  }
 });

@@ -1296,6 +1296,15 @@ export function task_said(t: Task): string {
   return "Pendência " + t.id + " " + SAID[t.state] + " pelo usuário: “" + t.title + "”." + answer + (answers === "" ? "" : " Respostas: " + answers + ".") + note;
 }
 
+// resolutions already said by their notes (each without go has one), as
+// the batch's message names them (Server.ts Chat.tell_soon): each id,
+// how and its answer, not the title, the fields or the comment again
+// (R4: the batch half as long, the notes holding the whole)
+export function tasks_noted_said(tasks: Task[]): string {
+  const one = (t: Task) => t.id + " " + SAID[t.state] + (t.answer === null ? "" : " (" + t.answer + ")");
+  return "O usuário resolveu, como dizem as notas acima: " + tasks.map(one).join("; ") + ".";
+}
+
 // a task as a line of the tasks tool or the block (all: the list it's
 // of, for whom it waits and frees; none given, those not said)
 export function task_line(t: Task, now: number, whole = false, all: Task[] | null = null): string {

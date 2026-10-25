@@ -116,6 +116,7 @@ type Chat = {
   held  : Array<() => void> | null;
   limits: Record<string, Parked>;
   fell  : Map<string, string>;
+  tell  : ReturnType<typeof setTimeout> | undefined; // its wait to tell the user's resolutions (Chat.tell_soon), while one runs
 };
 
 // Constants
@@ -219,8 +220,9 @@ let bell: ReturnType<typeof setTimeout> | undefined;
 // the user's resolutions of the pending list reach Unii on their own
 // (P1, 25/10/2026): the first one untold starts a wait of TELL.ms, and
 // all those resolved by its end go in one "[Pendências]" message
-// (Chat.tell_soon); its timer, while one waits
-export const TELL: { ms: number; timer: ReturnType<typeof setTimeout> | undefined } = { ms: 60000, timer: undefined };
+// (Chat.tell_soon); the wait is each chat's own (chat.tell), so one
+// chat's never holds back, nor tells, another's
+export const TELL: { ms: number } = { ms: 60000 };
 
 export namespace Chat {
 
@@ -242,7 +244,7 @@ export namespace Chat {
     const chat: Chat = {
       mem, tools, pick, socks: new Set(), acts: new Map(), busy: false, call: null, model: "", check: null, asked: false, open: 0, sent: [], wait: [],
       halt: new AbortController(), live: [], calls: {}, eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null,
-      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(),
+      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(), tell: undefined,
     };
     // a saved pick (a profile, by name) not offered gave way: told once
     const shown = (p: Pick) => p.profile ?? Pick.label(p);
@@ -263,7 +265,7 @@ export namespace Chat {
     // resolutions left untold by the server before (it stopped while
     // one waited): told as any other
     if (Tasks.tasks_untold(Tasks.tasks_load(mem.dir)).some((t) => !t.freed)) {
-      Chat.tell_soon(chat);
+      Chat.tell_soon(chat, false);
     }
     Memory.pump(mem);
     Chat.progress(chat);
@@ -1320,28 +1322,33 @@ export namespace Chat {
   // the user's resolutions untold, told by one message once TELL.ms pass
   // from the first (those told meanwhile, by a turn or "Avisar o Unii
   // agora", not again; none left: nothing)
-  export function tell_soon(chat: Chat): void {
-    if (TELL.timer !== undefined) {
+  // (noted: each said by its note already; false for those left untold
+  // by a server before, whose note may not have been written)
+  export function tell_soon(chat: Chat, noted = true): void {
+    if (chat.tell !== undefined) {
       return;
     }
-    TELL.timer = setTimeout(() => {
-      TELL.timer = undefined;
+    chat.tell = setTimeout(() => {
+      chat.tell = undefined;
       const told = Tasks.tasks_tell(Tasks.tasks_load(chat.mem.dir));
       if (told.length > 0) {
-        Chat.resolved(chat, told, true);
+        Chat.resolved(chat, told, true, noted);
       }
     }, TELL.ms);
-    (TELL.timer as any).unref?.();
+    (chat.tell as any).unref?.();
   }
 
   // the user's resolutions of the pending list, in the chat: a note (Unii
   // sees them in its next turn's block, or by tell_soon's message), or,
   // go, told now by a "[Pendências]" message taken as a report is
-  export function resolved(chat: Chat, tasks: Tasks.Task[], go: boolean): void {
-    const text = tasks.map(Tasks.task_said).join("\n");
+  // (noted: each was said by its note already, as every resolution
+  // without go is: the message names them only, not their text again,
+  // R4: Tasks.tasks_noted_said)
+  export function resolved(chat: Chat, tasks: Tasks.Task[], go: boolean, noted = false): void {
     if (!go) {
-      return Chat.note(chat, text);
+      return Chat.note(chat, tasks.map(Tasks.task_said).join("\n"));
     }
+    const text = noted ? Tasks.tasks_noted_said(tasks) : tasks.map(Tasks.task_said).join("\n");
     Tasks.tasks_told(Tasks.tasks_load(chat.mem.dir), new Map(tasks.map((t) => [t.id, t.rev])));
     Chat.hold(chat, () => {
       Chat.take(chat, Chat.push(chat, null, "work", "[Pendências] " + text));

@@ -225,7 +225,7 @@ const FIELDS_SPEC = {
 };
 
 // the choice Unii recommends (Tasks.ts recommend_read)
-const RECOMMEND_SPEC = { type: "string", description: "The choice you recommend (one of choices): the user sees it marked and takes it, with the fields' recommendations, in one click (\"Aceitar as recomendadas\"). Give it rather than writing \"(recomendado)\" in the choice." };
+const RECOMMEND_SPEC = { type: "string", description: "The choice you recommend (one of choices): the user sees it marked and takes it, with the fields' recommendations, in one click (\"Aceitar as recomendadas\"). Give it rather than writing \"(recomendado)\" in the choice. With choices and none recommended, the click only fills the fields' recommendations and the user still picks the choice." };
 
 // where a task came from, and its source's link (Tasks.ts)
 const ORIGIN_SPEC = { type: "string", description: "Where it came from: chat, timer, agent:<name>, slack or github. By default, where this turn came from: a schedule's message (timer), a subagent's report (agent:<name>), else chat." };

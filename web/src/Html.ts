@@ -264,10 +264,14 @@ function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(),
   // a task of Unii's (P6): only "Cobrar agora" (a message in its thread,
   // a turn) and "Pode fechar" (done; Unii told as of any resolution)
   if (!mine) {
+    // already asked, not replied: Cobrar disabled, why said in the hint
+    // (visible, and the button's description), not in a title alone
     const asked = t.talk === "unii";
-    const chase = `<button class="chase"${asked ? ` disabled title="O Unii ainda não respondeu à última mensagem"` : ""}${act_html({ $: "TaskSay", task: t.id, text: View.CHASE })}>${asked ? "Cobrado: aguardando o Unii" : "Cobrar agora"}</button>`;
+    const why = `chase-why-${desk ? "desk" : "list"}-${esc(t.id)}`; // the aside and the Mesa may both hold it: an id each
+    const chase = `<button class="chase"${asked ? ` disabled aria-describedby="${why}"` : ""}${act_html({ $: "TaskSay", task: t.id, text: View.CHASE })}>${asked ? "Cobrado: aguardando o Unii" : "Cobrar agora"}</button>`;
     const close = task_button(t, "done", "Pode fechar", "close");
-    const acts = `<div class="acts unii"><span class="hint">Com o Unii. Você pode cobrar o andamento ou liberá-lo para fechar.</span>${chase}${close}</div>`;
+    const hint = asked ? `<span class="hint" id="${why}">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>` : `<span class="hint">Com o Unii. Você pode cobrar o andamento ou liberá-lo para fechar.</span>`;
+    const acts = `<div class="acts unii">${hint}${chase}${close}</div>`;
     return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${acts}${thread_html(t, desk)}</${tag}>`;
   }
   // a choice concludes the task at once (with the comment typed): said;
@@ -281,7 +285,7 @@ function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(),
   const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map(opt).join("")}</div>`;
   const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
   // "Aceitar as recomendadas" (View.task_accept): one act, key a
-  const accept = View.task_accepts(t) ? `<button class="accept" aria-keyshortcuts="a" title="Atalho: a"${act_html({ $: "TaskAccept", task: t.id })}>${t.fields.length === 0 ? "Aceitar a recomendada" : "Aceitar as recomendadas"}</button>` : "";
+  const accept = View.task_accepts(t) ? `<button class="accept" aria-keyshortcuts="a" title="Atalho: a"${act_html({ $: "TaskAccept", task: t.id })}>${esc(View.task_accept_said(t))}</button>` : "";
   const told = `<span class="hint told">O Unii é avisado sozinho em até 1 min.</span>`;
   const acts = `<div class="acts">${told}${accept}${task_button(t, "done", "Concluir", "done")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
   return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;

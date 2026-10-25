@@ -1217,6 +1217,10 @@ function view_act(v, act) {
         v.notes.push("Pendência " + act.task + " não encontrada.");
         return [];
       }
+      if (task_accept_mode(t) === "fill") {
+        v.notes.push(task_fill_said(t));
+        return view_act(v, { $: "TaskDraft", task: t.id, fields: task_accept_fill(t, act.fields ?? t.draft ?? {}) });
+      }
       const got = task_accept(t, act.fields ?? t.draft ?? {});
       if (typeof got === "string") {
         v.notes.push(got);
@@ -1434,13 +1438,24 @@ function field_rec(f) {
 function rec_is(rec, c) {
   return rec === c || Array.isArray(rec) && rec.includes(c);
 }
-function task_accepts(t) {
+function task_accept_mode(t) {
   if (t.state !== "open" || t.assignee !== "user") {
-    return false;
+    return null;
   }
   const fields = (t.fields ?? []).some((f) => field_rec(f) !== undefined);
-  const choice = task_rec(t);
-  return t.choices.length === 0 ? fields : choice !== null;
+  if (t.choices.length === 0) {
+    return fields ? "conclude" : null;
+  }
+  return task_rec(t) !== null ? "conclude" : fields ? "fill" : null;
+}
+function task_accepts(t) {
+  return task_accept_mode(t) !== null;
+}
+function task_accept_said(t) {
+  return task_accept_mode(t) === "fill" ? "Preencher as recomendadas" : t.fields.length === 0 ? "Aceitar a recomendada" : "Aceitar as recomendadas";
+}
+function task_fill_said(t) {
+  return "Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: " + t.choices.join(" | ") + ".";
 }
 function value_empty(x) {
   return x === undefined || x === null || typeof x === "string" && x.trim() === "" || Array.isArray(x) && x.length === 0;
@@ -1463,6 +1478,9 @@ function task_accept(t, values) {
     return "A pendência " + t.id + " não tem recomendação para aceitar.";
   }
   const fields = task_accept_fill(t, values);
+  if (task_accept_mode(t) === "fill") {
+    return task_fill_said(t);
+  }
   const missing = (t.fields ?? []).filter((f) => f.required && value_empty(fields[f.id]));
   if (missing.length > 0) {
     return "Sem recomendação para " + (missing.length === 1 ? "o campo obrigatório " : "os campos obrigatórios ") + missing.map((f) => "“" + f.label + "”").join(", ") + ": responda " + (missing.length === 1 ? "esse campo" : "esses campos") + " e conclua.";
@@ -1976,9 +1994,11 @@ function task_open_html(t, tasks, desk, now = Date.now(), turn = null) {
   const head = `${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
   if (!mine) {
     const asked = t.talk === "unii";
-    const chase = `<button class="chase"${asked ? ` disabled title="O Unii ainda não respondeu à última mensagem"` : ""}${act_html({ $: "TaskSay", task: t.id, text: CHASE })}>${asked ? "Cobrado: aguardando o Unii" : "Cobrar agora"}</button>`;
+    const why = `chase-why-${desk ? "desk" : "list"}-${esc(t.id)}`;
+    const chase = `<button class="chase"${asked ? ` disabled aria-describedby="${why}"` : ""}${act_html({ $: "TaskSay", task: t.id, text: CHASE })}>${asked ? "Cobrado: aguardando o Unii" : "Cobrar agora"}</button>`;
     const close = task_button(t, "done", "Pode fechar", "close");
-    const acts = `<div class="acts unii"><span class="hint">Com o Unii. Você pode cobrar o andamento ou liberá-lo para fechar.</span>${chase}${close}</div>`;
+    const hint = asked ? `<span class="hint" id="${why}">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>` : `<span class="hint">Com o Unii. Você pode cobrar o andamento ou liberá-lo para fechar.</span>`;
+    const acts = `<div class="acts unii">${hint}${chase}${close}</div>`;
     return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${acts}${thread_html(t, desk)}</${tag}>`;
   }
   const rec = task_rec(t);
@@ -1989,7 +2009,7 @@ function task_open_html(t, tasks, desk, now = Date.now(), turn = null) {
   };
   const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map(opt).join("")}</div>`;
   const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
-  const accept = task_accepts(t) ? `<button class="accept" aria-keyshortcuts="a" title="Atalho: a"${act_html({ $: "TaskAccept", task: t.id })}>${t.fields.length === 0 ? "Aceitar a recomendada" : "Aceitar as recomendadas"}</button>` : "";
+  const accept = task_accepts(t) ? `<button class="accept" aria-keyshortcuts="a" title="Atalho: a"${act_html({ $: "TaskAccept", task: t.id })}>${esc(task_accept_said(t))}</button>` : "";
   const told = `<span class="hint told">O Unii é avisado sozinho em até 1 min.</span>`;
   const acts = `<div class="acts">${told}${accept}${task_button(t, "done", "Concluir", "done")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
   return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
@@ -2692,6 +2712,11 @@ function task_accept2(el, id) {
     for (const input of set.querySelectorAll("input")) {
       input.checked = picks.includes(input.value);
     }
+  }
+  if (task_accept_mode(t) === "fill") {
+    act({ $: "TaskDraft", task: id, fields: task_fields(item) });
+    toast(task_fill_said(t));
+    return;
   }
   if (task_missing(el)) {
     return;
