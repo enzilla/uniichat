@@ -935,9 +935,9 @@ function blocked_ids(tasks) {
   const ids = by_id(tasks);
   return new Set(tasks.filter((t) => blocked(tasks, t, ids)).map((t) => t.id));
 }
-function frees(tasks, t) {
+function frees_ids(tasks, t) {
   if (t.state !== "open") {
-    return 0;
+    return [];
   }
   const seen = new Set([t.id]);
   const todo = [t.id];
@@ -950,7 +950,11 @@ function frees(tasks, t) {
       }
     }
   }
-  return seen.size - 1;
+  seen.delete(t.id);
+  return [...seen].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+}
+function frees(tasks, t) {
+  return frees_ids(tasks, t).length;
 }
 
 // View.ts
@@ -1211,6 +1215,28 @@ function view_act(v, act) {
 function task_waits_said(t, waits) {
   return "A pendência " + t.id + " aguarda " + waits.join(", ") + ": resolva " + (waits.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
 }
+function and_said(xs) {
+  return xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " e " + xs[xs.length - 1];
+}
+function whose_short(t) {
+  return t === undefined ? "" : t.assignee === "user" ? "sua" : t.assignee === "unii" ? "do Unii" : "de " + t.assignee;
+}
+function id_whose(tasks, id) {
+  const w = whose_short(tasks.find((u) => u.id === id));
+  return w === "" ? id : id + " (" + w + ")";
+}
+var FREES_SAID = 3;
+function task_frees_named(tasks, t) {
+  const ids = frees_ids(tasks, t);
+  if (ids.length === 0) {
+    return "";
+  }
+  return "libera " + (ids.length <= FREES_SAID ? and_said(ids) : ids.slice(0, FREES_SAID - 1).join(", ") + " e mais " + (ids.length - FREES_SAID + 1));
+}
+function task_waits_named(tasks, t) {
+  const ids = waits(tasks, t);
+  return ids.length === 0 ? "" : "aguarda " + and_said(ids.map((id) => id_whose(tasks, id)));
+}
 function turn_title(title, n) {
   return n > 0 ? "(" + n + ") " + title : title;
 }
@@ -1228,6 +1254,33 @@ function view_untold(v) {
 }
 function task_talk_said(t) {
   return t.talk === "unii" ? "aguardando o Unii" : t.talk === "user" ? "sua vez" : "";
+}
+function turn_of(v) {
+  return { busy: v.busy, wait: v.wait, limited: Object.hasOwn(v.limits ?? {}, TURN), up: v.up };
+}
+function task_talk_since(t) {
+  const mine = (t.thread ?? []).filter((m) => m.who === "user");
+  return mine.length === 0 ? t.changed : mine[mine.length - 1].at;
+}
+function turn_why(turn) {
+  if (!turn.up) {
+    return "sem conexão com o servidor";
+  }
+  if (turn.limited) {
+    return "esperando o limite de uso do serviço de IA";
+  }
+  if (!turn.busy) {
+    return "nenhum turno em andamento (o servidor pode ter reiniciado)";
+  }
+  return turn.wait === SUMMARIES ? "compactando mensagens antigas" : turn.wait !== "" ? "esperando a resposta de " + turn.wait : "turno em andamento";
+}
+function task_talk_wait_said(t, now, turn = null) {
+  if (t.state !== "open" || t.talk !== "unii") {
+    return task_talk_said(t);
+  }
+  const ms = Math.max(0, now - Date.parse(task_talk_since(t)));
+  const ago = Number.isFinite(ms) ? " há " + (ms < 3600000 ? Math.floor(ms / 60000) + " min" : hours_said(ms)) : "";
+  return "aguardando o Unii" + ago + (turn === null ? "" : " · " + turn_why(turn));
 }
 function assignee_said(t) {
   return t.assignee === "user" ? "com você" : t.assignee === "unii" ? "com o Unii" : "com " + t.assignee;
@@ -1299,9 +1352,22 @@ function desk_step(ids, at, by) {
   }
   return ids[Math.max(0, Math.min(ids.length - 1, k + by))];
 }
-function desk_next(tasks, sel, q = "", ref = "") {
-  const now = desk_list(tasks, q, ref).find((g) => g.group === "now");
-  return now?.tasks.find((t) => t.id !== sel) ?? null;
+function desk_next(tasks, sel, q = "", ref = "", order = []) {
+  const groups = desk_list(tasks, q, ref);
+  const now = (groups.find((g) => g.group === "now")?.tasks ?? []).filter((t) => t.id !== sel);
+  if (now.length === 0) {
+    return null;
+  }
+  const list = sel !== null && order.includes(sel) ? order : groups.flatMap((g) => g.tasks.map((t) => t.id));
+  const k = sel === null ? -1 : list.indexOf(sel);
+  if (k >= 0) {
+    const ahead = [...list.slice(k + 1), ...list.slice(0, k)];
+    const next = ahead.map((id) => now.find((t) => t.id === id)).find((t) => t !== undefined);
+    if (next !== undefined) {
+      return next;
+    }
+  }
+  return now[0];
 }
 var TASK_LATE = LATE;
 function task_late_said(t, blocked, now) {
@@ -1309,8 +1375,23 @@ function task_late_said(t, blocked, now) {
   if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > TASK_LATE)) {
     return "";
   }
-  const h = Math.floor(age / 3600000);
-  return "atrasada há " + (h < 48 ? h + " h" : Math.floor(h / 24) + " d");
+  return "atrasada há " + hours_said(age);
+}
+function hours_said(ms) {
+  const h = Math.floor(ms / 3600000);
+  return h < 48 ? h + " h" : Math.floor(h / 24) + " d";
+}
+var STALL = 3600000;
+function task_stalled_said(t, blocked, now) {
+  const age = now - Date.parse(t.moved ?? t.changed ?? t.made);
+  if (t.state !== "open" || t.assignee === "user" || blocked.has(t.id) || t.talk === "unii" || !(age >= STALL)) {
+    return { text: "", late: false };
+  }
+  return { text: "parada há " + hours_said(age), late: age > TASK_LATE };
+}
+function task_agent_said(t) {
+  const a = t.agent ?? null;
+  return a !== null ? "agente " + a : t.state === "open" && t.assignee !== "user" ? "sem agente" : "";
 }
 var LINKS = 8;
 function task_prs(t) {
@@ -1326,7 +1407,7 @@ function task_prs(t) {
 }
 function task_whole(t) {
   const named = typeof t?.assignee === "string" && t.assignee !== "";
-  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined) {
+  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined) {
     return t;
   }
   return {
@@ -1334,6 +1415,7 @@ function task_whole(t) {
     assignee: named ? t.assignee : t?.who === "unii" ? "unii" : "user",
     origin: t?.origin ?? null,
     origin_url: t?.origin_url ?? null,
+    agent: t?.agent ?? null,
     choices: Array.isArray(t?.choices) ? t.choices : [],
     after: Array.isArray(t?.after) ? t.after : [],
     fields: Array.isArray(t?.fields) ? t.fields : [],
@@ -1795,16 +1877,26 @@ function task_detail(t, desk) {
   const md = `<div class="md">${md_parse(t.detail).map(block_html).join("")}</div>`;
   return desk ? `<div class="detail">${md}</div>` : `<details><summary>Detalhes</summary>${md}</details>`;
 }
-function task_open_html(t, tasks, desk, now = Date.now()) {
-  const n = frees(tasks, t);
+function task_open_html(t, tasks, desk, now = Date.now(), turn = null) {
+  const frees = task_frees_named(tasks, t);
   const mine = t.assignee === "user";
-  const late = desk ? task_late_said(t, blocked_ids(tasks), now) : "";
-  const who = [...late === "" ? [] : [`<span class="late">${esc(late)}</span>`], ...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...mine ? [] : [esc(assignee_said(t))]];
+  const blocked = blocked_ids(tasks);
+  const late = desk ? task_late_said(t, blocked, now) : "";
+  const stalled = desk ? task_stalled_said(t, blocked, now) : { text: "", late: false };
+  const agent = task_agent_said(t);
+  const who = [
+    ...late === "" ? [] : [`<span class="late">${esc(late)}</span>`],
+    ...frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`],
+    ...mine ? [] : [esc(assignee_said(t))],
+    ...agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`],
+    ...stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`]
+  ];
   const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map((c) => task_button(t, "done", c, "opt", c)).join("")}</div>`;
   const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
   const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
   const acts = `<div class="acts">${go}${task_button(t, "done", "Concluir", mine ? "done" : "done quiet")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
-  const talk = task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`];
+  const said = desk ? task_talk_wait_said(t, now, turn) : task_talk_said(t);
+  const talk = said === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(said)}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
   const tag = desk ? "article" : "li";
   return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
@@ -1823,17 +1915,21 @@ function task_closed_html(t, desk) {
   return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
 }
 function task_waiting_html(t, tasks, desk) {
-  const whose = (u) => u === undefined || u.assignee === "user" ? "" : " (" + assignee_said(u) + ")";
   const waits2 = waits(tasks, t);
   const cls = esc(t.assignee === "user" ? "user" : "other " + t.assignee);
+  const frees = task_frees_named(tasks, t);
+  const agent = task_agent_said(t);
+  const tail = [
+    ...frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`],
+    ...t.assignee === "user" ? [] : [esc(assignee_said(t))],
+    ...agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]
+  ];
   if (!desk) {
-    const more = [`aguarda ${esc(waits2.map((id) => id + whose(tasks.find((u) => u.id === id))).join(", "))}`, ...t.assignee === "user" ? [] : [esc(assignee_said(t))]];
-    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, more)}</li>`;
+    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [esc(task_waits_named(tasks, t)), ...tail])}</li>`;
   }
-  const link = (id) => `<button class="goto" data-desk="${esc(id)}">${esc(id + whose(tasks.find((u) => u.id === id)))}</button>`;
-  const more = t.assignee === "user" ? [] : [esc(assignee_said(t))];
-  const why = `<p class="waits">Só pode ser resolvida depois de: ${waits2.map(link).join(", ")}.</p>`;
-  return `<article class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, more)}${why}${task_detail(t, true)}${thread_read_html(t)}</article>`;
+  const link = (id) => `<button class="goto" data-desk="${esc(id)}">${esc(id_whose(tasks, id))}</button>`;
+  const why = `<p class="waits">Só pode ser resolvida depois de: ${and_said(waits2.map(link))}.</p>`;
+  return `<article class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, tail)}${why}${task_prs_html(t)}${task_detail(t, true)}${thread_read_html(t)}</article>`;
 }
 function answers_html(t) {
   const fields = t.fields ?? [];
@@ -1851,22 +1947,28 @@ function thread_read_html(t) {
   const thread = t.thread ?? [];
   return thread.length === 0 ? "" : `<section class="thread read"><p class="sub">Conversa (${thread.length})</p><ol>${thread.map(thread_msg_html).join("")}</ol></section>`;
 }
-function desk_html(tasks, q, ref, sel, now = Date.now()) {
+function desk_html(tasks, q, ref, sel, now = Date.now(), opts = {}) {
   const groups = desk_list(tasks, q, ref);
   const ids = groups.flatMap((g) => g.tasks.map((t) => t.id));
   const blocked = blocked_ids(tasks);
+  const turn = opts.turn ?? null;
   const row = (t, g) => {
-    const n = g === "closed" || g === "waiting" ? 0 : frees(tasks, t);
+    const frees = g === "closed" ? "" : task_frees_named(tasks, t);
     const late = task_late_said(t, blocked, now);
+    const stalled = g === "others" ? task_stalled_said(t, blocked, now) : { text: "", late: false };
+    const agent = g === "closed" ? "" : task_agent_said(t);
+    const talk = g === "closed" ? "" : task_talk_wait_said(t, now, turn);
     const prs = g === "closed" ? [] : task_prs(t);
     const more = [
       ...late === "" ? [] : [`<span class="late">${esc(late)}</span>`],
       ...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`],
       ...prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`],
-      ...task_talk_said(t) === "" || g === "closed" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`],
+      ...talk === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(talk)}</span>`],
       ...t.assignee === "user" ? [] : [esc(assignee_said(t))],
-      ...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`],
-      ...g === "waiting" ? [esc("aguarda " + waits(tasks, t).join(", "))] : [],
+      ...agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`],
+      ...stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`],
+      ...frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`],
+      ...g === "waiting" ? [esc(task_waits_named(tasks, t))] : [],
       ...g === "closed" ? [t.state === "done" ? "concluída" : "descartada"] : []
     ];
     const on = t.id === sel;
@@ -1877,9 +1979,9 @@ function desk_html(tasks, q, ref, sel, now = Date.now()) {
   const none = tasks.length === 0 ? "Nenhuma pendência. Quando o Unii precisar de você, ela aparece aqui." : searched && ids.length === 0 ? "Nenhuma pendência na busca." : "";
   const t = sel === null ? undefined : tasks.find((x) => x.id === sel);
   const back = `<button class="back" type="button" data-desk-back aria-label="Voltar à lista">← Pendências</button>`;
-  const after = t === undefined || desk_group(t, blocked) === "now" ? null : desk_next(tasks, t.id, q, ref);
+  const after = t === undefined || desk_group(t, blocked) === "now" ? null : desk_next(tasks, t.id, q, ref, opts.order ?? []);
   const next = after === null ? [] : [`<button class="next" type="button" data-desk="${esc(after.id)}">Próxima: <span class="id">${esc(after.id)}</span> ${esc(after.title)} →</button>`];
-  const detail = t === undefined ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`] : [back, t.state !== "open" ? task_closed_html(t, true) : blocked.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true, now), ...next];
+  const detail = t === undefined ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`] : [back, t.state !== "open" ? task_closed_html(t, true) : blocked.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true, now, turn), ...next];
   return { list: none === "" ? list : [...list, `<p class="none">${esc(none)}</p>`], detail, ids };
 }
 function fields_html(t) {
@@ -2198,6 +2300,7 @@ var P = {
   ref: "",
   pane: false,
   ids: [],
+  order: { sel: null, ids: [] },
   web: null
 };
 var NARROW = matchMedia("(max-width: 760px)");
@@ -2640,6 +2743,7 @@ function desk_wire() {
   };
   $(".mode").onclick = () => desk_mode(P.mode === "desk" ? "chat" : "desk");
   document.addEventListener("keydown", desk_keys);
+  setInterval(() => P.mode === "desk" && document.visibilityState === "visible" && draw(false), 60000);
   NARROW.addEventListener("change", () => route());
 }
 function desk_mode(mode, push = true) {
@@ -2711,12 +2815,19 @@ function desk_draw() {
     P.pane = false;
     document.body.classList.remove("pane");
   }
-  if (DESKED === null || DESKED.of !== v.tasks || DESKED.q !== P.q || DESKED.ref !== P.ref || DESKED.sel !== P.sel) {
-    const ids = desk_list(v.tasks, P.q, P.ref).flatMap((g) => g.tasks.map((t) => t.id));
+  const turn = turn_of(v);
+  const said = JSON.stringify(turn) + Math.floor(Date.now() / 60000);
+  if (DESKED === null || DESKED.of !== v.tasks || DESKED.q !== P.q || DESKED.ref !== P.ref || DESKED.sel !== P.sel || DESKED.said !== said) {
+    const groups = desk_list(v.tasks, P.q, P.ref);
+    const ids = groups.flatMap((g) => g.tasks.map((t) => t.id));
     if (P.sel === null && !NARROW.matches && ids.length > 0) {
       P.sel = ids[0];
     }
-    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, html: desk_html(v.tasks, P.q, P.ref, P.sel) };
+    if (P.sel !== null && groups.some((g) => g.group === "now" && g.tasks.some((t) => t.id === P.sel))) {
+      P.order = { sel: P.sel, ids };
+    }
+    const order = P.order.sel === P.sel ? P.order.ids : [];
+    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, said, html: desk_html(v.tasks, P.q, P.ref, P.sel, Date.now(), { order, turn }) };
   }
   const { list, detail, ids } = DESKED.html;
   P.ids = ids;
@@ -2729,6 +2840,12 @@ function desk_draw() {
   const was = keep_take(pane);
   markup(pane, detail);
   keep_put(pane, was);
+  const live = $("#desk .live");
+  const shown = v.tasks.find((t) => t.id === P.sel);
+  const wait = shown !== undefined && shown.state === "open" && shown.talk === "unii" ? shown.id + ": " + task_talk_wait_said(shown, Date.now(), turn) : "";
+  if (live.textContent !== wait) {
+    live.textContent = wait;
+  }
   const untold = view_untold(v).length;
   $("#desk .tell").hidden = untold === 0;
   $("#desk .tell span").textContent = String(untold);

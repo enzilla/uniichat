@@ -78,8 +78,10 @@ const P = {
   // the Mesa's (desk): which screen shows (chat: the Conversa); chose:
   // the first state picked it (P19); sel: the task shown; q, ref: the
   // search and the project; pane: on a narrow screen, the task shown
-  // (else the list); ids: the list's order; web: the site's build the
-  // page first heard (another one reloads it)
+  // (else the list); ids: the list's order; order: the list's order the
+  // last time the task shown was in "now" (where "Próxima" goes on
+  // from, View.desk_next); web: the site's build the page first heard
+  // (another one reloads it)
   mode  : (sessionStorage.getItem(kept("mode")) === "desk" ? "desk" : "chat") as "chat" | "desk",
   chose : false,
   sel   : null as string | null,
@@ -87,6 +89,7 @@ const P = {
   ref   : "",
   pane  : false,
   ids   : [] as string[],
+  order : { sel: null as string | null, ids: [] as string[] },
   web   : null as string | null,
 };
 
@@ -647,6 +650,9 @@ function desk_wire(): void {
   };
   $(".mode").onclick = () => desk_mode(P.mode === "desk" ? "chat" : "desk");
   document.addEventListener("keydown", desk_keys);
+  // the Mesa drawn again each minute, so how long a task waited or
+  // stalled is said as time goes (desk_draw remakes only on a new minute)
+  setInterval(() => P.mode === "desk" && document.visibilityState === "visible" && draw(false), 60e3);
   NARROW.addEventListener("change", () => route());
 }
 
@@ -720,7 +726,7 @@ function desk_build(): void {
   }
 }
 
-let DESKED: { of: unknown; q: string; ref: string; sel: string | null; html: ReturnType<typeof Html.desk_html> } | null = null;
+let DESKED: { of: unknown; q: string; ref: string; sel: string | null; said: string; html: ReturnType<typeof Html.desk_html> } | null = null;
 function desk_draw(): void {
   const refs = View.desk_refs(v.tasks);
   if (P.ref !== "" && !refs.includes(P.ref)) {
@@ -733,12 +739,22 @@ function desk_draw(): void {
     P.pane = false;
     document.body.classList.remove("pane");
   }
-  if (DESKED === null || DESKED.of !== v.tasks || DESKED.q !== P.q || DESKED.ref !== P.ref || DESKED.sel !== P.sel) {
-    const ids = View.desk_list(v.tasks, P.q, P.ref).flatMap((g) => g.tasks.map((t) => t.id));
+  // Unii's turn (why a task waits for it) and the minute (how long)
+  // change what the Mesa says, as the list does
+  const turn = View.turn_of(v);
+  const said = JSON.stringify(turn) + Math.floor(Date.now() / 60e3);
+  if (DESKED === null || DESKED.of !== v.tasks || DESKED.q !== P.q || DESKED.ref !== P.ref || DESKED.sel !== P.sel || DESKED.said !== said) {
+    const groups = View.desk_list(v.tasks, P.q, P.ref);
+    const ids = groups.flatMap((g) => g.tasks.map((t) => t.id));
     if (P.sel === null && !NARROW.matches && ids.length > 0) {
       P.sel = ids[0];
     }
-    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, html: Html.desk_html(v.tasks, P.q, P.ref, P.sel) };
+    // the shown one still in "now": the order "Próxima" goes on from
+    if (P.sel !== null && groups.some((g) => g.group === "now" && g.tasks.some((t) => t.id === P.sel))) {
+      P.order = { sel: P.sel, ids };
+    }
+    const order = P.order.sel === P.sel ? P.order.ids : [];
+    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, said, html: Html.desk_html(v.tasks, P.q, P.ref, P.sel, Date.now(), { order, turn }) };
   }
   const { list, detail, ids } = DESKED.html;
   P.ids = ids;
@@ -751,6 +767,15 @@ function desk_draw(): void {
   const was = keep_take(pane);
   markup(pane, detail);
   keep_put(pane, was);
+  // the shown task waiting for Unii: its wait said, politely, to a
+  // screen reader, as the minute (or why it waits) changes; a region
+  // kept across draws, as the pane's article is remade
+  const live = $("#desk .live");
+  const shown = v.tasks.find((t) => t.id === P.sel);
+  const wait = shown !== undefined && shown.state === "open" && shown.talk === "unii" ? shown.id + ": " + View.task_talk_wait_said(shown, Date.now(), turn) : "";
+  if (live.textContent !== wait) {
+    live.textContent = wait;
+  }
   const untold = View.view_untold(v).length;
   $("#desk .tell").hidden = untold === 0;
   $("#desk .tell span").textContent = String(untold);

@@ -180,7 +180,7 @@ export function timers_html(timers: Timer.Timer[]): string[] {
 // time ago in it: an item's markup changes only as the task does, so
 // a comment being typed stays (main.ts markup). Those that wait for
 // others (TaskDeps.ts) apart, without acts, each with what it waits for;
-// those that free others marked "libera N". Its fields (each answered
+// those that free others marked with which ("libera P70"). Its fields (each answered
 // apart, a draft: main.ts sends each change) and its thread (a message
 // there starts a turn, not a conclusion), with whose turn it is. What
 // is typed and not sent (data-keep) survives the item made again
@@ -236,18 +236,31 @@ function task_detail(t: Task, desk: boolean): string {
 }
 
 // an open task free to resolve, an item of the list (desk: the Mesa's
-// detail, its detail and thread unfolded, an article)
-function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now()): string {
-  const n = Deps.frees(tasks, t);
+// detail, its detail and thread unfolded, an article: with how late it
+// is, how long it stalled, and, the user wrote in its thread, how long
+// it waits for Unii and why, by its turn). One of someone else's says
+// the agent at work on it ("sem agente": none)
+function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(), turn: View.Turn | null = null): string {
+  const frees = View.task_frees_named(tasks, t);
   const mine = t.assignee === "user";
-  const late = desk ? View.task_late_said(t, Deps.blocked_ids(tasks), now) : "";
-  const who = [...(late === "" ? [] : [`<span class="late">${esc(late)}</span>`]), ...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(mine ? [] : [esc(View.assignee_said(t))])];
+  const blocked = Deps.blocked_ids(tasks);
+  const late = desk ? View.task_late_said(t, blocked, now) : "";
+  const stalled = desk ? View.task_stalled_said(t, blocked, now) : { text: "", late: false };
+  const agent = View.task_agent_said(t);
+  const who = [
+    ...(late === "" ? [] : [`<span class="late">${esc(late)}</span>`]),
+    ...(frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`]),
+    ...(mine ? [] : [esc(View.assignee_said(t))]),
+    ...(agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]),
+    ...(stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`]),
+  ];
   // a choice concludes the task at once (with the comment typed): said
   const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map((c) => task_button(t, "done", c, "opt", c)).join("")}</div>`;
   const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
   const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
   const acts = `<div class="acts">${go}${task_button(t, "done", "Concluir", mine ? "done" : "done quiet")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
-  const talk = View.task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(View.task_talk_said(t))}</span>`];
+  const said = desk ? View.task_talk_wait_said(t, now, turn) : View.task_talk_said(t);
+  const talk = said === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(said)}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
   const tag = desk ? "article" : "li";
   return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
@@ -272,20 +285,25 @@ function task_closed_html(t: Task, desk: boolean): string {
   return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
 }
 
-// a task waiting for others: what it waits for (desk: each a link to it
-// on the Mesa, with its detail)
+// a task waiting for others: what it waits for, each with whose it is,
+// "aguarda P46 (sua) e P52 (do Unii)", and what it frees (desk: each a
+// link to it on the Mesa, with its pull requests and its detail)
 function task_waiting_html(t: Task, tasks: Task[], desk: boolean): string {
-  const whose = (u: Task | undefined) => (u === undefined || u.assignee === "user" ? "" : " (" + View.assignee_said(u) + ")");
   const waits = Deps.waits(tasks, t);
   const cls = esc(t.assignee === "user" ? "user" : "other " + t.assignee);
+  const frees = View.task_frees_named(tasks, t);
+  const agent = View.task_agent_said(t);
+  const tail = [
+    ...(frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`]),
+    ...(t.assignee === "user" ? [] : [esc(View.assignee_said(t))]),
+    ...(agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]),
+  ];
   if (!desk) {
-    const more = [`aguarda ${esc(waits.map((id) => id + whose(tasks.find((u) => u.id === id))).join(", "))}`, ...(t.assignee === "user" ? [] : [esc(View.assignee_said(t))])];
-    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, more)}</li>`;
+    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [esc(View.task_waits_named(tasks, t)), ...tail])}</li>`;
   }
-  const link = (id: string) => `<button class="goto" data-desk="${esc(id)}">${esc(id + whose(tasks.find((u) => u.id === id)))}</button>`;
-  const more = t.assignee === "user" ? [] : [esc(View.assignee_said(t))];
-  const why = `<p class="waits">Só pode ser resolvida depois de: ${waits.map(link).join(", ")}.</p>`;
-  return `<article class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, more)}${why}${task_detail(t, true)}${thread_read_html(t)}</article>`;
+  const link = (id: string) => `<button class="goto" data-desk="${esc(id)}">${esc(View.id_whose(tasks, id))}</button>`;
+  const why = `<p class="waits">Só pode ser resolvida depois de: ${View.and_said(waits.map(link))}.</p>`;
+  return `<article class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, tail)}${why}${task_prs_html(t)}${task_detail(t, true)}${thread_read_html(t)}</article>`;
 }
 
 // a task concluded with fields: each one's answer
@@ -314,23 +332,34 @@ function thread_read_html(t: Task): string {
 // the one shown, aria-selected); the detail at the right, the task
 // shown whole (task_open_html, task_closed_html, task_waiting_html) or,
 // none, a note (detail: its elements, the first ← back, for a phone).
-// ids: the rows' order (j and k go down and up them)
-export function desk_html(tasks: Task[], q: string, ref: string, sel: string | null, now = Date.now()): { list: string[]; detail: string[]; ids: string[] } {
+// ids: the rows' order (j and k go down and up them). order: the rows'
+// order while the one shown was still in "now" (main.ts keeps it), so
+// "Próxima" goes on from where it was (View.desk_next); turn: Unii's
+// turn as the view knows it (View.turn_of), to say why a task waits
+// for Unii
+export type DeskOpts = { order?: string[]; turn?: View.Turn | null };
+export function desk_html(tasks: Task[], q: string, ref: string, sel: string | null, now = Date.now(), opts: DeskOpts = {}): { list: string[]; detail: string[]; ids: string[] } {
   const groups = View.desk_list(tasks, q, ref);
   const ids = groups.flatMap((g) => g.tasks.map((t) => t.id));
   const blocked = Deps.blocked_ids(tasks);
+  const turn = opts.turn ?? null;
   const row = (t: Task, g: View.Desk) => {
-    const n = g === "closed" || g === "waiting" ? 0 : Deps.frees(tasks, t);
+    const frees = g === "closed" ? "" : View.task_frees_named(tasks, t);
     const late = View.task_late_said(t, blocked, now);
+    const stalled = g === "others" ? View.task_stalled_said(t, blocked, now) : { text: "", late: false };
+    const agent = g === "closed" ? "" : View.task_agent_said(t);
+    const talk = g === "closed" ? "" : View.task_talk_wait_said(t, now, turn);
     const prs = g === "closed" ? [] : View.task_prs(t);
     const more = [
       ...(late === "" ? [] : [`<span class="late">${esc(late)}</span>`]),
       ...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]),
       ...(prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`]),
-      ...(View.task_talk_said(t) === "" || g === "closed" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(View.task_talk_said(t))}</span>`]),
+      ...(talk === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(talk)}</span>`]),
       ...(t.assignee === "user" ? [] : [esc(View.assignee_said(t))]),
-      ...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]),
-      ...(g === "waiting" ? [esc("aguarda " + Deps.waits(tasks, t).join(", "))] : []),
+      ...(agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]),
+      ...(stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`]),
+      ...(frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`]),
+      ...(g === "waiting" ? [esc(View.task_waits_named(tasks, t))] : []),
       ...(g === "closed" ? [t.state === "done" ? "concluída" : "descartada"] : []),
     ];
     const on = t.id === sel;
@@ -342,11 +371,11 @@ export function desk_html(tasks: Task[], q: string, ref: string, sel: string | n
   const t = sel === null ? undefined : tasks.find((x) => x.id === sel);
   const back = `<button class="back" type="button" data-desk-back aria-label="Voltar à lista">← Pendências</button>`;
   // resolved, or waiting: the next one of "now", a click away
-  const after = t === undefined || View.desk_group(t, blocked) === "now" ? null : View.desk_next(tasks, t.id, q, ref);
+  const after = t === undefined || View.desk_group(t, blocked) === "now" ? null : View.desk_next(tasks, t.id, q, ref, opts.order ?? []);
   const next = after === null ? [] : [`<button class="next" type="button" data-desk="${esc(after.id)}">Próxima: <span class="id">${esc(after.id)}</span> ${esc(after.title)} →</button>`];
   const detail = t === undefined
     ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`]
-    : [back, t.state !== "open" ? task_closed_html(t, true) : blocked.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true, now), ...next];
+    : [back, t.state !== "open" ? task_closed_html(t, true) : blocked.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true, now, turn), ...next];
   return { list: none === "" ? list : [...list, `<p class="none">${esc(none)}</p>`], detail, ids };
 }
 

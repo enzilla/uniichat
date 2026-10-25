@@ -154,15 +154,15 @@ test("views: footer and /p leave the waiting out but their count; /p aguardando 
   expect(View.view_act(v, { $: "Task", task: "P1", state: "done" })).toEqual([{ $: "task", task: "P1", state: "done" }]);
 });
 
-test("web: the waiting apart, without acts, escaped; libera N marked", () => {
+test("web: the waiting apart, without acts, escaped; what it frees named", () => {
   const s = T.tasks_load(dir);
   add(s, { title: "<b>Token</b>" });
   add(s, { title: "<img src=x onerror=alert(1)>", after: ["P1"] });
   const html = Html.tasks_html(T.tasks_view(s, NOW));
   expect(html.open.length).toBe(1);
-  expect(html.open[0]).toContain('<span class="frees">libera 1</span>');
+  expect(html.open[0]).toContain('<span class="frees">libera P2</span>');
   expect(html.waiting.length).toBe(1);
-  expect(html.waiting[0]).toContain("aguarda P1");
+  expect(html.waiting[0]).toContain("aguarda P1 (sua)");
   expect(html.waiting[0]).not.toContain("<img");
   expect(html.waiting[0]).not.toContain("<button");
   expect(View.tasks_waiting_said(1)).toBe("+1 aguardando outras pendências");

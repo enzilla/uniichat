@@ -87,6 +87,7 @@ export type Task = {
   assignee   : Assignee;
   origin     : Origin | null;
   origin_url : string | null;
+  agent      : string | null; // the agent at work on it, by name (a task of Unii's: who follows it up now)
   by      : string;
   choices : string[];
   answer  : string | null;
@@ -94,6 +95,7 @@ export type Task = {
   ref     : string | null;
   made    : string;
   changed : string;
+  moved   : string; // its last change but linking an agent alone (how long it stalled: View.task_stalled_said, vigia.ts)
   closed  : string | null;
   told    : boolean;
   rev     : number;
@@ -137,6 +139,7 @@ export type Edit = {
   assignee?   : unknown;
   origin?     : unknown;
   origin_url? : unknown;
+  agent?      : unknown;
   choices? : unknown;
   ref?     : unknown;
   state?   : unknown;
@@ -162,6 +165,10 @@ export const REF     = 100;
 export const ASSIGNEES = ["user", "unii"];
 const ORIGIN = /^(chat|timer|slack|github|agent:[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$/;
 export const ORIGIN_URL = 500;
+
+// an agent's name, as a task links it (agent): its technical name
+// (WiseDolphin) or its label (uniichat-ux-impl)
+const AGENT = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
 // the most fields of a task, a label's length, a text answer's (NOTE);
 // a thread message's length, the most a thread keeps, the most views get
@@ -275,6 +282,7 @@ export function task_read(x: unknown, now: number): Task | null {
     assignee   : assignee_read(o.assignee) ?? assignee_read(o.who) ?? "user",
     origin     : origin_read(o.origin),
     origin_url : origin_read(o.origin) === null ? null : url_read(o.origin_url),
+    agent      : agent_read(o.agent),
     by      : text(o.by, 40, text_line) || "main",
     choices,
     answer  : state === "done" && choices.includes(answer) ? answer : null,
@@ -282,6 +290,7 @@ export function task_read(x: unknown, now: number): Task | null {
     ref     : ref === "" ? null : ref,
     made,
     changed,
+    moved   : time_read(o.moved, changed),
     closed  : state === "open" ? null : time_read(o.closed, changed),
     told    : o.told !== false,
     rev     : count_read(o.rev),
@@ -311,6 +320,12 @@ export function origin_read(x: unknown): Origin | null {
   return ORIGIN.test(as) ? as : null;
 }
 
+// an agent's name as given (AGENT, spaces around); else null
+export function agent_read(x: unknown): string | null {
+  const a = typeof x === "string" ? x.trim() : "";
+  return AGENT.test(a) ? a : null;
+}
+
 // a source's link as given: http(s), no spaces, quotes, angle brackets
 // or control characters, at most ORIGIN_URL; else null
 export function url_read(x: unknown): string | null {
@@ -331,11 +346,11 @@ export function turn_origin(origins: (string | undefined)[]): Origin {
   return origins.length === 0 || origins.some((o) => o === undefined) ? "chat" : origin_read(origins[0]) ?? "chat";
 }
 
-// a task's assignee, origin and link as given by a tool (assignee, or the
+// a task's assignee, origin, link and agent as given by a tool (assignee, or the
 // older who; origin_url only with an origin, its own or the task's); each
 // absent undefined; else why not
-function whose_args(args: Edit, origin: Origin | null): { assignee?: Assignee; origin?: Origin; origin_url?: string | null } | string {
-  const out: { assignee?: Assignee; origin?: Origin; origin_url?: string | null } = {};
+function whose_args(args: Edit, origin: Origin | null): { assignee?: Assignee; origin?: Origin; origin_url?: string | null; agent?: string | null } | string {
+  const out: { assignee?: Assignee; origin?: Origin; origin_url?: string | null; agent?: string | null } = {};
   const given = (x: unknown) => x !== undefined && x !== null;
   if (given(args.assignee) || given(args.who)) {
     const a = given(args.assignee) ? assignee_read(args.assignee) : null;
@@ -365,6 +380,14 @@ function whose_args(args: Edit, origin: Origin | null): { assignee?: Assignee; o
       return "origin_url needs an origin.";
     }
     out.origin_url = u;
+  }
+  if (args.agent !== undefined) {
+    const raw = args.agent === null ? "" : String(args.agent).trim();
+    const a = raw === "" ? null : agent_read(raw);
+    if (raw !== "" && a === null) {
+      return "agent is an agent's name: letters, digits, . _ - (at most 64).";
+    }
+    out.agent = a;
   }
   return out;
 }
@@ -778,8 +801,8 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   const at = new Date(now).toISOString();
   const ref = text_line(args.ref, REF);
   const task: Task = {
-    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, by, choices, answer: null, note: null,
-    ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
+    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, agent: whose.agent ?? null, by, choices, answer: null, note: null,
+    ref: ref === "" ? null : ref, made: at, changed: at, moved: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
     fields: fields.fields, draft: {}, answers: null, thread: [], talk: null,
   };
   s.next += 1;
@@ -791,15 +814,16 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
 // Inbox
 // -----
 // A task from outside (Server.ts /api/inbox: a script with the inbox
-// token, as the Slack sorter), always the user's, from slack or github,
-// keyed by its ref (one conversation, "slack:D0123"): an open one of
+// token, as the Slack sorter or the stalled tasks' watch, vigia.ts),
+// always the user's, from slack, github or timer (a script run by a
+// systemd timer), keyed by its ref (one conversation, "slack:D0123"): an open one of
 // that ref and origin gets the new text appended (its oldest lines
 // dropped past DETAIL), the newest title and link; else a new one (by
 // "inbox"). Nothing is told to Unii and no turn starts: the user
 // decides, and their resolution reaches Unii as any other. Only the keys
 // below are taken; any other, or a wrong value, is refused, said why
 
-export const INBOX_ORIGINS = ["slack", "github"];
+export const INBOX_ORIGINS = ["slack", "github", "timer"];
 const INBOX_KEYS = ["title", "detail", "origin", "origin_url", "ref", "choices"];
 
 // the marks that turn text's direction (U+202A-U+202E, U+2066-U+2069,
@@ -864,6 +888,7 @@ export function task_inbox(s: Store, x: unknown, now: number): { task: Task; mad
     had.choices = choices;
   }
   had.changed = new Date(now).toISOString();
+  had.moved = had.changed;
   tasks_save(s);
   return { task: had, made: false };
 }
@@ -1013,14 +1038,23 @@ export function task_resolve(s: Store, id: unknown, state: unknown, answer: unkn
   return task_put(s, task, { ...task, state: to, answer: to === "done" ? said : null, note: comment ?? task.note, draft, answers: to === "done" ? (answers ?? task.answers) : null, talk: null }, now, false);
 }
 
-// a change kept: stamped (a close: its time); told: true, Unii's own
-// change of state; false, the user's, stamped with the next version;
-// null, Unii's other edits, told and rev as they were. The closed
-// archived, saved. Others it frees, or makes wait again: tasks_freed
+// whether a change moves a task on: anything but its agent (linking,
+// unlinking or swapping the agent on it alone doesn't: how long it
+// stalled goes on)
+export function task_moves(task: Task, next: Task): boolean {
+  return JSON.stringify({ ...task, agent: null }) !== JSON.stringify({ ...next, agent: null });
+}
+
+// a change kept: stamped (a close: its time; moved, unless it's of the
+// agent alone: task_moves); told: true, Unii's own change of state;
+// false, the user's, stamped with the next version; null, Unii's other
+// edits, told and rev as they were. The closed archived, saved. Others
+// it frees, or makes wait again: tasks_freed
 function task_put(s: Store, task: Task, next: Task, now: number, told: boolean | null): Task {
   const at = new Date(now).toISOString();
   const closes = next.state !== "open" && task.state === "open";
   const was = Deps.blocked_ids(s.tasks);
+  next.moved = task_moves(task, next) ? at : (task.moved ?? task.changed);
   next.changed = at;
   next.closed = next.state === "open" ? null : closes ? at : (task.closed ?? at);
   next.told = told ?? task.told;
@@ -1221,7 +1255,7 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const fields = t.fields.length === 0 ? "" : " fields: " + t.fields.map((f) => f.id + (f.required ? "*" : "") + " " + JSON.stringify(f.label) + " (" + kind(f) + ")").join("; ");
   const talk = t.talk === "unii" ? " [the user wrote in its thread: reply with task_reply]" : "";
   const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ")) + fields + deps + talk;
-  const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), ago(t.made, now)].filter((x) => x !== "").join(", ");
+  const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), (t.agent ?? null) === null ? "" : "agent " + t.agent, ago(t.made, now)].filter((x) => x !== "").join(", ");
   const how   = [t.state, t.answer === null ? "" : "answer: " + t.answer, t.note === null ? "" : "note: " + JSON.stringify(t.note)].filter((x) => x !== "");
   const state = t.state === "open" ? "" : " (" + how.join(", ") + ")";
   const head = "- " + t.id + " [" + t.assignee + "] " + t.title + state + opts + " (" + tail + ")";
