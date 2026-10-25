@@ -487,12 +487,39 @@ body.desk footer > :not(#toast) { display: none; }
 #desk article .thread { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--hair); }
 #desk article .thread ol li, #desk article .thread li.user p { font-size: 14.5px; }
 #desk article .thread .sub { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--mid); }
-#desk article .thread .hint { margin-right: auto; font-size: 12px; color: var(--soft); }
+#desk article .thread .hint { margin-right: auto; font-size: 12px; color: var(--mid); }
 #desk article .waits { font-size: 14px; }
 #desk article .goto { padding: 0 6px; border-radius: 6px; background: var(--block); font: 13px var(--mono); }
 #desk article .answers { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0; font-size: 14px; }
 #desk article .answers dt { color: var(--mid); }
 #desk article .answers dd { margin: 0; overflow-wrap: anywhere; }
+/* late (the user's move over a day): red, as the push says it; its PRs,
+   links by repo#n over the detail; a choice concludes ("Concluir como");
+   a required field left empty at Concluir, framed red (main.ts
+   task_missing); after one resolved, the next of Agora */
+:is(#tasks, #desk) .late { padding: 0 6px; border-radius: 6px; color: var(--red); border: 1px solid currentColor; font-weight: 500; }
+:is(#tasks, #desk) .pr { padding: 0 6px; border-radius: 6px; background: var(--block); font-family: var(--mono); font-size: .92em; }
+#desk article .prs { margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
+#desk article .prs a.pr { color: var(--ink); text-decoration: none; border: 1px solid var(--frame); padding: 2px 8px; }
+#desk article .prs a.pr:hover { background: var(--hover); }
+:is(#tasks, #desk) .lead { font-size: 12.5px; color: var(--mid); }
+:is(#tasks, #desk) .field[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+:is(#tasks, #desk) .field[aria-invalid="true"] legend::after { content: " — obrigatório"; color: var(--red); font-weight: 400; }
+#desk .pane .next { display: block; margin-top: 18px; padding: 10px 14px; border-radius: 10px; background: var(--block); font-size: 14px; text-align: left; }
+#desk .pane .next:hover { background: var(--hover); }
+#desk .pane .next .id { font: 12.5px var(--mono); color: var(--mid); }
+@media (max-width: 600px) {
+  #desk article .answers { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  #desk article .answers dd { margin-bottom: 8px; }
+}
+/* a finger on the Mesa: every act, box and choice at least 44px tall */
+@media (pointer: coarse) {
+  #desk :is(.find input, .find select, .pane .back, article :is(.opts, .acts) button, article .note, .pane .next) { min-height: 44px; }
+  #desk article .field label { min-height: 44px; }
+  #desk article :is(.field, .go) input { width: 20px; height: 20px; }
+  #desk article .go { min-height: 44px; }
+  #desk article .prs a.pr { padding: 10px 10px; }
+}
 @media (max-width: 760px) {
   #desk { grid-template-columns: minmax(0, 1fr); height: calc(100dvh - var(--head)); }
   #desk .list { border-right: 0; }
