@@ -1455,7 +1455,7 @@ function task_accept_said(t) {
   return task_accept_mode(t) === "fill" ? "Preencher as recomendadas" : t.fields.length === 0 ? "Aceitar a recomendada" : "Aceitar as recomendadas";
 }
 function task_fill_said(t) {
-  return "Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: " + t.choices.join(" | ") + ".";
+  return "Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: " + t.choices.join(" | ") + " (no terminal: /ok " + t.id + " opção).";
 }
 function value_empty(x) {
   return x === undefined || x === null || typeof x === "string" && x.trim() === "" || Array.isArray(x) && x.length === 0;

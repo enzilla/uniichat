@@ -414,7 +414,9 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 :is(#tasks, #desk) .field label.rec { font-weight: 600; }
 :is(#tasks, #desk) .rec-text { margin: 2px 0 4px; font-size: 12.5px; color: var(--mid); }
 :is(#tasks, #desk) .acts .accept { border: 2px solid var(--accent); color: var(--accent); font-weight: 600; background: var(--paper); }
-:is(#tasks, #desk) .acts .accept:hover { background: var(--hover); }
+/* under the pointer, inverted (accent fill, paper text): the same pair as at
+   rest, 6.26:1 light and 7.21:1 dark, not accent on --hover (4.76:1 dark) */
+:is(#tasks, #desk) .acts .accept:hover { background: var(--accent); color: var(--paper); }
 /* a task of Unii's (P6): Cobrar agora, Pode fechar */
 :is(#tasks, #desk) .acts.unii .chase { background: var(--ink); color: var(--paper); }
 :is(#tasks, #desk) .acts.unii .chase:hover { background: var(--ink); opacity: .85; }

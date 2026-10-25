@@ -164,12 +164,12 @@ test("web: the recommended choice framed and tagged (not twice if its text says 
 test("accept with choices and only the fields recommended (R1): fills the fields as a draft, never concludes; the choice is the user's", () => {
   const s = T.tasks_load(dir);
   const t = add(s, { title: "Escolha", choices: ["Mesclar", "Esperar"], fields: [{ id: "pt", label: "Interface em português?", kind: "yesno", recommend: "sim" }, { id: "obs", label: "Obs", kind: "text", required: false, recommend: "nenhuma" }] });
-  expect(View.task_accept(t, {})).toBe("Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: Mesclar | Esperar.");
+  expect(View.task_accept(t, {})).toBe("Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: Mesclar | Esperar (no terminal: /ok " + t.id + " opção).");
   const v = View.view_new();
   v.tasks = T.tasks_view(s, NOW);
   // the act: a draft with the recommended (the given kept), not a Task done
   expect(View.view_act(v, { $: "TaskAccept", task: t.id, fields: { obs: "minha" } })).toEqual([{ $: "task_draft", task: t.id, fields: { pt: "sim", obs: "minha" } }]);
-  expect(v.notes.at(-1)).toBe("Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: Mesclar | Esperar.");
+  expect(v.notes.at(-1)).toBe("Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: Mesclar | Esperar (no terminal: /ok " + t.id + " opção).");
   // the server keeps it as the draft; the task stays open
   T.task_draft(s, t.id, { pt: "sim", obs: "minha" });
   const after = T.tasks_view(s, NOW).find((x) => x.id === t.id)!;
@@ -201,5 +201,15 @@ test("contrast (R3): the accent of .rec-tag and .accept, and the disabled Cobrar
       expect(ratio(hex(x, "accent"), hex(x, fill))).toBeGreaterThanOrEqual(4.5);
     }
     expect(ratio(hex(x, "mid"), hex(x, "block"))).toBeGreaterThanOrEqual(4.5);
+    // .accept under the pointer: paper on accent, with room above 4.5:1
+    expect(ratio(hex(x, "paper"), hex(x, "accent"))).toBeGreaterThanOrEqual(6);
   }
+  expect(css).toMatch(/\.acts \.accept:hover \{[^}]*background: var\(--accent\); color: var\(--paper\)/);
+});
+
+test("/aceitar's help (R3 verif2): says it only fills when the choice is the user's, and names /ok", () => {
+  const src = fs.readFileSync(import.meta.dir + "/Term.ts", "utf8");
+  const line = src.split("\n").find((l) => l.includes('"/aceitar P7'))!;
+  expect(line).toContain("só preenche");
+  expect(line).toContain("/ok P7 opção");
 });

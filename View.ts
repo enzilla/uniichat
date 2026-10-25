@@ -1037,7 +1037,7 @@ export function task_accept_said(t: Task): string {
 // what the user is told once the recommended answers are filled and a
 // choice is still theirs to pick
 export function task_fill_said(t: Task): string {
-  return "Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: " + t.choices.join(" | ") + ".";
+  return "Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: " + t.choices.join(" | ") + " (no terminal: /ok " + t.id + " opção).";
 }
 
 // an answer not given: none, an empty text, no choice
