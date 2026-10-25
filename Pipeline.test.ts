@@ -218,6 +218,48 @@ test("verdict_of: an item under 'Não testado' never a note; '1. A: baixa' under
   expect(Pipeline.verdict_of(grouped)).toEqual({ verdict: "rejected", notes: { high: 1, medium: 0, low: 2 }, noted: true });
 });
 
+test("verdict_of: a heading 'Ressalvas: …' is fixed only if its text says all are (ProudCougar 1, 25/10)", () => {
+  const notes = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n" + s + "\n1. **MÉDIA** a\n2. Baixa: b").notes;
+  // partly fixed, or not said fixed: its items are open
+  expect(notes("### Ressalvas: corrigida só a primeira")).toEqual({ high: 0, medium: 1, low: 1 });
+  expect(notes("### Ressalvas: corrigidas, exceto a 2")).toEqual({ high: 0, medium: 1, low: 1 });
+  expect(notes("## Ressalvas: parte corrigida")).toEqual({ high: 0, medium: 1, low: 1 });
+  expect(notes("### Ressalvas: abertas")).toEqual({ high: 0, medium: 1, low: 1 });
+  expect(notes("### Ressalvas: não corrigidas")).toEqual({ high: 0, medium: 1, low: 1 });
+  // all said fixed: none open (the verdict's floor, 1 low)
+  for (const h of ["### Ressalvas: todas corrigidas", "### Ressalvas: corrigidas em abc123", "## Ressalvas: ambas resolvidas", "### Ressalvas: as duas foram corrigidas.", "### Ressalvas corrigidas: 2", "### Ressalvas corrigidas"]) {
+    expect(notes(h)).toEqual({ high: 0, medium: 0, low: 1 });
+  }
+});
+
+test("verdict_of: numbered notes, each with its severity, in lines or paragraphs apart (ProudCougar 2a, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n" + s).notes;
+  const both = { high: 0, medium: 1, low: 1 };
+  expect(of("Ressalva 1 (média): x\nRessalva 2 (baixa): y")).toEqual(both);
+  expect(of("Ressalva 1 (média): x\n\nRessalva 2 (baixa): y")).toEqual(both);
+  expect(of("**Ressalva 1 (média):** x\n\n**Ressalva 2 (baixa):** y")).toEqual(both);
+  // the text on the next line; a heading, its items its details
+  expect(of("**Ressalva 1 (média)**\nTexto x.\n\n**Ressalva 2 (baixa)**\nTexto y.")).toEqual(both);
+  expect(of("### Ressalva 1 — média\n- detalhe a\n- detalhe b\n\n### Ressalva 2 — baixa\nTexto.")).toEqual(both);
+  expect(of("Ressalva A1 (alta): x\nObservação 2 — baixa: y")).toEqual({ high: 1, medium: 0, low: 1 });
+  // one fixed: only the other
+  expect(of("**Ressalva 1 (média, corrigida):** x\n\n**Ressalva 2 (baixa):** y")).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(of("**Ressalva 1 (alta)** corrigida em abc.\n**Ressalva 2 (média):** y")).toEqual({ high: 0, medium: 1, low: 0 });
+  // as items, as before
+  expect(of("- Ressalva 1 (média): x\n- Ressalva 2 (baixa): y")).toEqual(both);
+});
+
+test("verdict_of: 'aprovo' approves, 'reprovo' rejects (ProudCougar 2b: YellowHare, 25/10)", () => {
+  expect(Pipeline.verdict_of("Veredito: aprovo o PR #18.")).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false });
+  expect(Pipeline.verdict_of("Veredito: aprovo o PR morum/uniichat#18 com ressalvas.\n- Baixa: x").verdict).toBe("approved_with_notes");
+  expect(Pipeline.verdict_of("Veredito: reprovo o PR #18.").verdict).toBe("rejected");
+  expect(Pipeline.verdict_of("Veredito: não aprovo o PR #18.").verdict).toBe("rejected");
+  expect(Pipeline.verdict_of("Veredito: aprovação adiada.").verdict).toBe(null);
+  // YellowHare: 'sem ressalvas de severidade média ou alta' qualifies which; its low counts
+  const yellow = "**Veredito: aprovo o PR morum/uniichat#18 no head 72175c4, sem ressalvas de severidade média ou alta.** Há uma observação baixa.\n\n- **1 (MÉDIA), corrigida:**\n  - recusa.\n\n**Observação baixa:** lookbehind no Safari.";
+  expect(Pipeline.verdict_of(yellow)).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 1 }, noted: true });
+});
+
 test("prs_named: links, owner/repo#n and repo#n; the head near each; not P48 nor 'PR #3'", () => {
   const got = Pipeline.prs_named("Verifique Numih/auth#307 commit 33236f0 e Numih/dp-bk-messaging#17 commit da32786, sobre 27a4065. Também https://github.com/morum/uniichat/pull/18 (head 6178ccf) e o PR #3, P48, uniichat#18.");
   expect(got.prs).toEqual(["auth#307", "dp-bk-messaging#17", "uniichat#18"]);
