@@ -249,8 +249,12 @@ function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(),
   const late = desk ? View.task_late_said(t, blocked, now) : "";
   const stalled = desk ? View.task_stalled_said(t, blocked, now) : { text: "", late: false };
   const agent = View.task_agent_said(t);
+  const prio = View.task_priority_said(t);
+  const kind = desk && mine ? View.task_kind_said(t) : "";
   const who = [
+    ...(prio === "" ? [] : [`<span class="prio ${esc(Deps.priority_of(t))}">${esc(prio)}</span>`]),
     ...(late === "" ? [] : [`<span class="late">${esc(late)}</span>`]),
+    ...(kind === "" ? [] : [`<span class="kind">${esc(kind)}</span>`]),
     ...(frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`]),
     ...(mine ? [] : [esc(View.assignee_said(t))]),
     ...(agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]),
@@ -375,7 +379,9 @@ export function desk_html(tasks: Task[], q: string, ref: string, sel: string | n
     const agent = g === "closed" ? "" : View.task_agent_said(t);
     const talk = g === "closed" ? "" : View.task_talk_wait_said(t, now, turn);
     const prs = g === "closed" ? [] : View.task_prs(t);
+    const prio = g === "closed" ? "" : View.task_priority_said(t);
     const more = [
+      ...(prio === "" ? [] : [`<span class="prio ${esc(Deps.priority_of(t))}">${esc(prio)}</span>`]),
       ...(late === "" ? [] : [`<span class="late">${esc(late)}</span>`]),
       ...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]),
       ...(prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`]),

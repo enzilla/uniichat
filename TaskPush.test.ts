@@ -99,7 +99,8 @@ test("a task resolved before its push goes isn't pushed", () => {
 });
 
 test("the late ones once a day, at REMIND or after, each once ever", () => {
-  const tasks = [task("P1"), task("P2")];
+  const made = new Date(at(23, 10)).toISOString();
+  const tasks = [task("P1", { made }), task("P2", { made })];
   let { state } = TaskPush.step(null, tasks, at(23, 10));
   // the next day before REMIND: nothing
   let out = TaskPush.step(state, tasks, at(24, TaskPush.REMIND - 1, 59));

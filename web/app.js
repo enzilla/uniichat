@@ -922,6 +922,43 @@ function after_of(t) {
   return Array.isArray(t.after) ? t.after : [];
 }
 var LATE = 24 * 60 * 60 * 1000;
+var KINDS = ["pr", "decision", "test"];
+var H = 60 * 60 * 1000;
+var LATE_BY = { pr: 24 * H, decision: 72 * H, test: 2 * H };
+var PRIORITIES = ["high", "normal", "low"];
+var PR_LINK = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
+function kind_of(t) {
+  if (t.kind != null && KINDS.includes(t.kind)) {
+    return t.kind;
+  }
+  if (PR_LINK.test(t.title ?? "")) {
+    return "pr";
+  }
+  return /^\s*teste\b/i.test(t.title ?? "") ? "test" : null;
+}
+function late_after(t) {
+  const k = kind_of(t);
+  return k === null ? LATE : LATE_BY[k];
+}
+function ready_at(t) {
+  return typeof t.ready === "string" && !Number.isNaN(Date.parse(t.ready)) ? t.ready : t.made;
+}
+function priority_of(t) {
+  return t.priority != null && PRIORITIES.includes(t.priority) ? t.priority : "normal";
+}
+function now_order(tasks) {
+  const frees = new Map;
+  const n = (t) => {
+    if (!frees.has(t.id)) {
+      frees.set(t.id, frees_ids(tasks, t).length);
+    }
+    return frees.get(t.id);
+  };
+  const p = (t) => PRIORITIES.indexOf(priority_of(t));
+  const age = (t) => Date.parse(ready_at(t)) || 0;
+  const whose = (t) => t.assignee === undefined || t.assignee === "user" ? 0 : 1;
+  return (a, b) => p(a) - p(b) || n(b) - n(a) || whose(a) - whose(b) || age(a) - age(b) || Number(a.id.slice(1)) - Number(b.id.slice(1));
+}
 function by_id(tasks) {
   return new Map(tasks.map((t) => [t.id, t]));
 }
@@ -952,9 +989,6 @@ function frees_ids(tasks, t) {
   }
   seen.delete(t.id);
   return [...seen].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
-}
-function frees(tasks, t) {
-  return frees_ids(tasks, t).length;
 }
 
 // View.ts
@@ -1357,10 +1391,10 @@ function desk_match(t, q, ref) {
 function desk_list(tasks, q = "", ref = "") {
   const blocked = blocked_ids(tasks);
   const shown = tasks.filter((t) => desk_match(t, q, ref));
-  const frees2 = (t) => Number(frees(tasks, t) > 0);
+  const order = now_order(tasks);
   return DESK.map(([group, label]) => {
     const of = shown.filter((t) => desk_group(t, blocked) === group);
-    return { group, label, tasks: group === "now" ? [...of].sort((a, b) => frees2(b) - frees2(a)) : of };
+    return { group, label, tasks: group === "now" ? [...of].sort(order) : of };
   }).filter((g) => g.tasks.length > 0);
 }
 function desk_step(ids, at, by) {
@@ -1392,11 +1426,20 @@ function desk_next(tasks, sel, q = "", ref = "", order = []) {
 }
 var TASK_LATE = LATE;
 function task_late_said(t, blocked, now) {
-  const age = now - Date.parse(t.made);
-  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > TASK_LATE)) {
+  const age = now - Date.parse(ready_at(t));
+  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > late_after(t))) {
     return "";
   }
   return "atrasada há " + hours_said(age);
+}
+var KIND_SAID = { pr: "aprovação de PR", decision: "decisão", test: "teste" };
+function task_kind_said(t) {
+  const k = kind_of(t);
+  return k === null ? "" : KIND_SAID[k] + ", prazo " + LATE_BY[k] / 3600000 + " h";
+}
+function task_priority_said(t) {
+  const p = priority_of(t);
+  return p === "high" ? "prioridade alta" : p === "low" ? "prioridade baixa" : "";
 }
 function hours_said(ms) {
   const h = Math.floor(ms / 3600000);
@@ -1512,6 +1555,9 @@ function task_whole(t) {
     origin: t?.origin ?? null,
     origin_url: t?.origin_url ?? null,
     agent: t?.agent ?? null,
+    kind: t?.kind ?? null,
+    priority: t?.priority ?? "normal",
+    ready: t?.ready ?? t?.made,
     choices: Array.isArray(t?.choices) ? t.choices : [],
     after: Array.isArray(t?.after) ? t.after : [],
     fields: Array.isArray(t?.fields) ? t.fields : [],
@@ -1980,8 +2026,12 @@ function task_open_html(t, tasks, desk, now = Date.now(), turn = null) {
   const late = desk ? task_late_said(t, blocked, now) : "";
   const stalled = desk ? task_stalled_said(t, blocked, now) : { text: "", late: false };
   const agent = task_agent_said(t);
+  const prio = task_priority_said(t);
+  const kind = desk && mine ? task_kind_said(t) : "";
   const who = [
+    ...prio === "" ? [] : [`<span class="prio ${esc(priority_of(t))}">${esc(prio)}</span>`],
     ...late === "" ? [] : [`<span class="late">${esc(late)}</span>`],
+    ...kind === "" ? [] : [`<span class="kind">${esc(kind)}</span>`],
     ...frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`],
     ...mine ? [] : [esc(assignee_said(t))],
     ...agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`],
@@ -2072,7 +2122,9 @@ function desk_html(tasks, q, ref, sel, now = Date.now(), opts = {}) {
     const agent = g === "closed" ? "" : task_agent_said(t);
     const talk = g === "closed" ? "" : task_talk_wait_said(t, now, turn);
     const prs = g === "closed" ? [] : task_prs(t);
+    const prio = g === "closed" ? "" : task_priority_said(t);
     const more = [
+      ...prio === "" ? [] : [`<span class="prio ${esc(priority_of(t))}">${esc(prio)}</span>`],
       ...late === "" ? [] : [`<span class="late">${esc(late)}</span>`],
       ...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`],
       ...prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`],

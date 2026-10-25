@@ -97,6 +97,9 @@ export type Task = {
   made    : string;
   changed : string;
   moved   : string; // its last change but linking an agent alone (how long it stalled: View.task_stalled_said, vigia.ts)
+  kind    : Deps.TaskKind | null; // what it is, as how long before it's late says (TaskDeps.late_after; null: as its links say)
+  priority: Deps.Priority; // declared; sorts "Agora" first (TaskDeps.now_order)
+  ready   : string; // since when it's the user's to act on (made, freed, opened again, handed to them): its lateness counts from then
   closed  : string | null;
   told    : boolean;
   rev     : number;
@@ -144,6 +147,8 @@ export type Edit = {
   agent?      : unknown;
   choices? : unknown;
   recommend? : unknown;
+  kind?    : unknown;
+  priority? : unknown;
   ref?     : unknown;
   state?   : unknown;
   answer?  : unknown;
@@ -295,6 +300,9 @@ export function task_read(x: unknown, now: number): Task | null {
     made,
     changed,
     moved   : time_read(o.moved, changed),
+    kind    : Deps.KINDS.includes(o.kind as Deps.TaskKind) ? (o.kind as Deps.TaskKind) : null,
+    priority: Deps.PRIORITIES.includes(o.priority as Deps.Priority) ? (o.priority as Deps.Priority) : "normal",
+    ready   : time_read(o.ready, made),
     closed  : state === "open" ? null : time_read(o.closed, changed),
     told    : o.told !== false,
     rev     : count_read(o.rev),
@@ -792,6 +800,28 @@ function after_read(s: Store, x: unknown, self: string | null): string[] | strin
   return ids;
 }
 
+// a task's kind and priority as given by a tool (kind: pr, decision,
+// test, "" or null for none; priority: high, normal, low, "" or null for
+// normal); each only if given; else why not
+function kind_args(args: Edit): { kind?: Deps.TaskKind | null; priority?: Deps.Priority } | string {
+  const out: { kind?: Deps.TaskKind | null; priority?: Deps.Priority } = {};
+  if (args.kind !== undefined) {
+    const k = args.kind === null ? "" : String(args.kind).trim().toLowerCase();
+    if (k !== "" && !Deps.KINDS.includes(k as Deps.TaskKind)) {
+      return "kind is one of " + Deps.KINDS.join(", ") + " (\"\" for none).";
+    }
+    out.kind = k === "" ? null : (k as Deps.TaskKind);
+  }
+  if (args.priority !== undefined) {
+    const p = args.priority === null ? "" : String(args.priority).trim().toLowerCase();
+    if (p !== "" && !Deps.PRIORITIES.includes(p as Deps.Priority)) {
+      return "priority is one of " + Deps.PRIORITIES.join(", ") + ".";
+    }
+    out.priority = p === "" ? "normal" : (p as Deps.Priority);
+  }
+  return out;
+}
+
 // a new task made by Unii (by: "main"); else why not
 // (origin: where the turn came from, unless args give one)
 export function task_new(s: Store, args: Edit, by: string, now: number, origin: Origin | null = null): Task | string {
@@ -819,6 +849,10 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   if (typeof recommend === "string") {
     return recommend;
   }
+  const kp = kind_args(args);
+  if (typeof kp === "string") {
+    return kp;
+  }
   const open = s.tasks.filter((t) => t.state === "open");
   const twin = open.find((t) => t.title.toLowerCase() === title.toLowerCase());
   if (twin !== undefined) {
@@ -834,7 +868,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   const ref = text_line(args.ref, REF);
   const task: Task = {
     id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, agent: whose.agent ?? null, by, choices, recommend: recommend.v, answer: null, note: null,
-    ref: ref === "" ? null : ref, made: at, changed: at, moved: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
+    ref: ref === "" ? null : ref, made: at, changed: at, moved: at, kind: kp.kind ?? null, priority: kp.priority ?? "normal", ready: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
     fields: fields.fields, draft: {}, answers: null, thread: [], talk: null,
   };
   s.next += 1;
@@ -982,6 +1016,11 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
   } else if (next.recommend != null && !next.choices.includes(next.recommend)) {
     next.recommend = null;
   }
+  const kp = kind_args(args);
+  if (typeof kp === "string") {
+    return kp;
+  }
+  Object.assign(next, kp);
   if (args.ref !== undefined) {
     const ref = text_line(args.ref, REF);
     next.ref = ref === "" ? null : ref;
@@ -1106,6 +1145,10 @@ function task_put(s: Store, task: Task, next: Task, now: number, told: boolean |
   const closes = next.state !== "open" && task.state === "open";
   const was = Deps.blocked_ids(s.tasks);
   next.moved = task_moves(task, next) ? at : (task.moved ?? task.changed);
+  // the user's to act on from now (opened again, or handed to them): its
+  // lateness counts from here (TaskDeps.ready_at)
+  const handed = next.state === "open" && next.assignee === "user" && (task.state !== "open" || task.assignee !== "user");
+  next.ready = handed ? at : Deps.ready_at(task);
   next.changed = at;
   next.closed = next.state === "open" ? null : closes ? at : (task.closed ?? at);
   next.told = told ?? task.told;
@@ -1116,7 +1159,7 @@ function task_put(s: Store, task: Task, next: Task, now: number, told: boolean |
     next.rev = s.rev;
   }
   s.tasks[s.tasks.indexOf(task)] = next;
-  tasks_freed(s, was, next.id);
+  tasks_freed(s, was, next.id, at);
   tasks_archive(s, now);
   tasks_save(s);
   return next;
@@ -1125,12 +1168,16 @@ function task_put(s: Store, task: Task, next: Task, now: number, told: boolean |
 // after a change (to the task `by`): each open task that waited (was:
 // the blocked before) and waits no more is freed, a change to tell
 // (stamped with the next version), but by: Unii changed it itself; each
-// that waits again before its being freed was told, that change undone
-function tasks_freed(s: Store, was: Set<string>, by: string): void {
+// that waits again before its being freed was told, that change undone.
+// One that waits no more (by itself too) is to act on from `at` (ready)
+function tasks_freed(s: Store, was: Set<string>, by: string, at: string): void {
   const now = Deps.blocked_ids(s.tasks);
   for (const t of s.tasks) {
     if (t.state !== "open") {
       continue;
+    }
+    if (was.has(t.id) && !now.has(t.id)) {
+      t.ready = at;
     }
     if (was.has(t.id) && !now.has(t.id) && t.id !== by) {
       s.rev += 1;
@@ -1256,15 +1303,14 @@ export function tasks_tell(s: Store): Task[] {
 // Showing
 // =======
 
-// the open ones free to resolve: those that free others first, most
-// first (TaskDeps.frees), then the user's, each by id; then the open
-// that wait, by id; then the closed, newest first
+// the open ones free to resolve, as "Agora" sorts them (P3,
+// TaskDeps.now_order: priority, then how many it frees, then the one to act on longest (ready_at),
+// then by id); then the open that wait, by id; then the closed, newest
+// first
 export function tasks_sort(tasks: Task[]): Task[] {
   const num = (t: Task) => Number(t.id.slice(1));
   const waiting = Deps.blocked_ids(tasks);
-  const frees = new Map(tasks.map((t) => [t.id, Deps.frees(tasks, t)]));
-  const rank = (a: Task, b: Task) => (frees.get(b.id)! - frees.get(a.id)!) || (a.assignee === b.assignee ? num(a) - num(b) : a.assignee === "user" ? -1 : b.assignee === "user" ? 1 : a.assignee.localeCompare(b.assignee));
-  const free = tasks.filter((t) => t.state === "open" && !waiting.has(t.id)).sort(rank);
+  const free = tasks.filter((t) => t.state === "open" && !waiting.has(t.id)).sort(Deps.now_order(tasks));
   const open = [...free, ...tasks.filter((t) => waiting.has(t.id)).sort((a, b) => num(a) - num(b))];
   const closed = tasks.filter((t) => t.state !== "open").sort((a, b) => (b.closed ?? "").localeCompare(a.closed ?? ""));
   return [...open, ...closed];
@@ -1316,7 +1362,7 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const fields = t.fields.length === 0 ? "" : " fields: " + t.fields.map((f) => f.id + (f.required ? "*" : "") + " " + JSON.stringify(f.label) + " (" + kind(f) + ")").join("; ");
   const talk = t.talk === "unii" ? " [the user wrote in its thread: reply with task_reply]" : "";
   const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ") + (t.recommend == null ? "" : " (recommended: " + t.recommend + ")")) + fields + deps + talk;
-  const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), (t.agent ?? null) === null ? "" : "agent " + t.agent, ago(t.made, now)].filter((x) => x !== "").join(", ");
+  const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), (t.agent ?? null) === null ? "" : "agent " + t.agent, t.kind == null ? "" : "kind " + t.kind, Deps.priority_of(t) === "normal" ? "" : "priority " + Deps.priority_of(t), ago(t.made, now)].filter((x) => x !== "").join(", ");
   const how   = [t.state, t.answer === null ? "" : "answer: " + t.answer, t.note === null ? "" : "note: " + JSON.stringify(t.note)].filter((x) => x !== "");
   const state = t.state === "open" ? "" : " (" + how.join(", ") + ")";
   const head = "- " + t.id + " [" + t.assignee + "] " + t.title + state + opts + " (" + tail + ")";

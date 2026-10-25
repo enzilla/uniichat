@@ -7,8 +7,10 @@
 // precisam de você"). A push shows only the ids, never a title: its text
 // passes through the browser vendor's push service.
 // Once a day, at REMIND (the server's local hour), the ones still the
-// user's past LATE since told are told again as late ("Pendência P3 está
-// em atraso"), each once ever: one reminded isn't again, even reopened.
+// user's past their kind's LATE (TaskDeps.late_after) since they became
+// theirs to act on (TaskDeps.ready_at, as the views' "atrasada há") are
+// told again as late ("Pendência P3 está em atraso"), each once ever:
+// one reminded isn't again, even reopened.
 // Each push carries the user's count (open tasks whose move it is, as
 // the Mesa's "Agora" counts them) for the app's badge (sw.js).
 // What was told is kept in the chat's dir (push.json, written whole,
@@ -47,8 +49,9 @@ export const FILE = "/push.json";
 // how long tasks made or freed wait to go together (ms)
 export const WINDOW = 45 * 1000;
 
-// how long a task stays the user's before it's late (ms): TaskDeps.LATE,
-// shared with the views
+// how long a task stays the user's before it's late (ms), when its kind
+// says no other: TaskDeps.LATE, shared with the views; by kind (a PR
+// 24 h, a decision 72 h, a test 2 h): TaskDeps.late_after
 export const LATE = Deps.LATE;
 
 // the local hour the daily reminder goes, at or after
@@ -116,6 +119,15 @@ function made_at(task: Task | undefined, now: number): string {
   return new Date(Number.isNaN(made) || made > now ? now : made).toISOString();
 }
 
+// since when (ms) a task's lateness counts: since it became the user's to
+// act on (TaskDeps.ready_at, as the Mesa's "atrasada há" and "Agora"'s
+// order), not since told; a ready not a time, or past now (a clock
+// gone wrong), as told (seen)
+export function late_since(task: Task, seen: string, now: number): number {
+  const ready = Date.parse(Deps.ready_at(task));
+  return Number.isNaN(ready) || ready > now ? Date.parse(seen) : ready;
+}
+
 // a look at the list (state: null, the first): what's told now, and the
 // pushes to send (sending them is the caller's)
 export function step(state: State | null, tasks: Task[], now: number): { state: State; send: Notice[] } {
@@ -154,7 +166,8 @@ export function step(state: State | null, tasks: Task[], now: number): { state: 
   const today = day(now);
   if (looked !== today && new Date(now).getHours() >= REMIND) {
     looked = today;
-    const late = sorted(ids.filter((id) => !queue.includes(id) && !reminded.includes(id) && now - Date.parse(seen[id]) >= LATE));
+    const by = new Map(tasks.map((t) => [t.id, t]));
+    const late = sorted(ids.filter((id) => !queue.includes(id) && !reminded.includes(id) && now - late_since(by.get(id)!, seen[id], now) >= Deps.late_after(by.get(id)!)));
     if (late.length > 0) {
       send.push({ kind: "late", ids: late, text: text("late", late), count });
       reminded = [...reminded, ...late];
