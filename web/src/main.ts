@@ -650,6 +650,9 @@ function desk_wire(): void {
   };
   $(".mode").onclick = () => desk_mode(P.mode === "desk" ? "chat" : "desk");
   document.addEventListener("keydown", desk_keys);
+  // the Mesa drawn again each minute, so how long a task waited or
+  // stalled is said as time goes (desk_draw remakes only on a new minute)
+  setInterval(() => P.mode === "desk" && document.visibilityState === "visible" && draw(false), 60e3);
   NARROW.addEventListener("change", () => route());
 }
 
@@ -764,6 +767,15 @@ function desk_draw(): void {
   const was = keep_take(pane);
   markup(pane, detail);
   keep_put(pane, was);
+  // the shown task waiting for Unii: its wait said, politely, to a
+  // screen reader, as the minute (or why it waits) changes; a region
+  // kept across draws, as the pane's article is remade
+  const live = $("#desk .live");
+  const shown = v.tasks.find((t) => t.id === P.sel);
+  const wait = shown !== undefined && shown.state === "open" && shown.talk === "unii" ? shown.id + ": " + View.task_talk_wait_said(shown, Date.now(), turn) : "";
+  if (live.textContent !== wait) {
+    live.textContent = wait;
+  }
   const untold = View.view_untold(v).length;
   $("#desk .tell").hidden = untold === 0;
   $("#desk .tell span").textContent = String(untold);

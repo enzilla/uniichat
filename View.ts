@@ -918,13 +918,15 @@ function hours_said(ms: number): string {
 }
 
 // how long a task of someone else's (Unii's, an agent's) has not
-// changed, once STALL or more: "parada há 3 h" (late: past TASK_LATE,
+// moved on (Tasks.task_moves: linking or swapping its agent alone
+// doesn't count; a list of an older server, without moved: its last
+// change), once STALL or more: "parada há 3 h" (late: past TASK_LATE,
 // what the stalled tasks' watch, vigia.ts, charges); else "" (closed,
 // the user's, waiting for others, or the user wrote in its thread: then
 // it's Unii's answer that's awaited, task_talk_wait_said)
 export const STALL = 3600e3;
 export function task_stalled_said(t: Task, blocked: Set<string>, now: number): { text: string; late: boolean } {
-  const age = now - Date.parse(t.changed ?? t.made);
+  const age = now - Date.parse(t.moved ?? t.changed ?? t.made);
   if (t.state !== "open" || t.assignee === "user" || blocked.has(t.id) || t.talk === "unii" || !(age >= STALL)) {
     return { text: "", late: false };
   }

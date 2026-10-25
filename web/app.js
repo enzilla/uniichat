@@ -1383,7 +1383,7 @@ function hours_said(ms) {
 }
 var STALL = 3600000;
 function task_stalled_said(t, blocked, now) {
-  const age = now - Date.parse(t.changed ?? t.made);
+  const age = now - Date.parse(t.moved ?? t.changed ?? t.made);
   if (t.state !== "open" || t.assignee === "user" || blocked.has(t.id) || t.talk === "unii" || !(age >= STALL)) {
     return { text: "", late: false };
   }
@@ -2743,6 +2743,7 @@ function desk_wire() {
   };
   $(".mode").onclick = () => desk_mode(P.mode === "desk" ? "chat" : "desk");
   document.addEventListener("keydown", desk_keys);
+  setInterval(() => P.mode === "desk" && document.visibilityState === "visible" && draw(false), 60000);
   NARROW.addEventListener("change", () => route());
 }
 function desk_mode(mode, push = true) {
@@ -2839,6 +2840,12 @@ function desk_draw() {
   const was = keep_take(pane);
   markup(pane, detail);
   keep_put(pane, was);
+  const live = $("#desk .live");
+  const shown = v.tasks.find((t) => t.id === P.sel);
+  const wait = shown !== undefined && shown.state === "open" && shown.talk === "unii" ? shown.id + ": " + task_talk_wait_said(shown, Date.now(), turn) : "";
+  if (live.textContent !== wait) {
+    live.textContent = wait;
+  }
   const untold = view_untold(v).length;
   $("#desk .tell").hidden = untold === 0;
   $("#desk .tell span").textContent = String(untold);

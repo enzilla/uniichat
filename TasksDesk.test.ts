@@ -322,6 +322,54 @@ test("a task of Unii's: 'parada há N h' from its last change, late past TASK_LA
   expect(T.task_find(T.tasks_load(dir), "P1")!.agent).toBe("WiseDolphin");
 });
 
+test("'parada há' goes on as its agent is linked, swapped or cleared; any other change (or the agent with it) moves it; kept on disk; an older list reads its last change", () => {
+  const s = T.tasks_load(dir);
+  add(s, { title: "NUM-2337: tags e portas", assignee: "unii", ref: "num-2337" });
+  const H = 3600e3;
+  const none = new Set<string>();
+  const stalled = (at: number) => View.task_stalled_said(T.task_find(s, "P1")!, none, at).text;
+  // linked, swapped, cleared hours later: still stalled since it was made
+  expect((T.task_edit(s, { id: "P1", agent: "SoftMule" }, NOW + 5 * H) as T.Task).moved).toBe(new Date(NOW).toISOString());
+  T.task_edit(s, { id: "P1", agent: "BlackBear" }, NOW + 10 * H);
+  T.task_edit(s, { id: "P1", agent: "" }, NOW + 20 * H);
+  expect(T.task_find(s, "P1")!.changed).toBe(new Date(NOW + 20 * H).toISOString());
+  expect(stalled(NOW + 26 * H)).toBe("parada há 26 h");
+  // the same agent again: nothing moved either
+  T.task_edit(s, { id: "P1", agent: "" }, NOW + 21 * H);
+  expect(stalled(NOW + 26 * H)).toBe("parada há 26 h");
+  // its detail changed (with an agent, too): moved
+  T.task_edit(s, { id: "P1", detail: "auth#307 mesclado", agent: "SaltyMouse" }, NOW + 24 * H);
+  expect(stalled(NOW + 26 * H)).toBe("parada há 2 h");
+  T.task_edit(s, { id: "P1", agent: "WoodenTurtle" }, NOW + 25 * H);
+  expect(stalled(NOW + 27 * H)).toBe("parada há 3 h");
+  T.tasks_forget();
+  expect(T.task_find(T.tasks_load(dir), "P1")!.moved).toBe(new Date(NOW + 24 * H).toISOString());
+  // tasks.json of an older version (no moved): its last change
+  const old = { ...T.task_find(T.tasks_load(dir), "P1")!, moved: undefined };
+  expect(T.task_read(JSON.parse(JSON.stringify(old)), NOW)!.moved).toBe(old.changed);
+  expect(View.task_stalled_said({ ...old, moved: undefined } as any, none, Date.parse(old.changed) + 2 * H).text).toBe("parada há 2 h");
+});
+
+test("the red of 'sem agente' (and 'atrasada'): at least 4.5:1 on every fill it may sit on, light and dark (style.css)", () => {
+  const css = fs.readFileSync(import.meta.dir + "/web/style.css", "utf8");
+  const dark = css.indexOf("@media (prefers-color-scheme: dark)");
+  const vars = (part: string) => Object.fromEntries([...part.matchAll(/--([a-z]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  const light = vars(css.slice(0, dark));
+  const night = { ...light, ...vars(css.slice(dark, css.indexOf("}\n}", dark))) };
+  const hex = (x: Record<string, string>, k: string): string => (x[k].startsWith("var(--") ? hex(x, x[k].slice(6, -1)) : x[k]);
+  const lum = (h: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const ratio = (a: string, b: string) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+  expect(css).toMatch(/\.agent\.none \{[^}]*color: var\(--red\)/);
+  for (const x of [light, night]) {
+    for (const fill of ["paper", "lift", "block", "hover"]) {
+      expect(ratio(hex(x, "red"), hex(x, fill))).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+});
+
 test("aguardando o Unii: how long since the user wrote, and why, by Unii's turn; in the row and the detail", () => {
   const tasks = desk();
   const p4 = tasks.find((t) => t.id === "P4")!;

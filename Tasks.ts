@@ -95,6 +95,7 @@ export type Task = {
   ref     : string | null;
   made    : string;
   changed : string;
+  moved   : string; // its last change but linking an agent alone (how long it stalled: View.task_stalled_said, vigia.ts)
   closed  : string | null;
   told    : boolean;
   rev     : number;
@@ -289,6 +290,7 @@ export function task_read(x: unknown, now: number): Task | null {
     ref     : ref === "" ? null : ref,
     made,
     changed,
+    moved   : time_read(o.moved, changed),
     closed  : state === "open" ? null : time_read(o.closed, changed),
     told    : o.told !== false,
     rev     : count_read(o.rev),
@@ -800,7 +802,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   const ref = text_line(args.ref, REF);
   const task: Task = {
     id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, agent: whose.agent ?? null, by, choices, answer: null, note: null,
-    ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
+    ref: ref === "" ? null : ref, made: at, changed: at, moved: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
     fields: fields.fields, draft: {}, answers: null, thread: [], talk: null,
   };
   s.next += 1;
@@ -886,6 +888,7 @@ export function task_inbox(s: Store, x: unknown, now: number): { task: Task; mad
     had.choices = choices;
   }
   had.changed = new Date(now).toISOString();
+  had.moved = had.changed;
   tasks_save(s);
   return { task: had, made: false };
 }
@@ -1035,14 +1038,23 @@ export function task_resolve(s: Store, id: unknown, state: unknown, answer: unkn
   return task_put(s, task, { ...task, state: to, answer: to === "done" ? said : null, note: comment ?? task.note, draft, answers: to === "done" ? (answers ?? task.answers) : null, talk: null }, now, false);
 }
 
-// a change kept: stamped (a close: its time); told: true, Unii's own
-// change of state; false, the user's, stamped with the next version;
-// null, Unii's other edits, told and rev as they were. The closed
-// archived, saved. Others it frees, or makes wait again: tasks_freed
+// whether a change moves a task on: anything but its agent (linking,
+// unlinking or swapping the agent on it alone doesn't: how long it
+// stalled goes on)
+export function task_moves(task: Task, next: Task): boolean {
+  return JSON.stringify({ ...task, agent: null }) !== JSON.stringify({ ...next, agent: null });
+}
+
+// a change kept: stamped (a close: its time; moved, unless it's of the
+// agent alone: task_moves); told: true, Unii's own change of state;
+// false, the user's, stamped with the next version; null, Unii's other
+// edits, told and rev as they were. The closed archived, saved. Others
+// it frees, or makes wait again: tasks_freed
 function task_put(s: Store, task: Task, next: Task, now: number, told: boolean | null): Task {
   const at = new Date(now).toISOString();
   const closes = next.state !== "open" && task.state === "open";
   const was = Deps.blocked_ids(s.tasks);
+  next.moved = task_moves(task, next) ? at : (task.moved ?? task.changed);
   next.changed = at;
   next.closed = next.state === "open" ? null : closes ? at : (task.closed ?? at);
   next.told = told ?? task.told;
