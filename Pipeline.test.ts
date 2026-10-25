@@ -1210,7 +1210,8 @@ test("verdict_of: a severity alone on its line heads its note; a plain severity 
   const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado\n\n" + s).notes;
   expect(of("**Média**\no botão some\n")).toEqual({ high: 0, medium: 1, low: 0 });
   expect(of("**Média**\n\no botão some\n")).toEqual({ high: 0, medium: 1, low: 0 });
-  expect(of("**Média**\n- a\n- b\n")).toEqual({ high: 0, medium: 2, low: 0 });
+  // one note, its items its details (WoodenKangaroo 3, 25/10)
+  expect(of("**Média**\n- a\n- b\n")).toEqual({ high: 0, medium: 1, low: 0 });
   expect(of("### Alta\nperda de dados\n")).toEqual({ high: 1, medium: 0, low: 0 });
   // alone, nothing after it: none; fixed with only a reference: none
   expect(of("**Média**\n")).toEqual({ high: 0, medium: 0, low: 0 });
@@ -1225,4 +1226,41 @@ test("verdict_of: a severity alone on its line heads its note; a plain severity 
   expect(v17("Média corrigida em abc1234")).toEqual([0, 0, 0]);
   // no state said: no note ("Média dos testes caiu.")
   expect(of("Média dos testes caiu.\n")).toEqual({ high: 0, medium: 0, low: 0 });
+});
+
+test("verdict_of: a heading's severity prevails over a word that opens a paragraph; counts in parentheses or without 'com' count; a singular severity's list is one note (WoodenKangaroo 1-3, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas\n\n" + s).notes;
+  const said = (s: string) => {
+    const v = Pipeline.verdict_of(s);
+    return [v.verdict, v.notes.high, v.notes.medium, v.notes.low];
+  };
+  // 1: under "**Baixas**", "Alta cobertura de testes." is a low note
+  expect(of("**Baixas**\n\nAlta cobertura de testes.\n")).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(of("**Baixas**\n\nMédia dos testes caiu.\n")).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(of("**Média**\n\nAlta chance de erro.\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  // a severity said as a label still says its own, as an item's does
+  expect(of("**Baixas**\n\nMédia: o botão some.\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(of("**Baixas**\n\n**Alta** o servidor cai.\n")).toEqual({ high: 1, medium: 0, low: 0 });
+  // under a heading with no severity, the word it opens with (safe side)
+  expect(of("**Ressalvas:**\n\nAlta cobertura de testes.\n")).toEqual({ high: 1, medium: 0, low: 0 });
+  // 2: the count in a parenthesis right after the notes said
+  expect(said("Veredito: aprovado com ressalvas (1 média, 2 baixas)")).toEqual(["approved_with_notes", 0, 1, 2]);
+  expect(said("Veredito: aprovado com 3 ressalvas (1 média e 2 baixas)")).toEqual(["approved_with_notes", 0, 1, 2]);
+  expect(said("Veredito: aprovado com ressalvas (corrigidas em abc1234)")).toEqual(["approved_with_notes", 0, 0, 1]);
+  // a later one isn't the count
+  expect(said("Veredito: aprovado com 1 baixa (ver 2 médias da V19)")).toEqual(["approved_with_notes", 0, 0, 1]);
+  // 3: a count right after the verdict's word, without "com"
+  expect(said("Veredito: aprovado. 1 média e 2 baixas")).toEqual(["approved_with_notes", 0, 1, 2]);
+  expect(said("Veredito: **APROVADO** — 2 baixas")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(said("Veredito: aprovado (1 média, 2 baixas)")).toEqual(["approved_with_notes", 0, 1, 2]);
+  // not one said fixed, nor zero, nor after "sem ressalvas"
+  expect(said("Veredito: aprovado. 3 baixas da V19 corrigidas.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. 0 médias.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado sem ressalvas. 2 baixas da V19 foram corrigidas.")).toEqual(["approved", 0, 0, 0]);
+  // 3: a singular severity labels one note, its list its details; the plural heads a list
+  expect(of("**Média**\n- a\n- b\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(of("**Média**\n- a\n  - a1\n- b\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(of("**Média**\n\no botão some\n\noutro parágrafo\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(of("**Média**\n- a\n- b\n\n**Baixas**\n- c\n- d\n")).toEqual({ high: 0, medium: 1, low: 2 });
+  expect(of("**Médias**\n- a\n- b\n")).toEqual({ high: 0, medium: 2, low: 0 });
 });

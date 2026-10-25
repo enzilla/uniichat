@@ -309,7 +309,22 @@ function verdict_said(s: string): Verdict | null {
   if (r >= 0 && (a < 0 || r <= a)) {
     return "rejected";
   }
-  return WITH_NOTES.test(s.slice(a)) ? "approved_with_notes" : "approved";
+  return WITH_NOTES.test(s.slice(a)) || bare_count(s.slice(a)) !== null ? "approved_with_notes" : "approved";
+}
+
+// a verdict's word followed right away by a count of notes and their
+// severity, without "com": "aprovado. 1 média e 2 baixas", "APROVADO** —
+// 2 baixas", "aprovado (1 média, 2 baixas)" (WoodenKangaroo 3, 25/10):
+// what says them, to the end of its sentence; not a count of zero, nor a
+// sentence that says them fixed ("aprovado. 3 baixas da V19 corrigidas")
+const BARE_COUNT = /^[\s*_`.,:;—–()\[\]-]*(?=(?:[1-9]\d*|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b)/;
+function bare_count(said: string): string | null {
+  const m = BARE_COUNT.exec(said.replace(/^\w+/, ""));
+  if (m === null) {
+    return null;
+  }
+  const sentence = said.replace(/^\w+/, "").slice(m[0].length).split(/[.;\n]/)[0].slice(0, 160);
+  return FIXED_WORD.test(sentence) ? null : sentence;
 }
 
 // a line that labels the verdict: "**Veredito: …", "Veredito (NUM-2337):
@@ -400,6 +415,16 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   // the line before was blank or the heading (a paragraph starts)
   let listed = false;
   let fresh = false;
+  // under a severity in the singular ("**Média**"): one note, and once it
+  // counted, what follows under it is its text, no other note's
+  let single = false;
+  const one_done = () => {
+    if (single) {
+      single = false;
+      within = "none";
+      given = null;
+    }
+  };
   for (let at = 0; at < lines.length; at++) {
     const raw = lines[at];
     const item = /^(\s*)(\d+[.)]|[-*•])\s/.exec(raw);
@@ -511,6 +536,11 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
         if (!as_para) {
           within = "notes";
           given = own;
+          // a severity in the singular, alone ("**Média**", "### Alta"), labels
+          // one note: its paragraph or its first item, the items after it its
+          // details ("**Média**\n- a\n- b" 1 medium, WoodenKangaroo 3, 25/10);
+          // in the plural ("**Baixas**") it heads a list, one per item
+          single = !/ressalva|observa[cç]/i.test(line) && /^[\s>]*(?:#{1,6}\s+)?[*_]*\s*(?:alta|media|baixa)\b/.test(f);
           const alone = (/^\s*(?:#{1,6}\s|[*_]{2})/.test(f) || /:[\s*_`]*$/.test(f)) && /^[\s#*_]*[^*_:.\n]{1,60}?[\s*_`]*(?:\([^)\n]*\))?[\s*_`]*:?[\s*_`]*$/.test(f);
           listed = !alone;
         }
@@ -518,9 +548,17 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
         within = "other";
         given = null;
       }
+      if (within !== "notes") {
+        single = false;
+      }
       if (as_para && was === "notes" && within === "notes") {
-        notes[sev_in(SEV_LABEL.exec(f)?.[0] ?? "") ?? given ?? "low"] += 1;
+        // under a heading of a severity ("**Baixas**"), its severity, unless
+        // the paragraph labels its own as an item does (sev_first: "Média:
+        // …", "**Média** …"); a word that only opens its text ("Alta
+        // cobertura de testes.", WoodenKangaroo 1, 25/10) is not one
+        notes[(given !== null ? sev_first("- " + line.trim()) ?? given : sev_in(SEV_LABEL.exec(f)?.[0] ?? "")) ?? "low"] += 1;
         noted = true;
+        one_done();
       }
       fresh = line.trim() === "" || within !== was || (within === "notes" && (SEV_HEADING.test(f) || /^\s*(\*\*|#|_)/.test(line) || /:\s*$/.test(line)));
       continue;
@@ -592,6 +630,7 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     noted = true;
     if (top_level) {
       counted = true;
+      one_done();
     }
   }
   // approved without notes: none, and none listed (noted only for notes);
@@ -981,12 +1020,17 @@ const COUNT_WORD: Record<string, number> = { um: 1, uma: 1, dois: 2, duas: 2, tr
 // same (RoyalToucan 1, 25/10); a total said above what its pairs add up
 // to gives the rest as low ("com 3 ressalvas, 1 média": 1 medium, 2 low)
 const SAID_PAIR = /(?:^|[\s,:;(]|\be\b)(\d+|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(altas?|medias?|baixas?|high|medium|low)\b/g;
+const SAID_PAREN = /^((?:com|c\/|with)\s*(?:(?:\d+|uma?|dois|duas|tres|quatro|cinco)\s+)?(?:ressalvas?|observac(?:ao|oes)|notes?)[\s*_`,]*)\(([^()\n]*)\)/;
 function notes_said(line: string): Sevs {
   const out = zero();
   const a = Math.max(0, line.search(APPROVED));
+  const bare = bare_count(line.slice(a));
   const from = /(?:\bcom|\bwith|c\/)\s?/.exec(line.slice(a));
-  if (from !== null) {
-    const stretch = line.slice(a + from.index).split(/[.;(\n]/)[0].slice(0, 160);
+  if (bare !== null || from !== null) {
+    // a parenthesis right after the notes said gives their count
+    // ("com ressalvas (1 média, 2 baixas)", WoodenKangaroo 2, 25/10); any
+    // other ends what says them, as a sentence's end does
+    const stretch = bare ?? line.slice(a + from!.index).replace(SAID_PAREN, "$1, $2").split(/[.;(\n]/)[0].slice(0, 160);
     let sum = 0;
     for (const p of stretch.matchAll(SAID_PAIR)) {
       const k = /^\d+$/.test(p[1]) ? Number(p[1]) : COUNT_WORD[p[1]];
