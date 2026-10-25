@@ -292,10 +292,11 @@ function fold(s: string): string {
 
 // what a text says of a verdict, by the first word of one it has: "Aprovado;
 // o PR anterior foi reprovado" is approved, "Reprovado; aprovado só
-// depois de…" rejected
-const REJECTED = /reprovad|rejeitad|\brejected\b|\bnao\s+aprov(?:ad|ou)/;
-const APPROVED = /aprovad|aprovou|\bapproved\b/;
-const WITH_NOTES = /^(?:aprovad[oa]s?\s*(?:com|c\/)\s*(?:\d+\s*)?(?:ressalva|observac)|aprovou\s*(?:o\s*\S+\s*)?(?:com|c\/)\s*(?:\d+\s*)?(?:ressalva|observac)|approved with)/;
+// depois de…" rejected; said in the first person too ("aprovei o #18",
+// SmoothPretzel; "reprovei")
+const REJECTED = /reprovad|reprovei|rejeitad|rejeitei|\brejected\b|\bnao\s+aprov(?:ad|ou|ei)/;
+const APPROVED = /aprovad|aprovou|aprovei|\bapproved\b/;
+const WITH_NOTES = /^(?:aprovad[oa]s?\s*,?\s*(?:com|c\/)\s*(?:(?:\d+|uma|duas|tres)\s*)?(?:ressalva|observac)|aprov(?:ou|ei)\s*(?:o\s*\S+\s*)?,?\s*(?:com|c\/)\s*(?:(?:\d+|uma|duas|tres)\s*)?(?:ressalva|observac)|approved with)/;
 function verdict_said(s: string): Verdict | null {
   const r = s.search(REJECTED);
   const a = s.search(APPROVED);
@@ -354,8 +355,10 @@ export function verdict_line(report: string): { verdict: Verdict; at: number } |
 
 // "sem ressalvas" said of all of them: not followed by a word that
 // qualifies which ("bloqueantes", "altas", "novas", "de merge"); on a
-// folded text (lower case, no accents). A lookahead, not a lookbehind
-// (Safari before 16.4)
+// folded text (lower case, no accents). "sem ressalvas pendentes" (or
+// "abertas", "restantes") is of all of them too: none left open, so the
+// list, if any, is of the ones fixed (decided 25/10, NuttyOyster). A
+// lookahead, not a lookbehind (Safari before 16.4)
 const NO_NOTES = /sem\s+(?:nenhuma\s+)?(?:ressalvas|ressalva(?!s))(?![\s*_`]*(?:que\s+)?(?:bloquei|bloqueant|impeditiv|impeca|critic|alta|media|grave|serias?\b|nova|novo|adiciona|relevant|significativ|importante|maior|de\s+merge|para\s+(?:o\s+)?merge|ao\s+merge))/;
 
 // a report's verdict (verdict_line) and its notes by severity: the list
@@ -389,6 +392,15 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     if (item === null) {
       if (line.trim() !== "") {
         group = null;
+      }
+      // a paragraph labeled by a note and its severity, its text on the
+      // same line ("**Ressalva baixa (…):** em verdict_of…", LunarWhale,
+      // SmoothPretzel): one note; a label with no text after it heads a
+      // list (below)
+      const para = NOTE_PARA.exec(fold(line));
+      if (para !== null) {
+        notes[sev_in(para[1]) ?? "low"] += 1;
+        noted = true;
       }
       if (/ressalva|observa[cç]/i.test(line)) {
         within = "notes";
@@ -432,6 +444,12 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   }
   return { verdict, notes, noted };
 }
+
+// a paragraph that opens with a label on a note with its severity, then
+// says it on the same line: "**Ressalva baixa (o problema…):** em…",
+// "Observação média: …"; not "**Ressalva 1:** corrigida" (no severity),
+// nor "**Ressalvas baixas:**" alone (a heading). On a folded line
+const NOTE_PARA = /^[\s>*_`]*(?:ressalvas?|observac(?:ao|oes))\s+(altas?|medias?|baixas?)\b[^:\n]{0,160}:[*_`\s]*[^*_`\s]/;
 
 // an item that opens with its severity: "1. MÉDIA: …", "- **A1 (ALTA,
 // bloqueante)** …", "1. A: baixa", "- Baixa — …"; not a word that

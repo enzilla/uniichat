@@ -117,6 +117,36 @@ test("verdict_of: 'sem ressalvas bloqueantes' or 'novas' qualifies which: its li
   expect(Pipeline.verdict_of("Veredito: aprovado sem nenhuma ressalva.\n- Ressalva baixa: x").noted).toBe(false);
 });
 
+test("verdict_of: 'sem ressalvas pendentes' is of all of them: none, whatever its list (NuttyOyster 1, 25/10)", () => {
+  const none = { verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false };
+  expect(Pipeline.verdict_of("Veredito: aprovado, sem ressalvas pendentes.\n- Ressalva baixa: x\n- Ressalva média: y")).toEqual(none);
+  expect(Pipeline.verdict_of("**Veredito: aprovado sem ressalvas pendentes.**\n\n**Ressalvas baixas:**\n1. x\n2. y")).toEqual(none);
+  // qualifiers still count the list
+  expect(Pipeline.verdict_of("Veredito: aprovado sem ressalvas bloqueantes.\n- Ressalva baixa: x").notes.low).toBe(1);
+  expect(Pipeline.verdict_of("Veredito: aprovado sem ressalvas novas.\n- Ressalva baixa: x").notes.low).toBe(1);
+  expect(Pipeline.verdict_of("Veredito: aprovado sem ressalvas de merge.\n- Ressalva baixa: x").notes.low).toBe(1);
+});
+
+test("verdict_of: a note in a paragraph counts; 'aprovei' approves (NuttyOyster 2: LunarWhale, SmoothPretzel, 25/10)", () => {
+  // LunarWhale: 'aprovado com ressalva baixa', the note a paragraph
+  const lunar = "**Veredito: aprovado com ressalva baixa.** Não achei nenhuma ressalva alta ou média nova.\n\n**O que conferi:**\n- **Testes:** 238 passam.\n- **B2:** dá noted=false.\n\n**Ressalva baixa (o problema do GoldenJay, confirmado):** em `verdict_of`, o atalho zera as notas.\n\n**Conserto proposto:** exigir…";
+  expect(Pipeline.verdict_of(lunar)).toEqual({ verdict: "approved_with_notes", notes: { high: 0, medium: 0, low: 1 }, noted: true });
+  // SmoothPretzel: 'aprovei', the note a paragraph; 'sem ressalvas média ou alta' qualifies
+  const smooth = "**Veredito: aprovei o morum/uniichat#18 no head 6178ccf, sem ressalvas média ou alta.** Gravei o veredito.\n\nConferi em worktree temporário:\n- **Testes:** 217 passando.\n\n**Ressalva baixa:** não rodei Safari 15.x nem 16.4 de verdade.\n\n**Não testado:**\n- iPhone.";
+  expect(Pipeline.verdict_of(smooth)).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 1 }, noted: true });
+  // PolarKoala: 'aprovado, com uma ressalva baixa'
+  expect(Pipeline.verdict_of("**Veredito: aprovado, com uma ressalva baixa.**\n\n**Ressalva baixa:** em `Tools.ts`, a descrição.")).toEqual({ verdict: "approved_with_notes", notes: { high: 0, medium: 0, low: 1 }, noted: true });
+  expect(Pipeline.verdict_of("Observação média: o cache não expira.\nVeredito: aprovei.").verdict).toBe("approved");
+  expect(Pipeline.verdict_of("Veredito: aprovei.\n\nObservação média: o cache não expira.").notes.medium).toBe(1);
+  // first person rejections
+  expect(Pipeline.verdict_of("Veredito: reprovei o #19.").verdict).toBe("rejected");
+  expect(Pipeline.verdict_of("Veredito: não aprovei o #19.").verdict).toBe("rejected");
+  // not a note: no severity in the label, or a heading with no text after it
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Ressalva 1:** corrigida.").noted).toBe(false);
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalvas baixas:**\n1. x\n2. y").notes.low).toBe(2);
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\nA ressalva baixa do anterior: corrigida.").noted).toBe(false);
+});
+
 test("verdict_of: an item under 'Não testado' never a note; '1. A: baixa' under the verdict's line one (HappyFish, 25/10)", () => {
   // a severity that's a word of the sentence, under another heading: none
   const untested = "**Veredito: aprovado com ressalvas.**\n\n**Ressalvas**\n1. Média: x.\n\n**Não testado:**\n- Baixa cobertura de iPhone.\n- Alta: carga real.";
