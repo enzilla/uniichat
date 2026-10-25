@@ -60,8 +60,8 @@ test("verdict_of: the verdict from the first lines; notes by severity, from a li
   // a list under a heading with no severity, each item its own (WhiteRaven, 25/10)
   const raven = "**Veredito: aprovado com ressalvas. Há uma ressalva MÉDIA.**\n\n**O que passou**\n- `bun test` deu 210 passes.\n\n**Ressalvas**\n1. **MÉDIA (Tasks.ts:1315):** burlável.\n   Correção sugerida: recusar.\n2. Baixa: PR_LINK.\n3. Baixa: isenção.\n\n**Não testado:**\n- iPhone, alta prioridade.";
   expect(Pipeline.verdict_of(raven)).toEqual({ verdict: "approved_with_notes", notes: { high: 0, medium: 1, low: 2 }, noted: true });
-  // approved, none
-  expect(Pipeline.verdict_of("**APROVADO sem ressalvas.** Tudo certo.\n- baixa coisa")).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: true });
+  // approved, none: none listed either (NeatOrca B2, 25/10)
+  expect(Pipeline.verdict_of("**APROVADO sem ressalvas.** Tudo certo.\n- baixa coisa")).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false });
   expect(Pipeline.verdict_of("Aprovou o #18 com ressalvas: uma baixa.").verdict).toBe("approved_with_notes");
   // no verdict said: none read
   expect(Pipeline.verdict_of("Implementei a R6 no commit abc1234.")).toEqual({ verdict: null, notes: { high: 0, medium: 0, low: 0 }, noted: false });
@@ -77,6 +77,26 @@ test("verdict_of: the verdict said first, or on the line 'Veredito:'; not a reje
   expect(Pipeline.verdict_of(happy)).toEqual({ verdict: "approved_with_notes", notes: { high: 0, medium: 1, low: 4 }, noted: true });
   // the verdict's line spread: the next line that says one
   expect(Pipeline.verdict_of("**Veredito:**\nREPROVADO, uma alta.\n- A1 (ALTA): x")).toEqual({ verdict: "rejected", notes: { high: 1, medium: 0, low: 0 }, noted: true });
+});
+
+test("verdict_of: only a line labeled 'Veredito' decides; the word cited in the body doesn't (NeatOrca B1, 25/10)", () => {
+  // no label: the first line, by the word said first
+  expect(Pipeline.verdict_of("Aprovado. O veredito do anterior foi reprovado.").verdict).toBe("approved");
+  expect(Pipeline.verdict_of("Aprovado.\nO veredito do anterior foi reprovado.").verdict).toBe("approved");
+  expect(Pipeline.verdict_of("Reprovado. O veredito anterior foi aprovado.").verdict).toBe("rejected");
+  // a label decides, even after a line that says another
+  expect(Pipeline.verdict_of("O ciclo anterior foi aprovado.\n\nVeredito: reprovado (1 alta).").verdict).toBe("rejected");
+  expect(Pipeline.verdict_of("O veredito do anterior foi reprovado.\n**Veredito (P66): aprovado.**").verdict).toBe("approved");
+  expect(Pipeline.verdict_of("Contexto: reprovado antes.\nVeredito final — aprovado com ressalvas.\n- Baixa: x")).toEqual({ verdict: "approved_with_notes", notes: { high: 0, medium: 0, low: 1 }, noted: true });
+  expect(Pipeline.verdict_of("O PR anterior foi reprovado.\n\n## Veredito\n\nAprovado.").verdict).toBe("approved");
+  expect(Pipeline.verdict_of("Verdict: rejected. It was approved before.").verdict).toBe("rejected");
+});
+
+test("verdict_of: 'Veredito: Aprovado sem ressalvas' lists none (NeatOrca B2, 25/10)", () => {
+  expect(Pipeline.verdict_of("Veredito: Aprovado sem ressalvas")).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false });
+  expect(Pipeline.verdict_of("**Veredito: APROVADO sem ressalvas.**\n\n**Não testado:**\n- Alta: iPhone.")).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false });
+  // with notes, still noted
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n- Baixa: x").noted).toBe(true);
 });
 
 test("verdict_of: an item under 'Não testado' never a note; '1. A: baixa' under the verdict's line one (HappyFish, 25/10)", () => {
@@ -103,6 +123,13 @@ test("prs_named: links, owner/repo#n and repo#n; the head near each; not P48 nor
   const evil = Pipeline.prs_named("Veja evil.com/x#4 e foo.bar/baz#9; o certo é Numih-x/auth#5.");
   expect(evil.prs).toEqual(["auth#5"]);
   expect(Object.values(evil.links)).toEqual(["https://github.com/Numih-x/auth/pull/5"]);
+  // an owner with "-" at its start or end, as GitHub refuses: no link (NeatOrca B3, 25/10)
+  for (const bad of ["Numih-/foo#4", "-Numih/foo#4", "a-/b#1"]) {
+    expect(Object.keys(Pipeline.prs_named("Veja " + bad + ".").links)).toEqual([]);
+  }
+  expect(Pipeline.prs_named("Veja Numih-/foo#4.").prs).toEqual([]);
+  expect(Pipeline.prs_named("Veja a/b#1, a-b/c#2 e " + "x".repeat(39) + "/d#3.").links).toEqual({ "b#1": "https://github.com/a/b/pull/1", "c#2": "https://github.com/a-b/c/pull/2", "d#3": "https://github.com/" + "x".repeat(39) + "/d/pull/3" });
+  expect(Object.keys(Pipeline.prs_named("Veja " + "x".repeat(40) + "/d#3.").links)).toEqual([]);
   expect(Pipeline.pr_same("messaging#17", "dp-bk-messaging#17")).toBe(true);
   expect(Pipeline.pr_same("auth#307", "oauth#307")).toBe(false);
   expect(Pipeline.pr_same("auth#307", "auth#306")).toBe(false);

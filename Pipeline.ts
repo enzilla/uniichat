@@ -123,7 +123,7 @@ const SURVEY = /(^|-)(levantamento|diagnostico|diagnóstico|survey|avaliacao|ava
 const PR_URL = /github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/gi;
 // (an owner as GitHub's: letters, digits and "-", no "."; "evil.com/x#4"
 // names none)
-const PR_REF = /(?:^|[^\w\/.#-])(?:([A-Za-z0-9][A-Za-z0-9-]{0,38})\/)?([A-Za-z][\w.-]*)#(\d+)\b/g;
+const PR_REF = /(?:^|[^\w\/.#-])(?:([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\/)?([A-Za-z][\w.-]*)#(\d+)\b/g;
 const NOT_REPO = /^(pr|prs|pull|issue|n|no|nº|item|p)$/i;
 
 // a head given in a text: "head 6178ccf", "commit 33236f0", "em `d0ff55e`"
@@ -308,9 +308,15 @@ function verdict_said(s: string): Verdict | null {
   return WITH_NOTES.test(s.slice(a)) ? "approved_with_notes" : "approved";
 }
 
+// a line that labels the verdict: "**Veredito: …", "Veredito (NUM-2337):
+// …", "Veredito final — …", a heading "## Veredito"; not a line that
+// only cites the word ("O veredito do anterior foi reprovado.")
+const VERDICT_LABEL = /^[\s>#*_`-]*(?:veredito|verdict)\b(?:\s*\([^)\n]{0,80}\)|\s+final)?[*_`\s]*(?:[:—–]|-\s|$)/;
+
 // a report's verdict and the line that says it, within its first 600
-// characters: its line "Veredito: …" if one says one, else its first
-// line that says one
+// characters: its line labeled "Veredito:", or the first line after a
+// label that says none ("**Veredito:**\nREPROVADO"); else its first line
+// that says one, by the word said first
 export function verdict_line(report: string): { verdict: Verdict; at: number } | null {
   const top: string[] = [];
   let n = 0;
@@ -322,10 +328,19 @@ export function verdict_line(report: string): { verdict: Verdict; at: number } |
     n += line.length + 1;
   }
   for (let k = 0; k < top.length; k++) {
-    const v = top[k].search(/veredito|verdict/);
-    const said = v < 0 ? null : verdict_said(top[k].slice(v));
+    const label = VERDICT_LABEL.exec(top[k]);
+    if (label === null) {
+      continue;
+    }
+    const said = verdict_said(top[k].slice(label[0].length));
     if (said !== null) {
       return { verdict: said, at: k };
+    }
+    for (let j = k + 1; j < top.length; j++) {
+      const next = verdict_said(top[j]);
+      if (next !== null) {
+        return { verdict: next, at: j };
+      }
     }
   }
   for (let k = 0; k < top.length; k++) {
@@ -403,8 +418,9 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     notes[sev] += 1;
     noted = true;
   }
+  // approved without notes: none, and none listed (noted only for notes)
   if (verdict === "approved" && /sem ressalvas/.test(top)) {
-    return { verdict, notes: zero(), noted: true };
+    return { verdict, notes: zero(), noted: false };
   }
   return { verdict, notes, noted };
 }
