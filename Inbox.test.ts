@@ -2,7 +2,7 @@
 // ==========
 // `UNII_DIR=$(mktemp -d) bun test Inbox.test.ts`: tasks from outside
 // (Tasks.task_inbox, Server.ts Main.inbox): only with the inbox token,
-// the user's, from slack or github, one per conversation (ref), done once
+// the user's, from slack, github or timer, one per conversation (ref), done once
 // per post id, no turn started, what's wrong refused.
 
 import { afterAll, expect, test } from "bun:test";
@@ -230,6 +230,30 @@ test("bidi marks gone from title, detail and choices, new or appended", async ()
   expect(t.title).toBe("Slack: de Enzo");
   expect(t.detail).toBe("13:45 Enzo: oi\nlinha\n13:50 Enzo: mais");
   expect(/[\u202a-\u202e\u2066-\u2069\u200e\u200f]/.test(t.title + t.detail + t.choices.join(""))).toBe(false);
+});
+
+// the post vigia.ts (~/orquestracao/slack) sends for a task of Unii's
+// that stalled: origin timer, its own ref, three choices
+test("the stalled tasks' watch (vigia.ts, origin timer): accepted, a task of the user's from the timer", async () => {
+  const body = {
+    id: "vigia:P48:2026-10-26",
+    task: {
+      title: "Pendência P48 do Unii parada: NUM-2337",
+      detail: "A P48 é do Unii, está aberta e não há agente em andamento ou ela não muda há mais de 24 h.",
+      origin: "timer", ref: "vigia:P48", choices: ["Retome agora", "Pode fechar", "Eu cuido"],
+    },
+  };
+  const res = await post(body);
+  expect(res.ok).toBe(true);
+  expect(res.status).toBe(201);
+  const ans = await res.json();
+  const t = Tasks.task_find(s, ans.task)!;
+  expect(t.origin).toBe("timer");
+  expect(t.assignee).toBe("user");
+  expect(t.ref).toBe("vigia:P48");
+  expect(t.choices).toEqual(["Retome agora", "Pode fechar", "Eu cuido"]);
+  // the same day's post again: done once
+  expect(await (await post(body)).json()).toEqual({ ...ans, again: true });
 });
 
 test("still no turn after all of it", async () => {

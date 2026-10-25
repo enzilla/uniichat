@@ -791,15 +791,16 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
 // Inbox
 // -----
 // A task from outside (Server.ts /api/inbox: a script with the inbox
-// token, as the Slack sorter), always the user's, from slack or github,
-// keyed by its ref (one conversation, "slack:D0123"): an open one of
+// token, as the Slack sorter or the stalled tasks' watch, vigia.ts),
+// always the user's, from slack, github or timer (a script run by a
+// systemd timer), keyed by its ref (one conversation, "slack:D0123"): an open one of
 // that ref and origin gets the new text appended (its oldest lines
 // dropped past DETAIL), the newest title and link; else a new one (by
 // "inbox"). Nothing is told to Unii and no turn starts: the user
 // decides, and their resolution reaches Unii as any other. Only the keys
 // below are taken; any other, or a wrong value, is refused, said why
 
-export const INBOX_ORIGINS = ["slack", "github"];
+export const INBOX_ORIGINS = ["slack", "github", "timer"];
 const INBOX_KEYS = ["title", "detail", "origin", "origin_url", "ref", "choices"];
 
 // the marks that turn text's direction (U+202A-U+202E, U+2066-U+2069,
