@@ -1264,3 +1264,53 @@ test("verdict_of: a heading's severity prevails over a word that opens a paragra
   expect(of("**Média**\n- a\n- b\n\n**Baixas**\n- c\n- d\n")).toEqual({ high: 0, medium: 1, low: 2 });
   expect(of("**Médias**\n- a\n- b\n")).toEqual({ high: 0, medium: 2, low: 0 });
 });
+
+test("verdict_of: a count said treated is none; zeros before a count, or the count on the next line, count; an item that only says a fix is the note's state; a singular severity's note is not lost to items with their own (PeachEagle 1-4, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado\n\n" + s).notes;
+  const said = (s: string) => {
+    const v = Pipeline.verdict_of(s);
+    return [v.verdict, v.notes.high, v.notes.medium, v.notes.low];
+  };
+  // 1: "tratadas" says them fixed, as "corrigidas" does
+  expect(said("Veredito: aprovado. 2 baixas já tratadas.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. 2 baixas, já tratadas.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. 2 baixas tratadas em abc1234.")).toEqual(["approved", 0, 0, 0]);
+  // not a word that says no fix
+  expect(said("Veredito: aprovado. 2 baixas já conhecidas.")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(said("Veredito: aprovado. 2 baixas abertas.")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(of("- Ressalva baixa (tratada em abc1234)\n- Ressalva média: x\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  // 2: severities said none of, then the count
+  expect(said("Veredito: aprovado. Nenhuma média, 2 baixas")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(said("Veredito: aprovado. Nenhuma alta nem média, 2 baixas.")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(said("Veredito: aprovado. 0 médias e 2 baixas")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(said("Approved. No high, 2 low")).toEqual(["approved_with_notes", 0, 0, 2]);
+  // none said, no count: approved
+  expect(said("Veredito: aprovado. Nenhuma média.")).toEqual(["approved", 0, 0, 0]);
+  // 2: the count on the line after a verdict alone on its own
+  expect(said("Veredito: aprovado.\n1 média e 2 baixas")).toEqual(["approved_with_notes", 0, 1, 2]);
+  expect(said("Veredito: aprovado.\n\n1 média e 2 baixas")).toEqual(["approved_with_notes", 0, 1, 2]);
+  expect(said("**Veredito:**\nAPROVADO\n1 média")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // not one said fixed, nor a line that doesn't open with it, nor a heading or an item, nor after more on the verdict's line
+  expect(said("Veredito: aprovado.\n2 baixas corrigidas.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado.\n2 baixas já tratadas.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado.\nO PR tem 2 baixas")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado.\n\n## Conferido\n- 2 baixas")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado sem ressalvas.\n2 baixas")).toEqual(["approved", 0, 0, 0]);
+  // 3: "**Média**" then an item that only says a fix: none, as in a paragraph
+  expect(of("**Média**\n- corrigida em abc1234\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(of("Média corrigida em abc1234\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(of("**Média**\n- já tratada\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(of("**Média**\n- corrigida em abc1234\n- detalhe\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(of("**Média**\n- corrigida em abc1234\n- Baixa: x\n")).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(of("**Baixas**\n- Corrigidas em abc1234.\n- outra\n")).toEqual({ high: 0, medium: 0, low: 1 });
+  // qualified, open: it counts
+  expect(of("**Média**\n- corrigida em abc1234, mas falha no Safari\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(of("**Média**\n- tratada, mas falta teste\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  // 4: "**Média**" then items with their own severity: the medium counts too
+  expect(of("**Média**\n- Baixa: x\n- Baixa: y\n")).toEqual({ high: 0, medium: 1, low: 2 });
+  expect(of("**Média**\n- **Baixa** x\n- **Alta** y\n")).toEqual({ high: 1, medium: 1, low: 1 });
+  // the same severity is the note itself; a first item without one is the medium's text
+  expect(of("**Média**\n- Média: x\n- b\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(of("**Média**\n- a\n- Baixa: b\n")).toEqual({ high: 0, medium: 1, low: 1 });
+  expect(of("**Médias**\n- a\n- Baixa: b\n")).toEqual({ high: 0, medium: 1, low: 1 });
+});

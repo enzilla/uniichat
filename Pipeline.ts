@@ -317,7 +317,10 @@ function verdict_said(s: string): Verdict | null {
 // 2 baixas", "aprovado (1 média, 2 baixas)" (WoodenKangaroo 3, 25/10):
 // what says them, to the end of its sentence; not a count of zero, nor a
 // sentence that says them fixed ("aprovado. 3 baixas da V19 corrigidas")
-const BARE_COUNT = /^[\s*_`.,:;—–()\[\]-]*(?=(?:[1-9]\d*|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b)/;
+// The severities it says none of may come first ("aprovado. Nenhuma média,
+// 2 baixas", "0 médias e 2 baixas", "sem alta nem média, 1 baixa",
+// PeachEagle 2, 25/10): the count after them is said all the same
+const BARE_COUNT = /^[\s*_`.,:;—–()\[\]-]*(?:(?:nenhum[a]?|zero|0|sem|no|none)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b(?:\s*(?:,|\be\b|\bnem\b|\bou\b|\bor\b)\s*(?:altas?|medias?|baixas?|high|medium|low)\b)*[\s,;]*(?:(?:e|and)\s+)?)?(?=(?:[1-9]\d*|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b)/;
 function bare_count(said: string): string | null {
   const m = BARE_COUNT.exec(said.replace(/^\w+/, ""));
   if (m === null) {
@@ -336,7 +339,7 @@ const VERDICT_LABEL = /^[\s>#*_`-]*(?:veredito|verdict)\b(?:\s*\([^)\n]{0,80}\)|
 // characters: its line labeled "Veredito:", or the first line after a
 // label that says none ("**Veredito:**\nREPROVADO"); else its first line
 // that says one, by the word said first
-export function verdict_line(report: string): { verdict: Verdict; at: number } | null {
+export function verdict_line(report: string): { verdict: Verdict; at: number; count?: number } | null {
   const top: string[] = [];
   let n = 0;
   for (const line of report.split("\n")) {
@@ -353,22 +356,43 @@ export function verdict_line(report: string): { verdict: Verdict; at: number } |
     }
     const said = verdict_said(top[k].slice(label[0].length));
     if (said !== null) {
-      return { verdict: said, at: k };
+      return count_next(top, k, said);
     }
     for (let j = k + 1; j < top.length; j++) {
       const next = verdict_said(top[j]);
       if (next !== null) {
-        return { verdict: next, at: j };
+        return count_next(top, j, next);
       }
     }
   }
   for (let k = 0; k < top.length; k++) {
     const said = verdict_said(top[k]);
     if (said !== null) {
-      return { verdict: said, at: k };
+      return count_next(top, k, said);
     }
   }
   return null;
+}
+
+// a verdict alone on its line ("Aprovado.", "**APROVADO**") with its count
+// on the next line that says something ("Aprovado.\n1 média e 2 baixas",
+// "Aprovado.\n\nNenhuma média, 2 baixas", PeachEagle 2, 25/10): approved
+// with notes, the count said there (count, the line's index), as on the
+// verdict's line (bare_count); not a heading, an item, a bold label, a
+// quote or a table there, nor a count it says fixed
+function count_next(top: string[], k: number, verdict: Verdict): { verdict: Verdict; at: number; count?: number } {
+  if (verdict !== "approved") {
+    return { verdict, at: k };
+  }
+  const a = top[k].search(APPROVED);
+  if (a < 0 || !/^[\s*_`.,:;!—–-]*$/.test(top[k].slice(a).replace(/^\w+/, ""))) {
+    return { verdict, at: k };
+  }
+  const j = top.findIndex((l, n) => n > k && l.trim() !== "");
+  if (j < 0 || /^\s*(?:#|\*\*|__|>|\||(?:\d+[.)]|[-*•])\s)/.test(top[j]) || bare_count("x " + top[j]) === null) {
+    return { verdict, at: k };
+  }
+  return { verdict: "approved_with_notes", at: k, count: j };
 }
 
 // "sem ressalvas" said of all of them: not followed by a word that
@@ -581,6 +605,18 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
       }
       continue;
     }
+    // under a heading on notes, an item that only says a fix ("**Média**\n-
+    // corrigida em abc1234", "**Baixas**\n- Corrigidas em abc1234.") says
+    // its note's state, as "Média corrigida em abc1234" does in a paragraph
+    // (PeachEagle 3, 25/10): no note open, and what follows it is its detail
+    // (under "**Média**", the one note it labels); qualified ("…, mas falha
+    // no Safari"), it is open and counts
+    if (within === "notes" && top_level && !next_open && says_fixed(bare_item)) {
+      group = null;
+      counted = true;
+      one_done();
+      continue;
+    }
     // an item that heads its own list by a severity ("- **Baixas e
     // informativas:**"), under no heading: its items count by it, it not
     // (under a heading on notes, an item is a note, its items its words)
@@ -626,6 +662,16 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
       }
       continue;
     }
+    // under a severity in the singular ("**Média**"), a first item that
+    // labels its own, another ("- Baixa: x"), is a note of its own: the
+    // heading's note counts too, not lost ("**Média**\n- Baixa: x\n- Baixa:
+    // y" 1 medium and 2 low, PeachEagle 4, 25/10), the safe side
+    if (single && top_level && given !== null) {
+      const label = sev_first(line);
+      if (label !== null && label !== given) {
+        notes[given] += 1;
+      }
+    }
     notes[sev] += 1;
     noted = true;
     if (top_level) {
@@ -644,7 +690,8 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   // says, at least one, of the severity it gives them, else low, so
   // the count agrees with the verdict
   if (verdict === "approved_with_notes" && !noted) {
-    const said = notes_said(fold(report.split("\n")[found.at] ?? ""));
+    // (or on the line after it, if the count is there: count_next)
+    const said = notes_said(found.count === undefined ? fold(report.split("\n")[found.at] ?? "") : "aprovado " + fold(report.split("\n")[found.count] ?? ""));
     notes.high += said.high;
     notes.medium += said.medium;
     notes.low += said.low;
@@ -679,7 +726,10 @@ function uncoded(line: string): string {
 // (ALL_FIXED): "ressalva 1 (média, corrigida)", "média (corrigida em
 // abc1234)", "ressalvas corrigidas" are; "média (corrigida só em parte)"
 // isn't. On a folded label (label_of)
-const FIXED_WORD = /\b(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
+// "tratada" says it as "corrigida" does ("aprovado. 2 baixas já tratadas",
+// PeachEagle 1, 25/10): the words of a fix, one list for every reading
+const FIX = String.raw`(?:corrigid|resolvid|sanad|tratad|fixed\b|resolved\b|addressed\b)`;
+const FIXED_WORD = new RegExp(String.raw`\b` + FIX);
 // what may come before the fixed word for it to be the label's state:
 // only a note's name, its number and its severity ("ressalva 1 (média,
 // ", "média (", "ressalvas ", "todas as ressalvas já ", "a1 (alta, ");
@@ -689,7 +739,7 @@ const FIXED_WORD = /\b(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
 // A number may end in "." or ")" ("**1. Média corrigida.**", "**1) Média
 // corrigida**", JuicyTuna, 25/10)
 const STATUS = /^[\s>#*_`\[(]*(?:(?:todas?|tudo|ambas)\s+)?(?:(?:as|os|a|o)\s+(?:(?:\d+|duas|tres|quatro|cinco)\s+)?)?(?:(?:ressalvas?|observac(?:ao|oes)|notas?)\b[\s*_`]*)?(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?(?:\s*(?:,|\be\b)\s*[a-z]?\d+[a-z]?)*\b[\s*_`]*)?(?:[(\[,;:—–.)-]\s*)*(?:(?:altas?|high|medias?|medium|baixas?|low)\b(?:\s*(?:,|\be\b|\bou\b)\s*(?:altas?|medias?|baixas?)\b)*)?[\s*_`()\[\],;:—–.-]*(?:(?:ja|foram|estao|foi|esta|todas?|tudo|ambas|as|os|duas|tres|quatro|cinco|\d+)\s+)*$/;
-const NOT_FIXED = /\b(?:nao|not|unfixed)\s+(?:\w+\s+){0,2}(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
+const NOT_FIXED = new RegExp(String.raw`\b(?:nao|not|unfixed)\s+(?:\w+\s+){0,2}` + FIX);
 // what follows a state that says fixed keeps the note open (open_after)
 // unless it is only a reference to the fix or to its check (refs_only):
 // a hash, a token with a digit, "#", "." or ":" ("#19", "PR #19",
@@ -806,7 +856,7 @@ const REFS = REF_ONE + String.raw`(?:\s*(?:,\s*|\s+(?:e|and)\s+)(?:(?:em|no|na|n
 const FIX_PAREN = String.raw`\s*\(\s*(?:(?:ver|veja|see)\s+)?` + REFS + String.raw`\s*\)`;
 const fix_where = (by: string) => String.raw`(?:\s+localmente|\s+(?:` + by + String.raw`)\s+` + REFS + String.raw`)?(?:` + FIX_PAREN + String.raw`)?`;
 const ALL_FIXED = new RegExp(
-  String.raw`^\s*(?:(?:todas?|tudo|ambas|as\s+(?:\d+|duas|tres|quatro|cinco))\s+(?:(?:as\s+)?ressalvas\s+)?)?(?:(?:ja\s+)?(?:foram|estao)\s+)?(?:corrigid|resolvid|sanad|fixed|resolved)\w*` +
+  String.raw`^\s*(?:(?:todas?|tudo|ambas|as\s+(?:\d+|duas|tres|quatro|cinco))\s+(?:(?:as\s+)?ressalvas\s+)?)?(?:(?:ja\s+)?(?:foram|estao)\s+)?` + FIX + String.raw`\w*` +
     fix_where("em|no|na|nos|nas|pelo|pela|por|in|on|by|at") +
     String.raw`(?:(?:\s*,\s*|\s*,?\s+(?:e|and)\s+)(?:testad|verificad|conferid|validad|cobert|tested|verified)\w*` +
     fix_where("em|no|na|nos|nas|pelo|pela|por|com|in|on|by|at|with") +
@@ -816,7 +866,7 @@ const ALL_FIXED = new RegExp(
 // the pieces of a text that only refers (refs_only)
 const REF_ONLY_PIECES = [
   /^(?:[.,;]+|[—–-]+|(?:e|and)\b)/,
-  /^(?:corrigid|resolvid|sanad|fixed\b|resolved\b)\w*/,
+  new RegExp(String.raw`^` + FIX + String.raw`\w*`),
   /^(?:testad|verificad|conferid|validad|cobert|tested\b|verified\b)\w*/,
   /^(?:ja|tambem|depois|agora|ok|localmente|locally|also|now)\b/,
   /^(?:com|with)\s+(?:testes?|tests?|cobertura|coverage)\b/,
@@ -847,6 +897,13 @@ const SEV_LABEL = /^[\s>#*_]*(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,.):—
 // (corrigida em abc1234)** mas sem teste", BraveTiger 2, 25/10): its
 // state is read as one with a severity's. On a folded line
 const NOTE_NUM_HEAD = /^[\s>#*_]*(?:ressalva|observacao)\s+(?:n[o.]?\s*)?[a-z]?\d+[a-z]?\b/;
+const FIX_START = new RegExp(String.raw`^` + FIX);
+// a text that says only a fix: "corrigida em abc1234", "já tratada",
+// "todas corrigidas (bun 262/0)"; on a folded text, its marks off
+function says_fixed(f: string): boolean {
+  const t = f.replace(/[*_`]/g, "").trim();
+  return ALL_FIXED.test(t) || (FIX_START.test(t.replace(/^ja\s+/, "")) && refs_only(t));
+}
 function note_fixed(f: string): boolean {
   return note_state(f) === "fixed";
 }
@@ -921,14 +978,14 @@ function note_state(f: string): "fixed" | "open" | "none" {
   // so does a severity without bold, its state right after it ("Média
   // corrigida, falta o iPhone", "Baixa corrigida em abc1234", RoyalToucan
   // 3, 25/10), in a paragraph or an item, under a heading or not
-  if (named === null && !colon && /^(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/.test(text)) {
+  if (named === null && !colon && FIX_START.test(text)) {
     return refs_only(text) ? "fixed" : "open";
   }
   // a numbered or labeled note whose text opens with its state, with no
   // bold ("Ressalva 2 corrigida, falta o iPhone", "Ressalva 1 corrigida
   // exceto no Safari", GentleShrimp 2, 25/10): as with bold, fixed only if
   // what follows only refers (refs_only), else open
-  if (named !== null && /^(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/.test(text)) {
+  if (named !== null && FIX_START.test(text)) {
     return refs_only(text) ? "fixed" : "open";
   }
   return states(label) || (paren !== null && states(label + " " + paren[0])) ? "open" : "none";
