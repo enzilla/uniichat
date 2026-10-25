@@ -422,7 +422,12 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
       // so is one labeled by a single note and its severity, alone on its
       // line ("**Ressalva baixa**"): its items are its details
       // ("- **Efeito:** …", "- **Correção possível:** …", NeatWombat, 25/10)
-      const para = NOTE_PARA.exec(fold(line)) ?? NOTE_NUM.exec(fold(line)) ?? NOTE_ONE.exec(fold(line));
+      // a heading or bold label of one note with its severity, whatever
+      // follows ("**Ressalva baixa** (corrigida em abc1234), mas ainda
+      // falha", "**Ressalva baixa** (aberta (corrigida em abc1234))"), and
+      // a bold label of a severity with its text ("**Baixa: texto
+      // corrigida no hash**", JuicyTuna, 25/10): one note too
+      const para = NOTE_PARA.exec(fold(line)) ?? NOTE_NUM.exec(fold(line)) ?? NOTE_ONE.exec(fold(line)) ?? NOTE_LEAD.exec(fold(line)) ?? SEV_PARA.exec(fold(line));
       if (para !== null && !note_fixed(fold(line))) {
         notes[sev_in(para[1]) ?? "low"] += 1;
         noted = true;
@@ -452,7 +457,7 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     // so is one labeled a note with its severity whose text says it fixed
     // ("- **Ressalva 1 (média):** corrigida em abc"), as its paragraph
     const top_level = item[1].length < 2;
-    if (fixed(label_of(line)) || note_fixed(fold(line).replace(/^\s*(?:\d+[.)]|[-*•])\s+/, ""))) {
+    if ((fixed(label_of(line)) && !qualified_after(line)) || note_fixed(fold(line).replace(/^\s*(?:\d+[.)]|[-*•])\s+/, ""))) {
       if (top_level) {
         group = null;
         counted = false;
@@ -554,9 +559,18 @@ const FIXED_WORD = /\b(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
 // ", "média (", "ressalvas ", "todas as ressalvas já ", "a1 (alta, ");
 // a title that says more ("**Baixa cobertura da nota corrigida.**",
 // "**Mantém alta a nota corrigida.**", "**Observação sobre ressalva
-// corrigida.**", SweetSheep, 25/10) only cites a fix: the note stays open
-const STATUS = /^[\s>#*_`\[(]*(?:(?:todas?|tudo|ambas)\s+)?(?:(?:as|os|a|o)\s+(?:(?:\d+|duas|tres|quatro|cinco)\s+)?)?(?:(?:ressalvas?|observac(?:ao|oes)|notas?)\b[\s*_`]*)?(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?(?:\s*(?:,|\be\b)\s*[a-z]?\d+[a-z]?)*\b[\s*_`]*)?(?:[(\[,;:—–-]\s*)*(?:(?:altas?|high|medias?|medium|baixas?|low)\b(?:\s*(?:,|\be\b|\bou\b)\s*(?:altas?|medias?|baixas?)\b)*)?[\s*_`()\[\],;:—–.-]*(?:(?:ja|foram|estao|foi|esta|todas?|tudo|ambas|as|os|duas|tres|quatro|cinco|\d+)\s+)*$/;
+// corrigida.**", SweetSheep, 25/10) only cites a fix: the note stays open.
+// A number may end in "." or ")" ("**1. Média corrigida.**", "**1) Média
+// corrigida**", JuicyTuna, 25/10)
+const STATUS = /^[\s>#*_`\[(]*(?:(?:todas?|tudo|ambas)\s+)?(?:(?:as|os|a|o)\s+(?:(?:\d+|duas|tres|quatro|cinco)\s+)?)?(?:(?:ressalvas?|observac(?:ao|oes)|notas?)\b[\s*_`]*)?(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?(?:\s*(?:,|\be\b)\s*[a-z]?\d+[a-z]?)*\b[\s*_`]*)?(?:[(\[,;:—–.)-]\s*)*(?:(?:altas?|high|medias?|medium|baixas?|low)\b(?:\s*(?:,|\be\b|\bou\b)\s*(?:altas?|medias?|baixas?)\b)*)?[\s*_`()\[\],;:—–.-]*(?:(?:ja|foram|estao|foi|esta|todas?|tudo|ambas|as|os|duas|tres|quatro|cinco|\d+)\s+)*$/;
 const NOT_FIXED = /\b(?:nao|not|unfixed)\s+(?:\w+\s+){0,2}(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
+// what follows a state that says fixed and goes on qualifying it: another
+// parenthesis ("(corrigida em abc1234) (aberta)", "… (testada no
+// iPhone)"), a comma, or a word that adds or limits ("… e falta teste",
+// "…, mas ainda falha", "… — mas o Safari falha", JuicyTuna, 25/10): the
+// note stays open. Text that only describes the note ("**MÉDIA
+// (corrigida)** o parser…", "…. O parser") doesn't. On a folded text
+const QUALIFIED = /^[\s*_`]*(?:[,;(\[]|(?:[—–-]\s*)?(?:e|mas|porem|contudo|entretanto|todavia|exceto|salvo|menos|so|apenas|ainda|falta|faltam|nao|sem|but|except|only|still|and|without)\b)/;
 function fixed(label: string): boolean {
   const m = FIXED_WORD.exec(label);
   if (m === null || NOT_FIXED.test(label) || !STATUS.test(label.slice(0, m.index))) {
@@ -572,6 +586,11 @@ function fixed(label: string): boolean {
     for (let k = 0; k < said.length; k++) {
       d += said[k] === "(" ? 1 : said[k] === ")" ? -1 : 0;
       if (d < depth) {
+        // past its parenthesis, what qualifies it keeps the note open
+        // ("### Ressalva baixa (corrigida em abc1234) e falta teste")
+        if (QUALIFIED.test(said.slice(k + 1))) {
+          return false;
+        }
         said = said.slice(0, k);
         break;
       }
@@ -630,8 +649,16 @@ const NOTE_HEAD = /^[\s>#*_]*(?:ressalvas?|observac(?:ao|oes))\s+(?:(?:n[o.]?\s*
 // are (LemonRobin, 25/10); "…: corrigida só em parte" or "… — o teste
 // corrigido não cobre x" aren't. Its label ends after the severity and
 // its parenthesis, at its first ":", bold's end or dash. On a folded line
+// A label of only a severity, without "Ressalva" ("**Média** (corrigida em
+// abc1234)", "**Baixa (corrigida)**", JuicyTuna, 25/10), is fixed by its
+// label or its parenthesis too, not by its text ("Baixa: corrigida em abc"
+// says it of the text: label_of). What qualifies the state after it ("…
+// (corrigida em abc1234), mas ainda falha", "… (corrigida em abc1234)
+// (aberta)", "… — mas o Safari falha": QUALIFIED) keeps the note open
+const SEV_LABEL = /^[\s>#*_]*(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,.):—–-]?\s*)?(?:altas?|medias?|baixas?)\b/;
 function note_fixed(f: string): boolean {
-  const head = NOTE_HEAD.exec(f);
+  const named = NOTE_HEAD.exec(f);
+  const head = named ?? SEV_LABEL.exec(f);
   if (head === null) {
     return false;
   }
@@ -666,7 +693,17 @@ function note_fixed(f: string): boolean {
   // a parenthesis that opens the text, after the bold or the dash, says
   // the label's state too ("**Ressalva baixa** (corrigida em abc1234)")
   const paren = /^\([^()\n]*\)/.exec(text);
-  return fixed(label) || (paren !== null && fixed(label + " " + paren[0])) || (text !== "" && ALL_FIXED.test(text));
+  // after a colon, the text is the note's own ("**Ressalva baixa
+  // (corrigida):** só o título mudava"); else, what qualifies the state
+  // keeps it open
+  const colon = sep !== null && sep[0] === ":";
+  if (fixed(label)) {
+    return colon || !QUALIFIED.test(text);
+  }
+  if (paren !== null && fixed(label + " " + paren[0])) {
+    return !QUALIFIED.test(text.slice(paren[0].length));
+  }
+  return named !== null && text !== "" && ALL_FIXED.test(text);
 }
 
 // the severity an item opens with (SEV_FIRST: "1. MÉDIA: …"), or the one
@@ -717,6 +754,20 @@ function label_of(line: string): string {
   return /\b(?:ressalvas?|observac(?:ao|oes)|altas?|high|medias?|medium|baixas?|low)\b/.test(label) ? label : "";
 }
 
+// an item labeled in bold, with no ":", whose text right after the bold
+// qualifies the state the label says ("1. **Ressalva baixa (corrigida em
+// abc1234)** mas ainda falha no Safari", "… — falta teste no iPhone", "…
+// e outra coisa", JuicyTuna, 25/10): QUALIFIED, the note stays open. After
+// a ":" the text is the note's own ("1. **Ressalva 1 (média, corrigida):**
+// só o título mudava")
+function qualified_after(line: string): boolean {
+  const m = /^\s*(?:\d+[.)]|[-*•])\s+(\*\*|__)([^*_\n]+)\1(.*)$/.exec(line);
+  if (m === null || m[2].includes(":") || /^\s*:/.test(m[3])) {
+    return false;
+  }
+  return QUALIFIED.test(fold(m[3]));
+}
+
 // how many notes, and of what severity, a verdict's line says it has:
 // "aprovado com duas ressalvas baixas" 2 low, "com 3 ressalvas, todas
 // médias" 3 medium; "com ressalvas" (no number) at least one; no
@@ -759,6 +810,18 @@ const NOTE_NUM = /^[\s>#*_]*(?:ressalva|observacao)\s+(?:n[o.]?\s*)?[a-z]?\d+[a-
 // "**Ressalva baixa (corrigida)**" (fixed). Singular: "**Ressalvas
 // baixas**" heads a list. On a folded line
 const NOTE_ONE = /^[\s>#*_]*(?:ressalva|observacao)\s+(alta|media|baixa)\b[\s*_`]*(?:\([^)\n]*\))?[\s*_`:]*$/;
+
+// a heading or a bold label that opens with one note and its severity,
+// whatever follows on its line: "### Ressalva baixa (corrigida em abc1234)
+// e falta teste", "**Ressalva baixa** (corrigida em abc1234), mas ainda
+// falha", "**Ressalva baixa** (aberta (corrigida em abc1234))" (JuicyTuna,
+// 25/10). Singular, as NOTE_ONE. On a folded line
+const NOTE_LEAD = /^[\s>]*(?:#{1,6}\s+[*_]*|[*_]{2})\s*(?:ressalva|observacao)\s+(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,—–-]?\s*)?(alta|media|baixa)\b/;
+
+// a bold label of a severity, then ":" and its text on the line: "**Baixa:
+// texto corrigida no hash**", "**Média:** x" (JuicyTuna, 25/10); not
+// "**Baixas:**" alone (a heading). On a folded line
+const SEV_PARA = /^[\s>]*[*_]{2}\s*(alta|media|baixa)\b\s*(?:\([^)\n]*\))?[*_\s]*:[*_`\s]*[^*_`\s]/;
 
 // an item that opens with its severity: "1. MÉDIA: …", "- **A1 (ALTA,
 // bloqueante)** …", "1. A: baixa", "- Baixa — …"; not a word that

@@ -472,6 +472,68 @@ test("verdict_of: a parenthesis right after a note's severity is its label's, wi
   }
 });
 
+// JuicyTuna's forms (verification 14, 25/10): a case as a list's item, by
+// an open low note, and as a paragraph, by an open medium one
+const juicy_list = (t: string) => Pipeline.verdict_of(`**Veredito: APROVADO com ressalvas.**\n\nRessalvas:\n1. ${t}\n2. **Baixa: outra coisa aberta no parser.**\n`).notes;
+const juicy_para = (t: string) => Pipeline.verdict_of(`**Veredito: APROVADO com ressalvas.**\n\n${t}\n\n**Ressalva média: outra coisa aberta.**\n`).notes;
+
+test("verdict_of: a note's number may end in '.' or ')' before its fixed severity (JuicyTuna 1, 25/10)", () => {
+  for (const t of ["**1. Média corrigida.** x", "**1. Média, corrigida.** x", "**1) Média corrigida** x", "**1 — Média corrigida** x", "**A1. Alta, resolvida.** x"]) {
+    expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 1 }]);
+  }
+  // a title that says more still keeps it (SweetSheep 1)
+  expect(juicy_list("**1. Média cobertura da nota corrigida.** x")).toEqual({ high: 0, medium: 1, low: 1 });
+});
+
+test("verdict_of: what qualifies a fixed state after it keeps the note open (JuicyTuna 2, 25/10)", () => {
+  for (const t of [
+    "### Ressalva baixa (corrigida em abc1234) e falta teste", "**Ressalva baixa** (corrigida em abc1234), mas ainda falha",
+    "**Ressalva baixa** (corrigida em abc1234) (aberta)", "**Ressalva baixa** (corrigida em abc1234) (testada no iPhone)",
+    "**Ressalva baixa** (corrigida em abc1234) — mas o Safari falha", "### Ressalva baixa (corrigida em abc1234) (aberta)",
+    "### Ressalva baixa (corrigida em abc1234) — mas o Safari falha", "**Ressalva baixa (corrigida em abc1234) (aberta)**",
+    "**Ressalva baixa (corrigida em abc1234)** mas ainda falha no Safari", "**Ressalva baixa (corrigida em abc1234)** — falta teste no iPhone",
+    "**Ressalva baixa (corrigida)** e outra coisa", "**Ressalva baixa** — corrigida em abc1234, mas falta iPhone",
+  ]) {
+    expect([t, juicy_list(t), juicy_para(t)]).toEqual([t, { high: 0, medium: 0, low: 2 }, { high: 0, medium: 1, low: 1 }]);
+  }
+  // text that only describes the note, or follows a ':', doesn't
+  for (const t of [
+    "**Ressalva baixa (corrigida em abc1234)**", "**Ressalva baixa** (corrigida em abc1234)", "### Ressalva baixa (corrigida em abc1234)",
+    "**Ressalva baixa (corrigida em abc1234)**. O parser lia mal", "**Ressalva baixa (corrigida em abc1234):** o parser lia mal",
+    "**Ressalva 1 (média, corrigida):** só o título mudava", "**MÉDIA (corrigida)** o parser",
+  ]) {
+    expect([t, juicy_list(t), juicy_para(t)]).toEqual([t, { high: 0, medium: 0, low: 1 }, { high: 0, medium: 1, low: 0 }]);
+  }
+});
+
+test("verdict_of: a label of only a severity is fixed by its parenthesis too (JuicyTuna 3, 25/10)", () => {
+  for (const t of ["**Média** (corrigida em abc1234)", "**Média** (corrigida em abc1234) x", "**Baixa** (corrigida)", "**Média, resolvida em abc1234**"]) {
+    expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 1 }]);
+  }
+  for (const t of ["**Média** (corrigida em parte)", "**Média** (corrigida em abc1234), mas falta o iPhone", "**Média, não resolvida**"]) {
+    expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 1, low: 1 }]);
+  }
+  // its text says it of the text, not of the label: a note still
+  expect(juicy_list("Baixa: corrigida em abc1234")).toEqual({ high: 0, medium: 0, low: 2 });
+});
+
+test("verdict_of: a title without severity under a list without one isn't a note; nested and severity-led paragraphs are (JuicyTuna 4, 25/10)", () => {
+  // no severity, none given by the list: not counted (as before)
+  expect(juicy_list("**Observação sobre ressalva corrigida.** x")).toEqual({ high: 0, medium: 0, low: 1 });
+  // a list that gives one counts it (SweetSheep 1)
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalvas, todas baixas:**\n1. **Observação sobre ressalva corrigida.** x").notes).toEqual({ high: 0, medium: 0, low: 1 });
+  const open = { high: 0, medium: 1, low: 1 };
+  for (const t of ["**Ressalva baixa** (aberta (corrigida em abc1234))", "**Ressalva baixa (aberta (corrigida em abc1234))**", "**Baixa: texto corrigida no hash**", "**Ressalva média sobre bug corrigido.**"]) {
+    const n = juicy_para(t);
+    expect([t, n.high + n.medium + n.low]).toEqual([t, 2]);
+  }
+  expect(juicy_para("**Baixa: texto corrigida no hash**")).toEqual(open);
+  expect(juicy_list("**Baixa: texto corrigida no hash**")).toEqual({ high: 0, medium: 0, low: 2 });
+  // a bold severity with its text is a note; alone, a heading, none
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Média:** x\n\n**Baixa:** y").notes).toEqual(open);
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Baixa:**\n\n**Baixas:**\n").notes).toEqual({ high: 0, medium: 0, low: 0 });
+});
+
 test("verdict_of: 'aprovo' approves, 'reprovo' rejects (ProudCougar 2b: YellowHare, 25/10)", () => {
   expect(Pipeline.verdict_of("Veredito: aprovo o PR #18.")).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false });
   expect(Pipeline.verdict_of("Veredito: aprovo o PR morum/uniichat#18 com ressalvas.\n- Baixa: x").verdict).toBe("approved_with_notes");
