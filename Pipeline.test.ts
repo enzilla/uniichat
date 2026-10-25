@@ -286,7 +286,7 @@ test("verdict_of: code is cited, never said, even in a top-level item under no h
   expect(of("1. `Ressalva alta` vira `alta` no painel\n2. **Ressalva baixa:** real")).toEqual(low);
   // nor a severity in code: the item's is the one it says outside it
   expect(of("- **Ressalva baixa:** o `MÉDIA` do título conta\n- texto `alta` solto")).toEqual(low);
-  expect(of("- `MÉDIA`: a\n- Baixa: b")).toEqual(low);
+  // (an item that opens with it, then ":", says it: SleepyMoose 1, below)
   // under a list of notes given a severity, an item citing code is still the list's
   expect(of("**Ressalvas baixas:**\n- `Ressalva 1 (média)` e `Ressalva 2` somam")).toEqual(low);
   // said outside code, it counts
@@ -303,6 +303,40 @@ test("verdict_of: 'corrigida e testada' is fixed; what says more stays open (Sil
   for (const open of ["**Ressalva 1 (média):** corrigida só em parte", "**Ressalva 1 (média):** não corrigida", "**Ressalva 1 (média):** ainda não corrigida", "**Ressalva 1 (média):** parcialmente corrigida", "**Ressalva 1 (média)** — o teste corrigido não cobre x", "**Ressalva 1 (média):** corrigida em abc, mas ainda falha em y", "**Ressalva 1 (média):** corrigida e testada, mas falha em y", "**Ressalva 1 (média):** corrigida e testada; falta o iPhone", "**Ressalva 1 (média):** corrigida e testada só no Chromium", "**Ressalva 1 (média):** não corrigida e testada"]) {
     expect(of(open)).toEqual(both);
   }
+});
+
+test("verdict_of: an item that opens with its severity or label in code, then ':' or a dash, says it (SleepyMoose 1, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n" + s).notes;
+  const both = { high: 0, medium: 1, low: 1 };
+  expect(of("1. `MÉDIA`: falha em x\n2. Baixa: b")).toEqual(both);
+  expect(of("- `MÉDIA`: a\n- Baixa: b")).toEqual(both);
+  expect(of("- `Ressalva 1 (média)`: Pipeline.ts:10 falha\n- **Ressalva baixa:** real")).toEqual(both);
+  expect(of("- **`Ressalva 1 (média)`:** falha\n- **Ressalva baixa:** real")).toEqual(both);
+  expect(of("- `MÉDIA` — falha em x\n- Baixa: b")).toEqual(both);
+  expect(of("**Ressalvas:**\n1. `MÉDIA`: a\n2. `baixa`: b")).toEqual(both);
+  // opening with code that's no label, or that goes on: cited
+  const low = { high: 0, medium: 0, low: 1 };
+  expect(of("- `Ressalva 1 (média)` e `Ressalva 2` somam\n- **Ressalva baixa:** real")).toEqual(low);
+  expect(of("- `MÉDIA` vira baixa no painel\n- **Ressalva baixa:** real")).toEqual(low);
+  expect(of("- `verdict_of`: a média some\n- **Ressalva baixa:** real")).toEqual(low);
+  expect(of("- **Ressalva baixa:** o `MÉDIA`: do título")).toEqual(low);
+});
+
+test("verdict_of: a fix with a caveat in a parenthesis or its complement stays open (SleepyMoose 2 and 3, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalva 1 (média):** " + s + "\n**Ressalva 2 (baixa):** y").notes;
+  const low = { high: 0, medium: 0, low: 1 };
+  const both = { high: 0, medium: 1, low: 1 };
+  for (const open of ["corrigida e testada (mas não no iOS)", "corrigida e verificada em abc (iOS não testado)", "corrigida (falta o Safari)", "corrigida (só no Chromium)", "corrigida e testada em parte", "corrigida e testada no Chromium apenas", "corrigida em parte e testada", "corrigida em abc e testada em parte", "corrigida e testada no Chromium somente", "corrigida e testada (parcialmente)", "corrigida em abc (ainda sem teste)"]) {
+    expect(of(open)).toEqual(both);
+  }
+  for (const fixed of ["corrigida e testada", "resolvida e verificada em abc", "corrigida em abc e testada em def", "corrigida (commit abc)", "corrigida e testada (bun 251/0)", "corrigida em abc (Pipeline.ts) e testada em def", "corrigida e testada no Chromium"]) {
+    expect(of(fixed)).toEqual(low);
+  }
+  // as a heading's text: the same
+  const h = (t: string) => Pipeline.verdict_of("Veredito: aprovado.\n\n### Ressalvas: " + t + "\n1. **MÉDIA** a").notes;
+  expect(h("corrigida e testada (mas não no iOS)")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(h("corrigidas e testadas em parte")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(h("todas corrigidas e testadas em abc")).toEqual({ high: 0, medium: 0, low: 0 });
 });
 
 test("verdict_of: 'aprovo' approves, 'reprovo' rejects (ProudCougar 2b: YellowHare, 25/10)", () => {

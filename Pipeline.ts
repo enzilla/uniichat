@@ -389,8 +389,12 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   let group: keyof Sevs | null = null;
   // the last top-level item counted as a note: its items are its details
   let counted = false;
-  for (const line of report.split("\n").slice(found.at + 1)) {
-    const item = /^(\s*)(\d+[.)]|[-*•])\s/.exec(line);
+  for (const raw of report.split("\n").slice(found.at + 1)) {
+    const item = /^(\s*)(\d+[.)]|[-*•])\s/.exec(raw);
+    // an item that opens with its label in code, a severity or a note's
+    // label with one, then ":" or a dash ("1. `MÉDIA`: a", "- `Ressalva 1
+    // (média)`: b", SleepyMoose, 25/10), says it: the label is not cited
+    const line = item === null ? raw : said_code(raw);
     // code is cited, never said: a severity or a note's label in it
     // ("- `Ressalva 1 (média)` e `Ressalva 2` somam", SilverNoodle) is
     // neither the line's severity nor makes it cite a note
@@ -515,6 +519,20 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   return { verdict, notes, noted };
 }
 
+// an item whose first words are a code span with a severity or a note's
+// label with one ("`MÉDIA`", "`Ressalva 1 (média)`"), then ":" or a
+// dash: that span is its label, said, so without its marks; any other
+// code ("- `Ressalva 1 (média)` e `Ressalva 2` somam") stays cited
+function said_code(line: string): string {
+  const m = /^(\s*(?:\d+[.)]|[-*•])\s+[*_]*)`([^`\n]+)`(?=[*_]*\s*(?::|[—–-]\s))/.exec(line);
+  if (m === null) {
+    return line;
+  }
+  const label = fold(m[2]).trim();
+  const sev = /^[(\[]?\s*(?:[a-z]\d*\s*[(:.—-]?\s*)?(?:altas?|high|medias?|medium|baixas?|low)[)\]]?$/.test(label) || NOTE_HEAD.test(label);
+  return sev ? m[1] + m[2] + line.slice(m[0].length) : line;
+}
+
 // a line without its code spans: what's in them is cited
 function uncoded(line: string): string {
   return line.replace(/`[^`\n]*`/g, " ");
@@ -532,9 +550,21 @@ function fixed(label: string): boolean {
 // a heading's text after its ":" says all its notes fixed, and nothing
 // else: "corrigidas", "todas corrigidas em abc", "ambas resolvidas";
 // "corrigida e testada" (SilverNoodle, 25/10); not "corrigida só a
-// primeira", "corrigidas, exceto a 2" (ProudCougar, 25/10). On a
-// folded text, without its marks
-const ALL_FIXED = /^\s*(?:(?:todas?|tudo|ambas|as\s+(?:\d+|duas|tres|quatro|cinco))\s+(?:(?:as\s+)?ressalvas\s+)?)?(?:(?:ja\s+)?(?:foram|estao)\s+)?(?:corrigid|resolvid|sanad|fixed|resolved)\w*(?:\s*\([^)]*\)|\s+(?:em|no|na|pelo|pela|por|in)\s+[^,;]*)?(?:\s*,?\s+(?:e|and)\s+(?:testad|verificad|conferid|validad|cobert|tested|verified)\w*(?:\s*\([^)]*\)|\s+(?:em|no|na|pelo|pela|por|com|in|by)\s+[^,;]*)?)?\s*\.?\s*$/;
+// primeira", "corrigidas, exceto a 2" (ProudCougar, 25/10). Where, by
+// what or in a parenthesis, it may say more, unless that is a caveat:
+// "corrigida e testada (mas não no iOS)", "… em abc (iOS não testado)",
+// "… testada em parte", "… no Chromium apenas" (SleepyMoose, 25/10) are
+// open. On a folded text, without its marks
+const CAVEAT = String.raw`\b(?:nao|not|mas|but|exceto|except|salvo|falta\w*|sem|so|apenas|somente|only|parte|partes|parcia\w*|pendente\w*|ainda|yet)\b`;
+const FIX_PAREN = String.raw`\s*\((?![^)]*` + CAVEAT + String.raw`)[^)]*\)`;
+const fix_where = (by: string) => String.raw`(?:` + FIX_PAREN + String.raw`|\s+(?:` + by + String.raw`)\s+(?![^,;(]*` + CAVEAT + String.raw`)[^,;(]*(?:` + FIX_PAREN + String.raw`)?)?`;
+const ALL_FIXED = new RegExp(
+  String.raw`^\s*(?:(?:todas?|tudo|ambas|as\s+(?:\d+|duas|tres|quatro|cinco))\s+(?:(?:as\s+)?ressalvas\s+)?)?(?:(?:ja\s+)?(?:foram|estao)\s+)?(?:corrigid|resolvid|sanad|fixed|resolved)\w*` +
+    fix_where("em|no|na|pelo|pela|por|in") +
+    String.raw`(?:\s*,?\s+(?:e|and)\s+(?:testad|verificad|conferid|validad|cobert|tested|verified)\w*` +
+    fix_where("em|no|na|pelo|pela|por|com|in|by") +
+    String.raw`)?\s*\.?\s*$`,
+);
 
 // the start of a line labeled a note with its severity, to the severity:
 // "**Ressalva 1 (média", "### Ressalva 2 — baixa", "Observação alta";
