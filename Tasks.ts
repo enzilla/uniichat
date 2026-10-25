@@ -87,6 +87,7 @@ export type Task = {
   assignee   : Assignee;
   origin     : Origin | null;
   origin_url : string | null;
+  agent      : string | null; // the agent at work on it, by name (a task of Unii's: who follows it up now)
   by      : string;
   choices : string[];
   answer  : string | null;
@@ -137,6 +138,7 @@ export type Edit = {
   assignee?   : unknown;
   origin?     : unknown;
   origin_url? : unknown;
+  agent?      : unknown;
   choices? : unknown;
   ref?     : unknown;
   state?   : unknown;
@@ -162,6 +164,10 @@ export const REF     = 100;
 export const ASSIGNEES = ["user", "unii"];
 const ORIGIN = /^(chat|timer|slack|github|agent:[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$/;
 export const ORIGIN_URL = 500;
+
+// an agent's name, as a task links it (agent): its technical name
+// (WiseDolphin) or its label (uniichat-ux-impl)
+const AGENT = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
 // the most fields of a task, a label's length, a text answer's (NOTE);
 // a thread message's length, the most a thread keeps, the most views get
@@ -275,6 +281,7 @@ export function task_read(x: unknown, now: number): Task | null {
     assignee   : assignee_read(o.assignee) ?? assignee_read(o.who) ?? "user",
     origin     : origin_read(o.origin),
     origin_url : origin_read(o.origin) === null ? null : url_read(o.origin_url),
+    agent      : agent_read(o.agent),
     by      : text(o.by, 40, text_line) || "main",
     choices,
     answer  : state === "done" && choices.includes(answer) ? answer : null,
@@ -311,6 +318,12 @@ export function origin_read(x: unknown): Origin | null {
   return ORIGIN.test(as) ? as : null;
 }
 
+// an agent's name as given (AGENT, spaces around); else null
+export function agent_read(x: unknown): string | null {
+  const a = typeof x === "string" ? x.trim() : "";
+  return AGENT.test(a) ? a : null;
+}
+
 // a source's link as given: http(s), no spaces, quotes, angle brackets
 // or control characters, at most ORIGIN_URL; else null
 export function url_read(x: unknown): string | null {
@@ -331,11 +344,11 @@ export function turn_origin(origins: (string | undefined)[]): Origin {
   return origins.length === 0 || origins.some((o) => o === undefined) ? "chat" : origin_read(origins[0]) ?? "chat";
 }
 
-// a task's assignee, origin and link as given by a tool (assignee, or the
+// a task's assignee, origin, link and agent as given by a tool (assignee, or the
 // older who; origin_url only with an origin, its own or the task's); each
 // absent undefined; else why not
-function whose_args(args: Edit, origin: Origin | null): { assignee?: Assignee; origin?: Origin; origin_url?: string | null } | string {
-  const out: { assignee?: Assignee; origin?: Origin; origin_url?: string | null } = {};
+function whose_args(args: Edit, origin: Origin | null): { assignee?: Assignee; origin?: Origin; origin_url?: string | null; agent?: string | null } | string {
+  const out: { assignee?: Assignee; origin?: Origin; origin_url?: string | null; agent?: string | null } = {};
   const given = (x: unknown) => x !== undefined && x !== null;
   if (given(args.assignee) || given(args.who)) {
     const a = given(args.assignee) ? assignee_read(args.assignee) : null;
@@ -365,6 +378,14 @@ function whose_args(args: Edit, origin: Origin | null): { assignee?: Assignee; o
       return "origin_url needs an origin.";
     }
     out.origin_url = u;
+  }
+  if (args.agent !== undefined) {
+    const raw = args.agent === null ? "" : String(args.agent).trim();
+    const a = raw === "" ? null : agent_read(raw);
+    if (raw !== "" && a === null) {
+      return "agent is an agent's name: letters, digits, . _ - (at most 64).";
+    }
+    out.agent = a;
   }
   return out;
 }
@@ -778,7 +799,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   const at = new Date(now).toISOString();
   const ref = text_line(args.ref, REF);
   const task: Task = {
-    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, by, choices, answer: null, note: null,
+    id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, agent: whose.agent ?? null, by, choices, answer: null, note: null,
     ref: ref === "" ? null : ref, made: at, changed: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
     fields: fields.fields, draft: {}, answers: null, thread: [], talk: null,
   };
@@ -1222,7 +1243,7 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const fields = t.fields.length === 0 ? "" : " fields: " + t.fields.map((f) => f.id + (f.required ? "*" : "") + " " + JSON.stringify(f.label) + " (" + kind(f) + ")").join("; ");
   const talk = t.talk === "unii" ? " [the user wrote in its thread: reply with task_reply]" : "";
   const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ")) + fields + deps + talk;
-  const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), ago(t.made, now)].filter((x) => x !== "").join(", ");
+  const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), (t.agent ?? null) === null ? "" : "agent " + t.agent, ago(t.made, now)].filter((x) => x !== "").join(", ");
   const how   = [t.state, t.answer === null ? "" : "answer: " + t.answer, t.note === null ? "" : "note: " + JSON.stringify(t.note)].filter((x) => x !== "");
   const state = t.state === "open" ? "" : " (" + how.join(", ") + ")";
   const head = "- " + t.id + " [" + t.assignee + "] " + t.title + state + opts + " (" + tail + ")";

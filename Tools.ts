@@ -227,6 +227,7 @@ const FIELDS_SPEC = {
 // where a task came from, and its source's link (Tasks.ts)
 const ORIGIN_SPEC = { type: "string", description: "Where it came from: chat, timer, agent:<name>, slack or github. By default, where this turn came from: a schedule's message (timer), a subagent's report (agent:<name>), else chat." };
 const ORIGIN_URL_SPEC = { type: "string", description: "A link (http/https) to its source, such as the Slack message or the GitHub issue." };
+const AGENT_SPEC = { type: "string", description: "The agent at work on it now, by name (its generated name or its label): for a task of yours, who follows it up, so the views show it and a task with no agent at work is seen as stalled. \"\" for none." };
 const BOSS: Spec[] = [
   spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees the view and the user's instructions, but knows what you want only from its task.", { tasks: { type: "array", items: STR }, labels: { type: "array", items: STR, description: "A short label per task, in the tasks' order, that the user reads as that subagent's name instead of its generated one: <project>-<role>, as num-3182-verifier or uniichat-links-impl. Give one for every task. You still name it by its generated name in tell, stop and zoom." }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." }, model: { type: "string", enum: MODELS, description: "Their model; by default, the one they'd run on. Set it ONLY when the user asks for that model or vendor in this chat, since another vendor may come with additional costs." } }, ["tasks"]),
   spec("tell", "Send a message to a subagent, by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
@@ -247,6 +248,7 @@ const BOSS: Spec[] = [
     assignee   : { type: "string", enum: ["user", "unii"], description: "Who is responsible, who must act; by default the user. (who: its older name, still read.)" },
     origin     : ORIGIN_SPEC,
     origin_url : ORIGIN_URL_SPEC,
+    agent      : AGENT_SPEC,
     choices : { type: "array", items: STR, description: "Answers the user picks with one click (\"sim\", \"não\"), at most 9." },
     ref     : { type: "string", description: "What it belongs to: a project, an agent, a PR." },
     after   : { type: "array", items: STR, description: "Ids of the tasks this one waits for (\"P3\"), the user's or yours: while any is open it's hidden from the user and can't be resolved; once all are closed it shows, and your next turn is told it was freed." },
@@ -259,6 +261,7 @@ const BOSS: Spec[] = [
     assignee   : { type: "string", enum: ["user", "unii"], description: "Who is responsible. (who: its older name, still read.)" },
     origin     : { type: "string", description: "Where it came from: chat, timer, agent:<name>, slack or github." },
     origin_url : { ...ORIGIN_URL_SPEC, description: "A link to its source; \"\" for none." },
+    agent      : AGENT_SPEC,
     choices : { type: "array", items: STR },
     ref     : STR,
     state   : { type: "string", enum: ["open", "done", "dropped"] },
