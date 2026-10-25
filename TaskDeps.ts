@@ -29,12 +29,15 @@ export const LATE = 24 * 60 * 60 * 1000;
 // A task's kind says how long it stays the user's before it's late,
 // counted since it became theirs to act on (ready: made, freed, opened
 // again or handed to them): a PR's approval 24 h, a decision 72 h, a
-// test 2 h (P4). None given: a PR link (GitHub pull) in its detail or
-// origin makes it "pr", a title opening with "Teste" makes it "test";
-// else LATE. Late tasks never expire nor leave "Agora" (P5): they only
+// test 2 h (P4). None given: a PR link (GitHub pull) in its title makes
+// it "pr", a title opening with "Teste" makes it "test"; else LATE. A
+// PR link only in its detail or origin says nothing of its kind (a
+// decision or a test often cites the PR it's about): the kind given
+// always wins. Late tasks never expire nor leave "Agora" (P5): they only
 // say how late. Its priority (declared; "normal" by default) sorts the
 // open ones free to resolve: priority first, then how many it frees,
-// then the oldest (P3).
+// then the one the user's to act on longest (ready_at: since it waits no
+// more, or was handed to them; else made) (P3).
 
 export type TaskKind = "pr" | "decision" | "test";
 export const KINDS: TaskKind[] = ["pr", "decision", "test"];
@@ -50,12 +53,13 @@ export type Timed = Dep & { title?: string; detail?: string; origin_url?: string
 
 const PR_LINK = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
 
-// a task's kind: the one given, else as its links and title say; null: none
+// a task's kind: the one given, else as its title says (a PR link in
+// it, or opening with "Teste"); null: none
 export function kind_of(t: Timed): TaskKind | null {
   if (t.kind != null && KINDS.includes(t.kind)) {
     return t.kind;
   }
-  if (PR_LINK.test((t.detail ?? "") + " " + (t.origin_url ?? ""))) {
+  if (PR_LINK.test(t.title ?? "")) {
     return "pr";
   }
   return /^\s*teste\b/i.test(t.title ?? "") ? "test" : null;
@@ -79,8 +83,9 @@ export function priority_of(t: Timed): Priority {
 
 // the order of the open tasks free to resolve (P3): the higher priority
 // first, then the one that frees more, then the user's (a task of Unii's
-// is in "Agora" only when its thread is the user's turn), then the older
-// (made), then by id
+// is in "Agora" only when its thread is the user's turn), then the one
+// to act on longest (ready_at: since it waits no more or was handed to
+// the user; else made), then by id
 export function now_order<T extends Timed & { assignee?: string }>(tasks: T[]): (a: T, b: T) => number {
   const frees = new Map<string, number>();
   const n = (t: T) => {
@@ -90,7 +95,7 @@ export function now_order<T extends Timed & { assignee?: string }>(tasks: T[]): 
     return frees.get(t.id)!;
   };
   const p = (t: T) => PRIORITIES.indexOf(priority_of(t));
-  const age = (t: T) => Date.parse(t.made) || 0;
+  const age = (t: T) => Date.parse(ready_at(t)) || 0;
   const whose = (t: T) => (t.assignee === undefined || t.assignee === "user" ? 0 : 1);
   return (a, b) => p(a) - p(b) || n(b) - n(a) || whose(a) - whose(b) || age(a) - age(b) || Number(a.id.slice(1)) - Number(b.id.slice(1));
 }

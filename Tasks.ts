@@ -1304,7 +1304,7 @@ export function tasks_tell(s: Store): Task[] {
 // =======
 
 // the open ones free to resolve, as "Agora" sorts them (P3,
-// TaskDeps.now_order: priority, then how many it frees, then the oldest,
+// TaskDeps.now_order: priority, then how many it frees, then the one to act on longest (ready_at),
 // then by id); then the open that wait, by id; then the closed, newest
 // first
 export function tasks_sort(tasks: Task[]): Task[] {

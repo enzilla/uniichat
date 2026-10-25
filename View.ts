@@ -872,7 +872,7 @@ export function desk_match(t: Task, q: string, ref: string): boolean {
 
 // the Mesa's list: each group with tasks in the search, in DESK's
 // order, its tasks as the server sorts them; "now" as P3 asks
-// (TaskDeps.now_order: priority, then how many it frees, then the oldest)
+// (TaskDeps.now_order: priority, then how many it frees, then the one to act on longest: ready_at)
 export function desk_list(tasks: Task[], q = "", ref = ""): { group: Desk; label: string; tasks: Task[] }[] {
   const blocked = Deps.blocked_ids(tasks);
   const shown = tasks.filter((t) => desk_match(t, q, ref));

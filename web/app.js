@@ -931,7 +931,7 @@ function kind_of(t) {
   if (t.kind != null && KINDS.includes(t.kind)) {
     return t.kind;
   }
-  if (PR_LINK.test((t.detail ?? "") + " " + (t.origin_url ?? ""))) {
+  if (PR_LINK.test(t.title ?? "")) {
     return "pr";
   }
   return /^\s*teste\b/i.test(t.title ?? "") ? "test" : null;
@@ -955,7 +955,7 @@ function now_order(tasks) {
     return frees.get(t.id);
   };
   const p = (t) => PRIORITIES.indexOf(priority_of(t));
-  const age = (t) => Date.parse(t.made) || 0;
+  const age = (t) => Date.parse(ready_at(t)) || 0;
   const whose = (t) => t.assignee === undefined || t.assignee === "user" ? 0 : 1;
   return (a, b) => p(a) - p(b) || n(b) - n(a) || whose(a) - whose(b) || age(a) - age(b) || Number(a.id.slice(1)) - Number(b.id.slice(1));
 }
