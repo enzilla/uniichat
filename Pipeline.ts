@@ -391,7 +391,15 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   let group: keyof Sevs | null = null;
   // the last top-level item counted as a note: its items are its details
   let counted = false;
-  const lines = report.split("\n").slice(found.at + 1);
+  // a quote's lines are read as the lines they quote ("> **Baixas**\n> -
+  // a", RoyalToucan 2, 25/10): its marks off, its indentation kept, so a
+  // list or a heading in it counts as outside it (the safe side)
+  const lines = report.split("\n").slice(found.at + 1).map((l) => l.replace(/^(\s*)(?:>[ \t]?)+/, "$1"));
+  // under a heading on notes: whether a list item came under it yet (then
+  // a paragraph after the list is the report's, not a note), and whether
+  // the line before was blank or the heading (a paragraph starts)
+  let listed = false;
+  let fresh = false;
   for (let at = 0; at < lines.length; at++) {
     const raw = lines[at];
     const item = /^(\s*)(\d+[.)]|[-*•])\s/.exec(raw);
@@ -466,28 +474,60 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
         notes[sev_in(head?.[0] ?? "") ?? "low"] += 1;
         noted = true;
       }
+      // a paragraph under a heading on notes, before any item under it,
+      // is a note too ("**Baixas**\n\nUma nota em parágrafo.\n\nOutra
+      // nota.", RoyalToucan 2, 25/10): one per paragraph, by the severity
+      // it opens with, else the heading's, else low; not a heading nor a
+      // label of its own ("Não testado: …"), nor one that says none
+      // ("Nenhuma.") or only a fix, nor a table, a rule or code
+      const f = fold(line);
+      // (a note's label that says it fixed, "Ressalva média corrigida em
+      // abc1234", isn't one: state)
+      const as_para = within === "notes" && !listed && fresh && para === null && !lead && state === "none" && line.trim() !== "" && para_note(f);
+      const was = within;
       // a heading on notes fixed ("**Ressalvas corrigidas:**") heads
       // none open: its items aren't notes
       if (/ressalva|observa[cç]/i.test(line) && fixed(label_of(line))) {
         within = "other";
         given = null;
-      } else if ((para !== null || lead) && /^[\s>#*_]*(?:ressalva|observacao)\s/.test(fold(line))) {
+      } else if ((para !== null || lead) && /^[\s>#*_]*(?:ressalva|observacao)\s/.test(f)) {
         // one note, said on its line ("**Ressalva baixa:** um título
         // …", WarmParrot): its items are its details ("- `### …` com
         // `1. **MÉDIA** a` conta 1 média"), not notes
         within = "other";
         given = null;
-      } else if (/ressalva|observa[cç]/i.test(line) || (para === null && !lead && SEV_HEADING.test(fold(line)))) {
+      } else if (/ressalva|observa[cç]/i.test(line) || (para === null && !lead && SEV_HEADING.test(f) && !FIXED_WORD.test(f))) {
         // a heading of notes by their severity alone ("**Baixas**",
         // "**Baixas** (nenhuma nos relatos reais):", "### Médias",
-        // MagicWhale, 25/10) opens their list as "**Ressalvas baixas:**"
-        within = "notes";
-        given = own;
+        // MagicWhale, 25/10) opens their list as "**Ressalvas baixas:**";
+        // so does one severity alone on its line, its note's text on the
+        // lines after ("**Média**\no botão some", RoyalToucan 3, 25/10),
+        // unless it says it fixed ("**Média** (corrigida em abc1234)")
+        // only a heading alone on its line ("**Ressalvas:**", "###
+        // Baixas") has paragraphs for notes; a sentence that cites them
+        // ("Ressalvas 1 e 2 podem ficar…", "**Próximo passo:** decidir se a
+        // ressalva 1…", GentleTaco, FastCat) doesn't: what follows it is
+        // the report's
+        if (!as_para) {
+          within = "notes";
+          given = own;
+          const alone = (/^\s*(?:#{1,6}\s|[*_]{2})/.test(f) || /:[\s*_`]*$/.test(f)) && /^[\s#*_]*[^*_:.\n]{1,60}?[\s*_`]*(?:\([^)\n]*\))?[\s*_`]*:?[\s*_`]*$/.test(f);
+          listed = !alone;
+        }
       } else if (/^\s*(\*\*|#|_)/.test(line) || /:\s*$/.test(line)) {
         within = "other";
         given = null;
       }
+      if (as_para && was === "notes" && within === "notes") {
+        notes[sev_in(SEV_LABEL.exec(f)?.[0] ?? "") ?? given ?? "low"] += 1;
+        noted = true;
+      }
+      fresh = line.trim() === "" || within !== was || (within === "notes" && (SEV_HEADING.test(f) || /^\s*(\*\*|#|_)/.test(line) || /:\s*$/.test(line)));
       continue;
+    }
+    fresh = false;
+    if (within === "notes") {
+      listed = true;
     }
     // an item its label says fixed ("- **Ressalva média (resolvida):**
     // …") isn't open: none, nor what it heads
@@ -530,7 +570,9 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
       continue;
     }
     const cites = /ressalva|observa[cç]/i.test(bare);
-    const says = (within === "other" ? cites && NOTE_ITEM.test(fold(line)) : cites) || (top_level && within !== "other" && SEV_FIRST.test(line));
+    // so does one that opens with a severity and a fixed state it
+    // qualifies ("- Média corrigida, falta o iPhone", RoyalToucan 3, 25/10)
+    const says = (within === "other" ? cites && NOTE_ITEM.test(fold(line)) : cites) || (top_level && within !== "other" && (SEV_FIRST.test(line) || note_state(bare_item) === "open"));
     // under a list given a severity ("**Ressalvas baixas**"), an item
     // has its own only if it opens with it ("1. MÉDIA: …", "- **Ressalva
     // média:** …"); one it only cites ("… e perde a média dos itens",
@@ -564,7 +606,9 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   // the count agrees with the verdict
   if (verdict === "approved_with_notes" && !noted) {
     const said = notes_said(fold(report.split("\n")[found.at] ?? ""));
-    notes[said.sev] += said.n;
+    notes.high += said.high;
+    notes.medium += said.medium;
+    notes.low += said.low;
     noted = true;
   }
   return { verdict, notes, noted };
@@ -835,7 +879,10 @@ function note_state(f: string): "fixed" | "open" | "none" {
   // its state ("**Média** — corrigida em abc1234", DarkGiraffe 4, 25/10):
   // as a named note's, fixed only if what follows only refers; after a
   // ":" ("**Baixa:** corrigida em abc") the text is the note's, it counts
-  if (named === null && !colon && sep !== null && /^(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/.test(text)) {
+  // so does a severity without bold, its state right after it ("Média
+  // corrigida, falta o iPhone", "Baixa corrigida em abc1234", RoyalToucan
+  // 3, 25/10), in a paragraph or an item, under a heading or not
+  if (named === null && !colon && /^(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/.test(text)) {
     return refs_only(text) ? "fixed" : "open";
   }
   // a numbered or labeled note whose text opens with its state, with no
@@ -929,18 +976,43 @@ function qualified_after(line: string): boolean {
 // médias" 3 medium; "com ressalvas" (no number) at least one; no
 // severity said, low. On a folded line
 const COUNT_WORD: Record<string, number> = { um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5 };
-function notes_said(line: string): { n: number; sev: keyof Sevs } {
+// Every count and severity it says, not only the first: "com 1 média e 2
+// baixas" 1 medium and 2 low, "com 3 ressalvas: 1 média e 2 baixas" the
+// same (RoyalToucan 1, 25/10); a total said above what its pairs add up
+// to gives the rest as low ("com 3 ressalvas, 1 média": 1 medium, 2 low)
+const SAID_PAIR = /(?:^|[\s,:;(]|\be\b)(\d+|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(altas?|medias?|baixas?|high|medium|low)\b/g;
+function notes_said(line: string): Sevs {
+  const out = zero();
+  const a = Math.max(0, line.search(APPROVED));
+  const from = /(?:\bcom|\bwith|c\/)\s?/.exec(line.slice(a));
+  if (from !== null) {
+    const stretch = line.slice(a + from.index).split(/[.;(\n]/)[0].slice(0, 160);
+    let sum = 0;
+    for (const p of stretch.matchAll(SAID_PAIR)) {
+      const k = /^\d+$/.test(p[1]) ? Number(p[1]) : COUNT_WORD[p[1]];
+      if (k > 0) {
+        out[sev_in(p[2])!] += k;
+        sum += k;
+      }
+    }
+    if (sum > 0) {
+      const total = /(?:com|c\/|with)\s*(\d+|uma?|dois|duas|tres|quatro|cinco)\s*(?:ressalvas|observacoes|notes)\b/.exec(stretch);
+      const n = total === null ? 0 : /^\d+$/.test(total[1]) ? Number(total[1]) : COUNT_WORD[total[1]];
+      out.low += Math.max(0, n - sum);
+      return out;
+    }
+  }
   const m = /(?:com|c\/|with)\s*(\d+|uma?|dois|duas|tres|quatro|cinco)?\s*(?:ressalvas?|observac(?:ao|oes)|notes?)([^.;(\n]{0,30})/.exec(line);
   if (m === null) {
-    // "com 5 baixas" (WITH_NOTES): that many, of that severity
-    const s = /(?:com|c\/)\s*(\d+|uma|duas|tres|quatro|cinco)\s+(altas?|medias?|baixas?)\b/.exec(line);
-    return s === null ? { n: 1, sev: "low" } : { n: /^\d+$/.test(s[1]) ? Math.max(1, Number(s[1])) : COUNT_WORD[s[1]], sev: sev_in(s[2])! };
+    out.low = 1;
+    return out;
   }
   const n = m[1] === undefined ? 1 : /^\d+$/.test(m[1]) ? Math.max(1, Number(m[1])) : COUNT_WORD[m[1]];
   // the severity said right after it, "baixas", ", todas baixas"; not
   // one it denies ("nenhuma alta")
   const sev = /^[\s,*_`]*(?:(?:todas?|tudo|ambas)\s+)?(altas?|medias?|baixas?|high|medium|low)\b/.exec(m[2]);
-  return { n, sev: sev === null ? "low" : sev_in(sev[1])! };
+  out[sev === null ? "low" : sev_in(sev[1])!] = n;
+  return out;
 }
 
 // an item that opens with a note's label: "- **Ressalva média:** …",
@@ -1005,11 +1077,29 @@ const SEV_FIRST = /^\s*(?:\d+[.)]|[-*•])\s+[*_`(\[]*\s*(?:[A-Z]\d*\s*[(:.—-]
 // informativas:**")
 const SEV_HEAD = /^\s*(?:\d+[.)]|[-*•])\s+[*_`(\[]*\s*(altas?|high|m[eé]dias?|medium|baixas?|low)(?![\p{L}\d])/iu;
 
-// a line that heads notes by their severity, plural, and only that:
-// "**Baixas**", "**Baixas:**", "### Médias", "**Baixas** (nenhuma nos
-// relatos reais):" (MagicWhale, 25/10); not "**Média**" alone nor "**Baixas
-// e informativas:**". On a folded line
-const SEV_HEADING = /^[\s>]*(?:#{1,6}\s+)?[*_]*\s*(?:altas|medias|baixas)\b[\s*_`]*(?:\([^)\n]*\))?[\s*_`]*:?[\s*_`]*$/;
+// a line that heads notes by their severity, and only that: "**Baixas**",
+// "**Baixas:**", "### Médias", "**Baixas** (nenhuma nos relatos reais):"
+// (MagicWhale, 25/10); singular too, one note's label, its text on the
+// lines after ("**Média**\no botão some", RoyalToucan 3, 25/10); not
+// "**Baixas e informativas:**". On a folded line
+const SEV_HEADING = /^[\s>]*(?:#{1,6}\s+)?[*_]*\s*(?:altas?|medias?|baixas?)\b[\s*_`]*(?:\([^)\n]*\))?[\s*_`]*:?[\s*_`]*$/;
+
+// a paragraph under a heading on notes that may be one (verdict_of): not
+// a label of its own whose name is no note's ("Não testado: iPhone",
+// "Conferido: …"), nor one that says none ("Nenhuma.", "Sem outras.") or
+// only a fix ("Todas corrigidas em abc1234."), nor a table, a rule, code
+// or a comment. On a folded line
+function para_note(f: string): boolean {
+  const t = f.replace(/[*_`]/g, "").trim();
+  if (t === "" || /^(?:\||#|<!--|```|~~~|[-*_]{3,}\s*$)/.test(t) || /^\s*(?:\*\*|__)/.test(f) || /:\s*$/.test(t)) {
+    return false;
+  }
+  if (/^(?:nenhum|nenhuma|nada|n\/a|sem\b|nao\s+ha\b|none\b|nothing\b)/.test(t) || ALL_FIXED.test(t)) {
+    return false;
+  }
+  const label = /^([^:]{1,40}):\s*\S/.exec(t);
+  return label === null || /\b(?:ressalvas?|observac(?:ao|oes)|altas?|medias?|baixas?)\b/.test(label[1]);
+}
 
 // the first severity a text says ("MÉDIA", "baixas", "high")
 function sev_in(s: string): keyof Sevs | null {

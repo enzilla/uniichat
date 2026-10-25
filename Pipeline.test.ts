@@ -1164,3 +1164,65 @@ test("verdict_of: notes under a heading of their severity alone count; 'com 5 ba
   // a severity alone, singular, isn't a heading
   expect(v17_para("**Média**")).toEqual({ high: 0, medium: 0, low: 0 });
 });
+
+test("verdict_of: a verdict's line counts every count and severity it says, not only the first (RoyalToucan 1, 25/10)", () => {
+  const said = (s: string) => Pipeline.verdict_of(s + "\n").notes;
+  expect(said("Veredito: Aprovado com 1 média e 2 baixas.")).toEqual({ high: 0, medium: 1, low: 2 });
+  expect(said("Veredito: aprovado com 1 alta, 1 média e 2 baixas, sem bloqueio.")).toEqual({ high: 1, medium: 1, low: 2 });
+  expect(said("Veredito: aprovado com 3 ressalvas: 1 média e 2 baixas.")).toEqual({ high: 0, medium: 1, low: 2 });
+  // a total above its pairs: the rest low (the safe side)
+  expect(said("Veredito: aprovado com 3 ressalvas, 1 média.")).toEqual({ high: 0, medium: 1, low: 2 });
+  // as before
+  expect(said("Veredito: aprovado com 3 ressalvas, todas médias.")).toEqual({ high: 0, medium: 3, low: 0 });
+  expect(said("Veredito: aprovado com 5 baixas, sem média nem alta.")).toEqual({ high: 0, medium: 0, low: 5 });
+  expect(said("Veredito: aprovado com duas ressalvas baixas.")).toEqual({ high: 0, medium: 0, low: 2 });
+  expect(said("Veredito: aprovado com ressalvas.")).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(Pipeline.verdict_of("Veredito: aprovado com média de 3 testes.\n").verdict).toBe("approved");
+});
+
+test("verdict_of: paragraphs under a heading on notes and a quoted heading count, not only list items (RoyalToucan 2, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado\n\n" + s).notes;
+  expect(of("**Baixas**\n\nUma nota em parágrafo.\n\nOutra nota.\n")).toEqual({ high: 0, medium: 0, low: 2 });
+  expect(of("**Ressalvas:**\n\nO botão some no Safari.\n\nO aviso duplica.\n")).toEqual({ high: 0, medium: 0, low: 2 });
+  expect(of("### Médias\n\nO botão some.\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  // one per paragraph, its lines one note
+  expect(of("**Baixas:**\nUma nota.\nOutra linha da mesma.\n")).toEqual({ high: 0, medium: 0, low: 1 });
+  // a quote is read as what it quotes
+  expect(of("> **Baixas**\n> - a\n> - b\n")).toEqual({ high: 0, medium: 0, low: 2 });
+  expect(of("> **Baixas**\n>\n> Uma nota.\n")).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(of("**Ressalvas:**\n\n> O botão some.\n")).toEqual({ high: 0, medium: 0, low: 1 });
+  // not a label of its own, nor one that says none or only a fix, nor
+  // one fixed by its label, nor under a heading of fixed notes
+  expect(of("**Baixas**\n\nUma nota.\n\nNão testado: iPhone.\n")).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(of("**Baixas**\nNenhuma.\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(of("**Ressalvas:**\n\nNenhuma de gravidade média ou alta.\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(of("**Ressalvas:**\n\nTodas corrigidas em abc1234.\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(of("Ressalvas:\n\nRessalva média corrigida em abc1234\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(of("**Ressalvas corrigidas:**\n\nO botão some.\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  // after a list, a paragraph is the report's, not a note
+  expect(of("**Baixas**\n- a\n- b\n\nO veredito está em x.\n")).toEqual({ high: 0, medium: 0, low: 2 });
+  // a sentence that cites notes heads no paragraphs (GentleTaco, FastCat)
+  expect(of("**Ressalvas:**\n- **Baixa:** a\n\nRessalvas 1 e 2 podem ficar para depois.\n\nO veredito está em x.\n")).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(of("**Ressalvas:**\n- **Baixa:** a\n\n**Próximo passo:** decidir se a ressalva 1 é corrigida.\n\nO veredito está em x.\n")).toEqual({ high: 0, medium: 0, low: 1 });
+});
+
+test("verdict_of: a severity alone on its line heads its note; a plain severity with its fix qualified counts (RoyalToucan 3, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado\n\n" + s).notes;
+  expect(of("**Média**\no botão some\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(of("**Média**\n\no botão some\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(of("**Média**\n- a\n- b\n")).toEqual({ high: 0, medium: 2, low: 0 });
+  expect(of("### Alta\nperda de dados\n")).toEqual({ high: 1, medium: 0, low: 0 });
+  // alone, nothing after it: none; fixed with only a reference: none
+  expect(of("**Média**\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(of("**Média** (corrigida em abc1234)\n(PR #19)\n")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(of("**Média** (corrigida)\nO iPhone não foi visto.\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  // without bold, outside a heading on notes, in list, numbered and paragraph
+  expect(v17("Média corrigida, falta o iPhone")).toEqual([1, 1, 1]);
+  expect(of("- Média corrigida, falta o iPhone\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(of("Média corrigida, falta o iPhone\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(of("**Não testado:**\nMédia corrigida, falta o iPhone\n")).toEqual({ high: 0, medium: 1, low: 0 });
+  // only a reference after it: fixed, none
+  expect(v17("Média corrigida em abc1234")).toEqual([0, 0, 0]);
+  // no state said: no note ("Média dos testes caiu.")
+  expect(of("Média dos testes caiu.\n")).toEqual({ high: 0, medium: 0, low: 0 });
+});
