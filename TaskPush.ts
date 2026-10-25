@@ -7,8 +7,9 @@
 // precisam de você"). A push shows only the ids, never a title: its text
 // passes through the browser vendor's push service.
 // Once a day, at REMIND (the server's local hour), the ones still the
-// user's past LATE since told are told again as late ("Pendência P3 está
-// em atraso"), each once ever: one reminded isn't again, even reopened.
+// user's past their kind's LATE (TaskDeps.late_after) since told are
+// told again as late ("Pendência P3 está em atraso"), each once ever:
+// one reminded isn't again, even reopened.
 // Each push carries the user's count (open tasks whose move it is, as
 // the Mesa's "Agora" counts them) for the app's badge (sw.js).
 // What was told is kept in the chat's dir (push.json, written whole,
@@ -47,8 +48,9 @@ export const FILE = "/push.json";
 // how long tasks made or freed wait to go together (ms)
 export const WINDOW = 45 * 1000;
 
-// how long a task stays the user's before it's late (ms): TaskDeps.LATE,
-// shared with the views
+// how long a task stays the user's before it's late (ms), when its kind
+// says no other: TaskDeps.LATE, shared with the views; by kind (a PR
+// 24 h, a decision 72 h, a test 2 h): TaskDeps.late_after
 export const LATE = Deps.LATE;
 
 // the local hour the daily reminder goes, at or after
@@ -154,7 +156,8 @@ export function step(state: State | null, tasks: Task[], now: number): { state: 
   const today = day(now);
   if (looked !== today && new Date(now).getHours() >= REMIND) {
     looked = today;
-    const late = sorted(ids.filter((id) => !queue.includes(id) && !reminded.includes(id) && now - Date.parse(seen[id]) >= LATE));
+    const by = new Map(tasks.map((t) => [t.id, t]));
+    const late = sorted(ids.filter((id) => !queue.includes(id) && !reminded.includes(id) && now - Date.parse(seen[id]) >= Deps.late_after(by.get(id)!)));
     if (late.length > 0) {
       send.push({ kind: "late", ids: late, text: text("late", late), count });
       reminded = [...reminded, ...late];

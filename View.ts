@@ -871,15 +871,15 @@ export function desk_match(t: Task, q: string, ref: string): boolean {
 }
 
 // the Mesa's list: each group with tasks in the search, in DESK's
-// order, its tasks as the server sorts them (in "now", those that free
-// others first)
+// order, its tasks as the server sorts them; "now" as P3 asks
+// (TaskDeps.now_order: priority, then how many it frees, then the oldest)
 export function desk_list(tasks: Task[], q = "", ref = ""): { group: Desk; label: string; tasks: Task[] }[] {
   const blocked = Deps.blocked_ids(tasks);
   const shown = tasks.filter((t) => desk_match(t, q, ref));
-  const frees = (t: Task) => Number(Deps.frees(tasks, t) > 0);
+  const order = Deps.now_order(tasks);
   return DESK.map(([group, label]) => {
     const of = shown.filter((t) => desk_group(t, blocked) === group);
-    return { group, label, tasks: group === "now" ? [...of].sort((a, b) => frees(b) - frees(a)) : of };
+    return { group, label, tasks: group === "now" ? [...of].sort(order) : of };
   }).filter((g) => g.tasks.length > 0);
 }
 
@@ -921,18 +921,36 @@ export function desk_next(tasks: Task[], sel: string | null, q = "", ref = "", o
   return now[0];
 }
 
-// how long a task stays the user's before it's late (ms): TaskDeps.LATE,
-// the same value the late push (TaskPush.LATE) reads
+// how long a task stays the user's before it's late (ms), when its kind
+// says no other: TaskDeps.LATE, the same value the late push
+// (TaskPush.LATE) reads; by kind: TaskDeps.late_after
 export const TASK_LATE = Deps.LATE;
 
-// a task late (open, the user's move, made over TASK_LATE ago): how
-// late, "atrasada há 30 h" (under 2 days) or "atrasada há 3 d"; else ""
+// a task late (open, the user's move, theirs to act on (TaskDeps.ready_at)
+// for longer than its kind allows, TaskDeps.late_after): how long it's
+// been theirs, "atrasada há 30 h" (under 2 days) or "atrasada há 3 d";
+// else "". Late, it stays where it is (P5: none expires)
 export function task_late_said(t: Task, blocked: Set<string>, now: number): string {
-  const age = now - Date.parse(t.made);
-  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > TASK_LATE)) {
+  const age = now - Date.parse(Deps.ready_at(t));
+  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > Deps.late_after(t))) {
     return "";
   }
   return "atrasada há " + hours_said(age);
+}
+
+// a task's kind and its limit, as the views say it ("aprovação de PR,
+// prazo 24 h"); "" for none
+export const KIND_SAID: Record<Deps.TaskKind, string> = { pr: "aprovação de PR", decision: "decisão", test: "teste" };
+export function task_kind_said(t: Task): string {
+  const k = Deps.kind_of(t);
+  return k === null ? "" : KIND_SAID[k] + ", prazo " + Deps.LATE_BY[k] / 3600e3 + " h";
+}
+
+// a task's priority as the views say it, if not normal ("prioridade
+// alta"); else ""
+export function task_priority_said(t: Task): string {
+  const p = Deps.priority_of(t);
+  return p === "high" ? "prioridade alta" : p === "low" ? "prioridade baixa" : "";
 }
 
 // "3 h" under 2 days, else "3 d" (ms: how long)
@@ -1107,7 +1125,9 @@ export function desk_md(v: View, ref = ""): string {
     return ref === "" ? "A Mesa está vazia: nenhuma pendência." : "Nenhuma pendência do projeto “" + ref + "”. Projetos: " + (desk_refs(v.tasks).join(", ") || "nenhum") + ".";
   }
   const line = (t: Task, g: Desk) => {
+    const prio = g === "closed" ? "" : task_priority_said(t);
     const more = [
+      ...(prio === "" ? [] : ["**" + prio + "**"]),
       ...(t.ref === null || ref !== "" ? [] : [t.ref]),
       ...(t.assignee === "user" ? [] : [assignee_said(t)]),
       ...(g === "waiting" ? ["aguarda " + Deps.waits(v.tasks, t).join(", ")] : []),
@@ -1135,6 +1155,9 @@ export function task_whole(t: any): Task {
     origin     : t?.origin ?? null,
     origin_url : t?.origin_url ?? null,
     agent      : t?.agent ?? null,
+    kind       : t?.kind ?? null,
+    priority   : t?.priority ?? "normal",
+    ready      : t?.ready ?? t?.made,
     choices    : Array.isArray(t?.choices) ? t.choices : [],
     after      : Array.isArray(t?.after) ? t.after : [],
     fields     : Array.isArray(t?.fields) ? t.fields : [],

@@ -523,7 +523,14 @@ body.desk footer > :not(#toast) { display: none; }
 /* read by a screen reader only (the Mesa's wait for Unii, aria-live):
    out of sight and of the grid */
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
-:is(#tasks, #desk) :is(.late, .ref, .frees, .stalled, .agent) { white-space: nowrap; }
+/* a priority declared (not normal), first in the line: high in the
+   accent, framed; low, quiet. Its kind and limit ("teste, prazo 2 h"),
+   quiet, on the Mesa's detail (P3, P4) */
+:is(#tasks, #desk) .prio { padding: 0 6px; border-radius: 6px; border: 1px solid currentColor; font-weight: 600; }
+:is(#tasks, #desk) .prio.high { color: var(--accent); }
+:is(#tasks, #desk) .prio.low { color: var(--mid); font-weight: 400; border-color: var(--frame); }
+:is(#tasks, #desk) .kind { color: var(--mid); }
+:is(#tasks, #desk) :is(.late, .ref, .frees, .stalled, .agent, .prio, .kind) { white-space: nowrap; }
 #desk article .prs { margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
 #desk article .prs a.pr { color: var(--ink); text-decoration: none; border: 1px solid var(--frame); padding: 2px 8px; }
 #desk article .prs a.pr:hover { background: var(--hover); }
