@@ -1,0 +1,3 @@
+[test]
+# a temporary UNII_DIR for every run (TestSetup.ts): `bun test` alone is safe
+preload = ["./TestSetup.ts"]

@@ -129,6 +129,8 @@ Use
 
 From source (Bun): `bun install`, `bun run web` (rebuilds web/app.js),
 `bun Cli.ts <command>`, `bun run build` (one `unii` executable).
+`bun test` runs every test on a fresh `/tmp/unii-test-*` data dir
+(TestSetup.ts, preloaded by bunfig.toml), never on real data.
 
 Q&A
 ---
