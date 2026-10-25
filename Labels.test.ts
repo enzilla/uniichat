@@ -22,7 +22,12 @@ import * as Html from "./web/src/Html.ts";
 if (!config.DIR.startsWith("/tmp/")) {
   throw new Error("run with UNII_DIR in /tmp: " + config.DIR);
 }
-afterAll(() => fs.rmSync(config.DIR, { recursive: true, force: true }));
+// emptied, not removed: a flush (Disk.ts) syncs the dir itself, and
+// may come later; TestSetup.ts removes it as the run ends
+afterAll(() => {
+  fs.rmSync(config.DIR, { recursive: true, force: true });
+  fs.mkdirSync(config.DIR, { recursive: true });
+});
 
 // a subagent's call never ends (it stays at work); others end at once
 (AskAI as any).ask = (ask: Ask) => {

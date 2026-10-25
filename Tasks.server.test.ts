@@ -19,7 +19,12 @@ import * as View from "./View.ts";
 if (!config.DIR.startsWith("/tmp/")) {
   throw new Error("run with UNII_DIR in /tmp: " + config.DIR);
 }
-afterAll(() => fs.rmSync(config.DIR, { recursive: true, force: true }));
+// emptied, not removed: a flush (Disk.ts) syncs the dir itself, and
+// may come later; TestSetup.ts removes it as the run ends
+afterAll(() => {
+  fs.rmSync(config.DIR, { recursive: true, force: true });
+  fs.mkdirSync(config.DIR, { recursive: true });
+});
 
 // what each turn's call was asked; the next call's end
 const ASKED: Ask[] = [];

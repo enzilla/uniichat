@@ -16,7 +16,12 @@ import * as Tasks from "./Tasks.ts";
 if (!config.DIR.startsWith("/tmp/")) {
   throw new Error("run with UNII_DIR in /tmp: " + config.DIR);
 }
-afterAll(() => fs.rmSync(config.DIR, { recursive: true, force: true }));
+// emptied, not removed: a flush (Disk.ts) syncs the dir itself, and
+// may come later; TestSetup.ts removes it as the run ends
+afterAll(() => {
+  fs.rmSync(config.DIR, { recursive: true, force: true });
+  fs.mkdirSync(config.DIR, { recursive: true });
+});
 
 // any call to the AI is a turn started: there must be none
 let CALLS = 0;
