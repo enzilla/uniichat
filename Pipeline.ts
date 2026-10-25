@@ -419,7 +419,10 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
       // fixed by its label or by its text, with ":" or not ('**Ressalva 1
       // (média)** — corrigida em abc' as '**Ressalva 1 (média):**
       // corrigida em abc', LemonRobin): note_fixed
-      const para = NOTE_PARA.exec(fold(line)) ?? NOTE_NUM.exec(fold(line));
+      // so is one labeled by a single note and its severity, alone on its
+      // line ("**Ressalva baixa**"): its items are its details
+      // ("- **Efeito:** …", "- **Correção possível:** …", NeatWombat, 25/10)
+      const para = NOTE_PARA.exec(fold(line)) ?? NOTE_NUM.exec(fold(line)) ?? NOTE_ONE.exec(fold(line));
       if (para !== null && !note_fixed(fold(line))) {
         notes[sev_in(para[1]) ?? "low"] += 1;
         noted = true;
@@ -582,13 +585,23 @@ function fixed(label: string): boolean {
 // (ProudCougar), "… (mas não no iOS)", "… em parte", "… no Chromium
 // apenas" (SleepyMoose), "… (iOS desconhecido)", "… (a confirmar)", "…
 // em metade", "… (limitado ao Chromium)" (NeatWombat, 25/10), and also
-// "… testada no Chromium" (where tested isn't a reference). On a folded
-// text, without its marks
-const REF = String.raw`(?:[0-9a-f]{3,40}\b|ci\b|(?=[\w#./:-]*[\d#./:])[\w#./:-]*[\w#/])`;
-const REF_NOUN = String.raw`(?:commit|commits|head|hash|pr|prs|pull|branch|issue|teste|testes|test|tests|bun|arquivo|arquivos|file|files|build|run|job)`;
-const REFS = String.raw`(?:(?:o|a|os|as|the)\s+)?(?:` + REF_NOUN + String.raw`\s+){0,2}` + REF + String.raw`(?:\s*(?:,\s*|\s+(?:e|and)\s+)` + REF + String.raw`)*`;
-const FIX_PAREN = String.raw`\s*\(\s*` + REFS + String.raw`\s*\)`;
-const fix_where = (by: string) => String.raw`(?:\s+(?:` + by + String.raw`)\s+` + REFS + String.raw`)?(?:` + FIX_PAREN + String.raw`)?`;
+// "… testada no Chromium apenas" (the place, then a word that limits it).
+// A hash has 7 to 40 hex digits, one a digit at least ("a29e956"; not
+// "cafe", LongCow, 25/10); a fraction ("em 1/2") or a token with only
+// "/" ("a/b"), or a word before a sentence's "." ("abc."), isn't a
+// reference, a count is only after its noun ("bun 251/0"); where it was
+// tested ("no iPhone", "no Safari 17", "localmente") and an item's
+// number ("(item 2)") are (LongCow). On a folded text, without its marks
+const HASH = String.raw`(?=[a-f]*\d)[0-9a-f]{7,40}\b`;
+const TOKEN = String.raw`(?!\d+\/\d+(?![\w#:\/-]|\.\w))(?=[\w#./:-]*(?:\d|#|[.:]\w))[\w#./:-]*[\w#/]`;
+const ENV = String.raw`(?:iphone|ipad|ios|safari|chromium|chrome|firefox|webkit|android|macos|linux|windows|navegador|browser|desktop|celular|pwa)(?:\s+\d+(?:\.\d+)*)?\b`;
+const REF = String.raw`(?:` + HASH + String.raw`|ci\b|` + ENV + String.raw`|` + TOKEN + String.raw`)`;
+const REF_NOUN = String.raw`(?:commit|commits|head|hash|pr|prs|pull|branch|issue|teste|testes|test|tests|bun|arquivo|arquivos|file|files|build|run|job|item|itens|ponto|pontos|ressalva|ressalvas)`;
+const ART = String.raw`(?:(?:o|a|os|as|the)\s+)?`;
+const REF_ONE = ART + String.raw`(?:(?:` + REF_NOUN + String.raw`\s+){1,2}(?:\d+\/\d+|` + REF + String.raw`)|` + REF + String.raw`)(?:\s+(?:casos|testes|frases|relatos|cenarios|bordas))?`;
+const REFS = REF_ONE + String.raw`(?:\s*(?:,\s*|\s+(?:e|and)\s+)(?:(?:em|no|na|nos|nas|in|on)\s+)?` + REF_ONE + String.raw`)*`;
+const FIX_PAREN = String.raw`\s*\(\s*(?:(?:ver|veja|see)\s+)?` + REFS + String.raw`\s*\)`;
+const fix_where = (by: string) => String.raw`(?:\s+localmente|\s+(?:` + by + String.raw`)\s+` + REFS + String.raw`)?(?:` + FIX_PAREN + String.raw`)?`;
 const ALL_FIXED = new RegExp(
   String.raw`^\s*(?:(?:todas?|tudo|ambas|as\s+(?:\d+|duas|tres|quatro|cinco))\s+(?:(?:as\s+)?ressalvas\s+)?)?(?:(?:ja\s+)?(?:foram|estao)\s+)?(?:corrigid|resolvid|sanad|fixed|resolved)\w*` +
     fix_where("em|no|na|nos|nas|pelo|pela|por|in|on|by|at") +
@@ -668,11 +681,12 @@ function label_of(line: string): string {
     return "";
   }
   const colon = f.indexOf(":");
-  if (colon >= 0) {
-    return f.slice(0, colon);
-  }
-  const bold = /^\s*(\*\*|__)([^*_\n]+)\1/.exec(f);
-  return bold !== null ? bold[2] : "";
+  const label = colon >= 0 ? f.slice(0, colon) : /^\s*(\*\*|__)([^*_\n]+)\1/.exec(f)?.[2] ?? "";
+  // a label on a note names it or its severity ("**Ressalva média
+  // (resolvida):**", "1. **MÉDIA (corrigida)** x"); a sentence in bold
+  // that only says "corrigida" ("2. **Mantém aberta uma nota que já
+  // estava corrigida.**", LongCow, 25/10) is the note's text: none
+  return /\b(?:ressalvas?|observac(?:ao|oes)|altas?|high|medias?|medium|baixas?|low)\b/.test(label) ? label : "";
 }
 
 // how many notes, and of what severity, a verdict's line says it has:
@@ -711,6 +725,12 @@ const NOTE_PARA = /^[\s>*_]*(?:ressalvas?|observac(?:ao|oes))\s+(?:(?:n[o.]?\s*)
 // is in it (fixed). Singular: "Ressalvas 1 e 2 (baixas)" heads a list.
 // On a folded line
 const NOTE_NUM = /^[\s>#*_]*(?:ressalva|observacao)\s+(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,—–-]?\s*(alta|media|baixa)\b[^:\n]*/;
+
+// a line that labels one note by its severity, and only that, its text
+// on the lines after: "**Ressalva baixa**", "### Observação média:",
+// "**Ressalva baixa (corrigida)**" (fixed). Singular: "**Ressalvas
+// baixas**" heads a list. On a folded line
+const NOTE_ONE = /^[\s>#*_]*(?:ressalva|observacao)\s+(alta|media|baixa)\b[\s*_`]*(?:\([^)\n]*\))?[\s*_`:]*$/;
 
 // an item that opens with its severity: "1. MÉDIA: …", "- **A1 (ALTA,
 // bloqueante)** …", "1. A: baixa", "- Baixa — …"; not a word that
