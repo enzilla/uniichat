@@ -48,10 +48,11 @@ export function frees_direct<T extends Dep>(tasks: T[], t: T): string[] {
   return tasks.filter((d) => d.state === "open" && after_of(d).includes(t.id)).map((d) => d.id).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
 }
 
-// how many open tasks wait for t, directly or through other open ones
-export function frees<T extends Dep>(tasks: T[], t: T): number {
+// the open tasks that wait for t, directly or through other open ones,
+// by id, in their number's order (t closed: none)
+export function frees_ids<T extends Dep>(tasks: T[], t: T): string[] {
   if (t.state !== "open") {
-    return 0;
+    return [];
   }
   const seen = new Set<string>([t.id]);
   const todo = [t.id];
@@ -64,7 +65,13 @@ export function frees<T extends Dep>(tasks: T[], t: T): number {
       }
     }
   }
-  return seen.size - 1;
+  seen.delete(t.id);
+  return [...seen].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+}
+
+// how many open tasks wait for t, directly or through other open ones
+export function frees<T extends Dep>(tasks: T[], t: T): number {
+  return frees_ids(tasks, t).length;
 }
 
 // whether `from`, through the after lists, reaches `to` (a task given

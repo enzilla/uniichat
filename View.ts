@@ -533,6 +533,42 @@ export function task_frees_said(v: View, t: Task): string {
   return n === 0 ? "" : "libera " + n;
 }
 
+// "P1", "P1 e P2", "P1, P2 e P3" (pt-BR)
+export function and_said(xs: string[]): string {
+  return xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " e " + xs[xs.length - 1];
+}
+
+// whose a task is, short, beside its id: "sua", "do Unii", "de X"; ""
+// for one not in the list
+export function whose_short(t: Task | undefined): string {
+  return t === undefined ? "" : t.assignee === "user" ? "sua" : t.assignee === "unii" ? "do Unii" : "de " + t.assignee;
+}
+
+// an id with whose it is: "P46 (sua)"
+export function id_whose(tasks: Task[], id: string): string {
+  const w = whose_short(tasks.find((u) => u.id === id));
+  return w === "" ? id : id + " (" + w + ")";
+}
+
+// which tasks t frees (through others too), named: "libera P70",
+// "libera P70 e P71", past FREES_SAID "libera P70, P71 e mais 3"; ""
+// for none
+export const FREES_SAID = 3;
+export function task_frees_named(tasks: Task[], t: Task): string {
+  const ids = Deps.frees_ids(tasks, t);
+  if (ids.length === 0) {
+    return "";
+  }
+  return "libera " + (ids.length <= FREES_SAID ? and_said(ids) : ids.slice(0, FREES_SAID - 1).join(", ") + " e mais " + (ids.length - FREES_SAID + 1));
+}
+
+// what t waits for, each with whose it is: "aguarda P46 (sua) e P52
+// (do Unii)"; "" for nothing
+export function task_waits_named(tasks: Task[], t: Task): string {
+  const ids = Deps.waits(tasks, t);
+  return ids.length === 0 ? "" : "aguarda " + and_said(ids.map((id) => id_whose(tasks, id)));
+}
+
 // the tab's title with the user's count of tasks before it: "(2) UniiChat";
 // none, the title alone
 export function turn_title(title: string, n: number): string {
@@ -671,6 +707,50 @@ export function task_talk_said(t: Task): string {
   return t.talk === "unii" ? "aguardando o Unii" : t.talk === "user" ? "sua vez" : "";
 }
 
+// what a view knows of Unii's turn, to say why a task waits for Unii:
+// busy, a turn runs; wait, what it waits on (State.wait: SUMMARIES, a
+// model's name, ""); limited, the turn waits for a usage limit; up, the
+// view is connected to the server
+export type Turn = { busy: boolean; wait: Wait; limited: boolean; up: boolean };
+
+// the turn as a view's state says it
+export function turn_of(v: { busy: boolean; wait: Wait; limits?: Record<string, unknown>; up: boolean }): Turn {
+  return { busy: v.busy, wait: v.wait, limited: Object.hasOwn(v.limits ?? {}, TURN), up: v.up };
+}
+
+// since when a task waits for Unii: the user's last message in its
+// thread (none kept: its last change)
+export function task_talk_since(t: Task): string {
+  const mine = (t.thread ?? []).filter((m) => m.who === "user");
+  return mine.length === 0 ? t.changed : mine[mine.length - 1].at;
+}
+
+// why Unii hasn't answered yet, by its turn
+export function turn_why(turn: Turn): string {
+  if (!turn.up) {
+    return "sem conexão com o servidor";
+  }
+  if (turn.limited) {
+    return "esperando o limite de uso do serviço de IA";
+  }
+  if (!turn.busy) {
+    return "nenhum turno em andamento (o servidor pode ter reiniciado)";
+  }
+  return turn.wait === SUMMARIES ? "compactando mensagens antigas" : turn.wait !== "" ? "esperando a resposta de " + turn.wait : "turno em andamento";
+}
+
+// a task the user wrote about and Unii hasn't answered: "aguardando o
+// Unii há 5 min · compactando mensagens antigas" (no turn known: the
+// time alone); else as task_talk_said ("sua vez", or "")
+export function task_talk_wait_said(t: Task, now: number, turn: Turn | null = null): string {
+  if (t.state !== "open" || t.talk !== "unii") {
+    return task_talk_said(t);
+  }
+  const ms = Math.max(0, now - Date.parse(task_talk_since(t)));
+  const ago = Number.isFinite(ms) ? " há " + (ms < 3600e3 ? Math.floor(ms / 60e3) + " min" : hours_said(ms)) : "";
+  return "aguardando o Unii" + ago + (turn === null ? "" : " · " + turn_why(turn));
+}
+
 // the footer's line of the pending list ("" with none open): ids that
 // fit in w, else the count alone
 // (those that wait for others: only how many, "+2 aguardando")
@@ -793,10 +873,28 @@ export function desk_step(ids: string[], at: string | null, by: number): string 
 }
 
 // the task to offer after the one shown was resolved (or waits): the
-// first of "now" in the list's order but it; none: null
-export function desk_next(tasks: Task[], sel: string | null, q = "", ref = ""): Task | null {
-  const now = desk_list(tasks, q, ref).find((g) => g.group === "now");
-  return now?.tasks.find((t) => t.id !== sel) ?? null;
+// next of "now" after it in the list's order, going on from the top
+// past the last; order: the list as it was while the one shown was
+// still in it (a task resolved leaves "now" for "closed", so the list
+// of now no longer says where it was); not given, or it's not in it:
+// the list of now. The one shown in neither (gone), or none of "now"
+// in the order (all new): the first of "now". None: null
+export function desk_next(tasks: Task[], sel: string | null, q = "", ref = "", order: string[] = []): Task | null {
+  const groups = desk_list(tasks, q, ref);
+  const now = (groups.find((g) => g.group === "now")?.tasks ?? []).filter((t) => t.id !== sel);
+  if (now.length === 0) {
+    return null;
+  }
+  const list = sel !== null && order.includes(sel) ? order : groups.flatMap((g) => g.tasks.map((t) => t.id));
+  const k = sel === null ? -1 : list.indexOf(sel);
+  if (k >= 0) {
+    const ahead = [...list.slice(k + 1), ...list.slice(0, k)];
+    const next = ahead.map((id) => now.find((t) => t.id === id)).find((t) => t !== undefined);
+    if (next !== undefined) {
+      return next;
+    }
+  }
+  return now[0];
 }
 
 // how long a task stays the user's before it's late (ms): TaskDeps.LATE,
@@ -810,8 +908,35 @@ export function task_late_said(t: Task, blocked: Set<string>, now: number): stri
   if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > TASK_LATE)) {
     return "";
   }
-  const h = Math.floor(age / 3600e3);
-  return "atrasada há " + (h < 48 ? h + " h" : Math.floor(h / 24) + " d");
+  return "atrasada há " + hours_said(age);
+}
+
+// "3 h" under 2 days, else "3 d" (ms: how long)
+function hours_said(ms: number): string {
+  const h = Math.floor(ms / 3600e3);
+  return h < 48 ? h + " h" : Math.floor(h / 24) + " d";
+}
+
+// how long a task of someone else's (Unii's, an agent's) has not
+// changed, once STALL or more: "parada há 3 h" (late: past TASK_LATE,
+// what the stalled tasks' watch, vigia.ts, charges); else "" (closed,
+// the user's, waiting for others, or the user wrote in its thread: then
+// it's Unii's answer that's awaited, task_talk_wait_said)
+export const STALL = 3600e3;
+export function task_stalled_said(t: Task, blocked: Set<string>, now: number): { text: string; late: boolean } {
+  const age = now - Date.parse(t.changed ?? t.made);
+  if (t.state !== "open" || t.assignee === "user" || blocked.has(t.id) || t.talk === "unii" || !(age >= STALL)) {
+    return { text: "", late: false };
+  }
+  return { text: "parada há " + hours_said(age), late: age > TASK_LATE };
+}
+
+// the agent linked to a task of someone else's, as the views say it:
+// "agente WiseDolphin", or, open and with none, "sem agente"; the
+// user's, or closed with none: ""
+export function task_agent_said(t: Task): string {
+  const a = t.agent ?? null;
+  return a !== null ? "agente " + a : t.state === "open" && t.assignee !== "user" ? "sem agente" : "";
 }
 
 // the GitHub pull requests a task points to (its detail, its origin's
@@ -856,7 +981,7 @@ export function desk_md(v: View, ref = ""): string {
 // user's, nor breaks on what it lacks
 export function task_whole(t: any): Task {
   const named = typeof t?.assignee === "string" && t.assignee !== "";
-  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined) {
+  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined) {
     return t;
   }
   return {
@@ -864,6 +989,7 @@ export function task_whole(t: any): Task {
     assignee   : named ? t.assignee : t?.who === "unii" ? "unii" : "user",
     origin     : t?.origin ?? null,
     origin_url : t?.origin_url ?? null,
+    agent      : t?.agent ?? null,
     choices    : Array.isArray(t?.choices) ? t.choices : [],
     after      : Array.isArray(t?.after) ? t.after : [],
     fields     : Array.isArray(t?.fields) ? t.fields : [],

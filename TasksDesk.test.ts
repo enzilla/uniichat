@@ -112,8 +112,8 @@ test("web: the list by group, the one shown marked; its detail whole, with field
   expect(p4).toContain('class="row unii sel"');
   expect(p4).toContain("aguardando o Unii");
   expect(html.list.find((x) => x.includes('data-desk="P1"'))).toContain('aria-selected="false"');
-  expect(html.list.find((x) => x.includes('data-desk="P3"'))).toContain("aguarda P2");
-  expect(html.list.find((x) => x.includes('data-desk="P2"'))).toContain("libera 1");
+  expect(html.list.find((x) => x.includes('data-desk="P3"'))).toContain("aguarda P2 (do Unii)");
+  expect(html.list.find((x) => x.includes('data-desk="P2"'))).toContain("libera P3");
   const d = html.detail.join("");
   // P4 waits for Unii: the next of Agora offered under it
   expect(html.detail.length).toBe(3);
@@ -136,7 +136,7 @@ test("web: a waiting task links to what it waits for; a closed one shows its ans
   const tasks = desk();
   const waiting = Html.desk_html(tasks, "", "", "P3").detail.join("");
   expect(waiting).toContain('<article class="task waiting user" data-task="P3">');
-  expect(waiting).toContain('Só pode ser resolvida depois de: <button class="goto" data-desk="P2">P2 (com o Unii)</button>.');
+  expect(waiting).toContain('Só pode ser resolvida depois de: <button class="goto" data-desk="P2">P2 (do Unii)</button>.');
   expect(waiting).not.toContain(">Concluir</button>");
   const closed = Html.desk_html(tasks, "", "", "P6").detail.join("");
   expect(closed).toContain('<dl class="answers"><dt>Ambiente</dt><dd>prod</dd></dl>');
@@ -257,4 +257,116 @@ test("web: a choice says it concludes, the comment comes before it; required fie
   expect(d.indexOf('class="note"')).toBeLessThan(d.indexOf('class="opts"'));
   expect(d).toContain('<fieldset class="field" data-field="a" data-kind="choice" data-required="true">');
   expect(d).toContain('<fieldset class="field" data-field="b" data-kind="text">');
+});
+
+// Rodada 2 ("nada se perde", projetos/uniichat-ux-r1.md §6)
+// --------------------------------------------------------
+
+test("Próxima: from the one resolved in the middle, the next of Agora in the list's order, not the first; past the last, the top", () => {
+  const s = T.tasks_load(dir);
+  for (const title of ["A", "B", "C", "D", "E"]) {
+    add(s, { title });
+  }
+  const before = T.tasks_view(s, NOW);
+  const order = View.desk_list(before).flatMap((g) => g.tasks.map((t) => t.id));
+  expect(order).toEqual(["P1", "P2", "P3", "P4", "P5"]);
+  // still in Agora: the next after it
+  expect(View.desk_next(before, "P3", "", "", order)?.id).toBe("P4");
+  T.task_resolve(s, "P3", "done", null, null, NOW);
+  const after = T.tasks_view(s, NOW);
+  // resolved, it's in Resolvidas: the order it had says where it was
+  expect(View.desk_next(after, "P3", "", "", order)?.id).toBe("P4");
+  expect(Html.desk_html(after, "", "", "P3", NOW, { order }).detail.at(-1)).toContain('data-desk="P4"');
+  // the last resolved: back to the top
+  T.task_resolve(s, "P5", "done", null, null, NOW);
+  expect(View.desk_next(T.tasks_view(s, NOW), "P5", "", "", order)?.id).toBe("P1");
+  // a task skipped meanwhile (P4 resolved too): the next one still open
+  T.task_resolve(s, "P4", "done", null, null, NOW);
+  expect(View.desk_next(T.tasks_view(s, NOW), "P3", "", "", order)?.id).toBe("P1");
+  // no order kept (or it doesn't have the one shown): the list of now
+  expect(View.desk_next(T.tasks_view(s, NOW), "P3", "", "", ["P9"])?.id).toBe("P1");
+});
+
+test("a task of Unii's: 'parada há N h' from its last change, late past TASK_LATE; the agent linked, or 'sem agente'", () => {
+  const s = T.tasks_load(dir);
+  add(s, { title: "Acompanhar a leva de UX", assignee: "unii", ref: "uniichat-ux", agent: "WiseDolphin" });
+  add(s, { title: "NUM-2337: tags e portas", assignee: "unii", ref: "num-2337" });
+  add(s, { title: "Mesclar", ref: "num-2337" });
+  const tasks = T.tasks_view(s, NOW);
+  const [p1, p2, p3] = ["P1", "P2", "P3"].map((id) => tasks.find((t) => t.id === id)!);
+  expect(p1.agent).toBe("WiseDolphin");
+  expect(p2.agent).toBe(null);
+  const none = new Set<string>();
+  expect(View.task_stalled_said(p1, none, NOW + 30 * 60e3)).toEqual({ text: "", late: false });
+  expect(View.task_stalled_said(p1, none, NOW + 3 * 3600e3)).toEqual({ text: "parada há 3 h", late: false });
+  expect(View.task_stalled_said(p2, none, NOW + 28 * 3600e3)).toEqual({ text: "parada há 28 h", late: true });
+  expect(View.task_stalled_said(p3, none, NOW + 28 * 3600e3).text).toBe("");
+  expect(View.task_agent_said(p1)).toBe("agente WiseDolphin");
+  expect(View.task_agent_said(p2)).toBe("sem agente");
+  expect(View.task_agent_said(p3)).toBe("");
+  const html = Html.desk_html(tasks, "", "", "P2", NOW + 28 * 3600e3);
+  const row = (id: string) => html.list.find((x) => x.includes(`data-desk="${id}"`))!;
+  expect(row("P1")).toContain('<span class="agent">agente WiseDolphin</span>');
+  expect(row("P1")).toContain('<span class="late">parada há 28 h</span>');
+  expect(row("P2")).toContain('<span class="agent none">sem agente</span>');
+  expect(html.detail.join("")).toContain('<span class="late">parada há 28 h</span>');
+  expect(html.detail.join("")).toContain("sem agente");
+  // the tools' line says it; edited, cleared, or refused as said
+  expect(T.task_line(p1, NOW)).toContain("agent WiseDolphin");
+  expect((T.task_edit(s, { id: "P2", agent: "SoftMule" }, NOW) as T.Task).agent).toBe("SoftMule");
+  expect((T.task_edit(s, { id: "P2", agent: "" }, NOW) as T.Task).agent).toBe(null);
+  expect(T.task_edit(s, { id: "P2", agent: "um nome" }, NOW)).toContain("agent is an agent's name");
+  expect(T.task_new(s, { title: "X", agent: "<b>" }, "main", NOW)).toContain("agent is an agent's name");
+  // kept on disk
+  T.tasks_forget();
+  expect(T.task_find(T.tasks_load(dir), "P1")!.agent).toBe("WiseDolphin");
+});
+
+test("aguardando o Unii: how long since the user wrote, and why, by Unii's turn; in the row and the detail", () => {
+  const tasks = desk();
+  const p4 = tasks.find((t) => t.id === "P4")!;
+  const turn = (over: Partial<View.Turn> = {}): View.Turn => ({ busy: true, wait: "", limited: false, up: true, ...over });
+  const at = NOW + 5 * 60e3;
+  expect(View.task_talk_wait_said(p4, at)).toBe("aguardando o Unii há 5 min");
+  expect(View.task_talk_wait_said(p4, at, turn({ wait: View.SUMMARIES }))).toBe("aguardando o Unii há 5 min · compactando mensagens antigas");
+  expect(View.task_talk_wait_said(p4, at, turn())).toBe("aguardando o Unii há 5 min · turno em andamento");
+  expect(View.task_talk_wait_said(p4, at, turn({ wait: "opus" }))).toBe("aguardando o Unii há 5 min · esperando a resposta de opus");
+  expect(View.task_talk_wait_said(p4, at, turn({ busy: false }))).toBe("aguardando o Unii há 5 min · nenhum turno em andamento (o servidor pode ter reiniciado)");
+  expect(View.task_talk_wait_said(p4, at, turn({ limited: true }))).toBe("aguardando o Unii há 5 min · esperando o limite de uso do serviço de IA");
+  expect(View.task_talk_wait_said(p4, at, turn({ up: false }))).toBe("aguardando o Unii há 5 min · sem conexão com o servidor");
+  expect(View.task_talk_wait_said(p4, NOW + 3 * 3600e3)).toBe("aguardando o Unii há 3 h");
+  // Unii answered: the user's turn, as before
+  expect(View.task_talk_wait_said(tasks.find((t) => t.id === "P5")!, at, turn())).toBe("sua vez");
+  // the view's state read as a turn
+  expect(View.turn_of({ busy: true, wait: "", limits: { [View.TURN]: { until: 0, known: true } }, up: true }).limited).toBe(true);
+  expect(View.turn_of({ busy: false, wait: "", limits: {}, up: true }).limited).toBe(false);
+  // no model on the server (the turn never ends): the Mesa says why
+  const html = Html.desk_html(tasks, "", "", "P4", at, { turn: turn({ busy: false }) });
+  expect(html.list.find((x) => x.includes('data-desk="P4"'))).toContain("aguardando o Unii há 5 min · nenhum turno em andamento");
+  expect(html.detail.join("")).toContain('<span class="talk unii">aguardando o Unii há 5 min · nenhum turno em andamento (o servidor pode ter reiniciado)</span>');
+});
+
+test("blocked: its PR chips on the Mesa; what it waits for with whose it is; what a task frees, named", () => {
+  const s = T.tasks_load(dir);
+  add(s, { title: "Mesclar o #46", detail: "https://github.com/Numih/infra-tf-numih/pull/1127" });  // P1
+  add(s, { title: "Trocar o require", assignee: "unii" });                                    // P2
+  add(s, { title: "Aplicar em prod", after: ["P1", "P2"], detail: "PR: https://github.com/Numih/infra-tf-numih/pull/1128" }); // P3
+  const tasks = T.tasks_view(s, NOW);
+  const p3 = tasks.find((t) => t.id === "P3")!;
+  expect(View.task_waits_named(tasks, p3)).toBe("aguarda P1 (sua) e P2 (do Unii)");
+  expect(View.task_frees_named(tasks, tasks[0])).toBe("libera P3");
+  const d = Html.desk_html(tasks, "", "", "P3", NOW).detail.join("");
+  expect(d).toContain('<a class="pr" href="https://github.com/Numih/infra-tf-numih/pull/1128" target="_blank" rel="noopener noreferrer">infra-tf-numih#1128</a>');
+  expect(d).toContain('Só pode ser resolvida depois de: <button class="goto" data-desk="P1">P1 (sua)</button> e <button class="goto" data-desk="P2">P2 (do Unii)</button>.');
+  const list = Html.desk_html(tasks, "", "", "P1", NOW).list;
+  expect(list.find((x) => x.includes('data-desk="P3"'))).toContain("aguarda P1 (sua) e P2 (do Unii)");
+  expect(list.find((x) => x.includes('data-desk="P1"'))).toContain('<span class="frees">libera P3</span>');
+  expect(Html.tasks_html(tasks).waiting[0]).toContain("aguarda P1 (sua) e P2 (do Unii)");
+  // many freed: the first ones and how many more, through others too
+  for (const title of ["D", "E", "F", "G"]) {
+    add(s, { title, after: ["P3"] });
+  }
+  const more = T.tasks_view(s, NOW);
+  expect(View.task_frees_named(more, more.find((t) => t.id === "P1")!)).toBe("libera P3, P4 e mais 3");
+  expect(View.and_said(["P1", "P2", "P3"])).toBe("P1, P2 e P3");
 });

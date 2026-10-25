@@ -499,7 +499,12 @@ body.desk footer > :not(#toast) { display: none; }
    task_missing); after one resolved, the next of Agora */
 :is(#tasks, #desk) .late { padding: 0 6px; border-radius: 6px; color: var(--red); border: 1px solid currentColor; font-weight: 500; }
 :is(#tasks, #desk) .pr { padding: 0 6px; border-radius: 6px; background: var(--block); white-space: nowrap; }
-:is(#tasks, #desk) :is(.late, .ref, .frees, .talk) { white-space: nowrap; }
+/* a task of someone else's: how long it stalled (under a day, quiet;
+   past it, .late), the agent on it ("sem agente": framed red); the wait
+   for Unii says why, so it may wrap */
+:is(#tasks, #desk) .stalled { padding: 0 6px; border-radius: 6px; border: 1px solid var(--frame); }
+:is(#tasks, #desk) .agent.none { padding: 0 6px; border-radius: 6px; color: var(--red); border: 1px dashed currentColor; }
+:is(#tasks, #desk) :is(.late, .ref, .frees, .stalled, .agent) { white-space: nowrap; }
 #desk article .prs { margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
 #desk article .prs a.pr { color: var(--ink); text-decoration: none; border: 1px solid var(--frame); padding: 2px 8px; }
 #desk article .prs a.pr:hover { background: var(--hover); }
