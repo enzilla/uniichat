@@ -1290,10 +1290,11 @@ test("verdict_of: a count said treated is none; zeros before a count, or the cou
   expect(said("Veredito: aprovado.\n1 média e 2 baixas")).toEqual(["approved_with_notes", 0, 1, 2]);
   expect(said("Veredito: aprovado.\n\n1 média e 2 baixas")).toEqual(["approved_with_notes", 0, 1, 2]);
   expect(said("**Veredito:**\nAPROVADO\n1 média")).toEqual(["approved_with_notes", 0, 1, 0]);
-  // not one said fixed, nor a line that doesn't open with it, nor a heading or an item, nor after more on the verdict's line
+  // not one said fixed, nor a heading or an item, nor after more on the verdict's line
   expect(said("Veredito: aprovado.\n2 baixas corrigidas.")).toEqual(["approved", 0, 0, 0]);
   expect(said("Veredito: aprovado.\n2 baixas já tratadas.")).toEqual(["approved", 0, 0, 0]);
-  expect(said("Veredito: aprovado.\nO PR tem 2 baixas")).toEqual(["approved", 0, 0, 0]);
+  // (a count said anywhere in the line after it counts since GentleTrout 2, 25/10: the safe side)
+  expect(said("Veredito: aprovado.\nO PR tem 2 baixas")).toEqual(["approved_with_notes", 0, 0, 2]);
   expect(said("Veredito: aprovado.\n\n## Conferido\n- 2 baixas")).toEqual(["approved", 0, 0, 0]);
   expect(said("Veredito: aprovado sem ressalvas.\n2 baixas")).toEqual(["approved", 0, 0, 0]);
   // 3: "**Média**" then an item that only says a fix: none, as in a paragraph
@@ -1370,8 +1371,8 @@ test("verdict_of: the counts said after the verdict go on past their first sente
   expect(said("Veredito: aprovado. 2 baixas corrigidas.\n1 média corrigida em abc1234.")).toEqual(["approved", 0, 0, 0]);
   expect(said("Veredito: aprovado. 2 baixas corrigidas. 3 testes novos.")).toEqual(["approved", 0, 0, 0]);
   expect(said("Veredito: aprovado. 2 baixas corrigidas\n\n## Conferido\n- 1 média")).toEqual(["approved", 0, 0, 0]);
-  // limit: a count in a sentence that doesn't open with it isn't read
-  expect(said("Veredito: aprovado. 2 baixas corrigidas. O resto passou com 1 média.")).toEqual(["approved", 0, 0, 0]);
+  // a count in a sentence that doesn't open with it is read too (GentleTrout 2, 25/10)
+  expect(said("Veredito: aprovado. 2 baixas corrigidas. O resto passou com 1 média.")).toEqual(["approved_with_notes", 0, 1, 0]);
   // 2: "com ressalvas" with no count: the sentences after it give it
   expect(said("Veredito: aprovado com ressalvas. 2 baixas já tratadas e 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
   expect(said("Veredito: aprovado, com ressalvas. 2 baixas corrigidas. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
@@ -1385,4 +1386,41 @@ test("verdict_of: the counts said after the verdict go on past their first sente
   expect(said("Veredito: aprovado com ressalvas. 2 baixas já tratadas.")).toEqual(["approved_with_notes", 0, 0, 1]);
   expect(said("Veredito: aprovado com ressalvas.\n2 baixas já tratadas.")).toEqual(["approved_with_notes", 0, 0, 1]);
   expect(said("Veredito: aprovado com ressalvas.\nNenhuma.")).toEqual(["approved_with_notes", 0, 0, 1]);
+});
+
+test("verdict_of: the counts after the verdict go on across lines and sentences about notes: none said, only a fix, a count anywhere; 'com ressalvas' with its counts all fixed reads the next; part of a count fixed leaves the rest (GentleTrout 1-4, 25/10)", () => {
+  const said = (s: string) => {
+    const v = Pipeline.verdict_of(s);
+    return [v.verdict, v.notes.high, v.notes.medium, v.notes.low];
+  };
+  // 1: a line that says none of a severity doesn't end them; the line after it is read
+  expect(said("Veredito: aprovado. 2 baixas corrigidas.\nNenhuma alta.\n1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas.\nNenhuma alta.\n\n1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado.\nSem altas.\nNenhuma média.\n2 baixas")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(said("Veredito: aprovado com ressalvas, 2 baixas corrigidas.\nNenhuma alta.\n1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // but not past a heading, an item or a label
+  expect(said("Veredito: aprovado. 2 baixas corrigidas.\nNenhuma alta.\nConferido:\n- 1 média")).toEqual(["approved", 0, 0, 0]);
+  // 2: a sentence that says none, fixed or not, then a count; a count anywhere in its sentence
+  expect(said("Veredito: aprovado. Nenhuma alta corrigida. 1 média.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. GoldenJay 4 baixas corrigidas. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas. O resto passou com 1 média.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // a zero is no count
+  expect(said("Veredito: aprovado. 0 médias. 1 baixa.")).toEqual(["approved_with_notes", 0, 0, 1]);
+  // 3: "com ressalvas" whose counts are all said fixed, or a sentence that only says a fix: the next sentences give them
+  expect(said("Veredito: aprovado com ressalvas, 2 baixas corrigidas. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas. Tudo corrigido. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. Tudo corrigido. 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. Tudo corrigido.")).toEqual(["approved", 0, 0, 0]);
+  // 4: part of a count said fixed: the rest open
+  expect(said("Veredito: aprovado com ressalvas. 5 baixas, 2 corrigidas.")).toEqual(["approved_with_notes", 0, 0, 3]);
+  expect(said("Veredito: aprovado. 5 baixas, 2 corrigidas.")).toEqual(["approved_with_notes", 0, 0, 3]);
+  expect(said("Veredito: aprovado. 5 baixas (2 já tratadas).")).toEqual(["approved_with_notes", 0, 0, 3]);
+  expect(said("Veredito: aprovado. 5 baixas, das quais 2 corrigidas.")).toEqual(["approved_with_notes", 0, 0, 3]);
+  expect(said("Veredito: aprovado. 2 baixas, 2 corrigidas.")).toEqual(["approved", 0, 0, 0]);
+  // the part's fix qualified: all of them (the safe side)
+  expect(said("Veredito: aprovado. 5 baixas, 2 corrigidas, mas falha no Safari.")).toEqual(["approved_with_notes", 0, 0, 5]);
+  // a sentence about something else ends them (limit: what follows it is the report's)
+  expect(said("Veredito: aprovado. 2 baixas corrigidas. 3 testes novos.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. Sem commit nem push. 2 baixas.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado sem ressalvas. 2 baixas corrigidas.")).toEqual(["approved", 0, 0, 0]);
 });
