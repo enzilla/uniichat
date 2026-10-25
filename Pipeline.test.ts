@@ -425,6 +425,53 @@ test("verdict_of: a label alone of one note and its severity heads its details, 
   expect(of("**Ressalvas:**\n1. **MÉDIA (corrigida)** x\n2. Baixa: y")).toEqual(one);
 });
 
+test("verdict_of: 'corrigida' is a label's state only after a note's name, number and severity; a title that says more keeps the note (SweetSheep 1, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalvas, todas baixas:**\n" + s + "\n2. Baixa: y").notes;
+  const two = { high: 0, medium: 0, low: 2 };
+  const one = { high: 0, medium: 0, low: 1 };
+  // a descriptive title in bold, with ':' or not: a note
+  for (const t of [
+    "1. **Baixa cobertura da nota corrigida.** x", "1. **Mantém alta a nota corrigida.** x", "1. **Observação sobre ressalva corrigida.** x",
+    "1. **Baixa cobertura da nota corrigida:** x", "1. **Ressalva sobre o teste corrigido.** x",
+  ]) {
+    expect([t, of(t)]).toEqual([t, two]);
+  }
+  // its severity said first counts it so, still open
+  expect(of("1. **Média: texto da nota corrigida** x")).toEqual({ high: 0, medium: 1, low: 1 });
+  // the label's state: fixed
+  for (const t of [
+    "1. **MÉDIA (corrigida)** x", "1. **Ressalva média (resolvida):** x", "1. **Ressalva 1 (média, corrigida):** x", "1. **A1 (ALTA, corrigida)** x",
+    "1. Média — corrigida: x", "1. **Ressalva B2 — baixa, corrigida em abc1234** x", "1. **Ressalvas 1 e 2 (baixas, corrigidas)** x",
+  ]) {
+    expect([t, of(t)]).toEqual([t, one]);
+  }
+  // as a paragraph's title: its items are notes, not fixed ones
+  const p = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n" + s + "\n- Baixa: a\n- Baixa: b").notes;
+  expect(p("**Observação sobre ressalva corrigida:**")).toEqual(two);
+  expect(p("**Ressalvas já corrigidas:**")).toEqual(one);
+  expect(p("### Ressalvas corrigidas")).toEqual(one);
+  expect(p("### Todas as ressalvas foram corrigidas")).toEqual(one);
+});
+
+test("verdict_of: a parenthesis right after a note's severity is its label's, with no bold nor ':' (SweetSheep 2, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado.\n\n" + s + "\n- **Efeito:** y\n\n**Ressalva média**\nTexto").notes;
+  const medium = { high: 0, medium: 1, low: 0 };
+  for (const t of [
+    "**Ressalva baixa (corrigida em abc1234)**", "**Ressalva baixa (corrigida)**", "### Ressalva baixa (corrigida em abc1234)", "### Ressalva baixa (corrigida)",
+    "Ressalva baixa (corrigida em abc1234)", "> Ressalva baixa (corrigida)", "### Ressalva 1 (baixa) (corrigida em abc1234)", "**Ressalva baixa** (corrigida em abc1234)",
+    "**Ressalva baixa** (corrigida)", "1. **Ressalva baixa (corrigida em abc1234)**", "- Ressalva baixa (corrigida em abc1234)",
+  ]) {
+    expect([t, of(t)]).toEqual([t, medium]);
+  }
+  // what says more stays open
+  for (const t of [
+    "### Ressalva baixa (corrigida em parte)", "Ressalva baixa (corrigida, iOS desconhecido)", "**Ressalva baixa** (corrigida só no Chromium apenas)", "### Ressalva baixa (não corrigida)",
+    "**Ressalva baixa**", "### Ressalva baixa (aberta)",
+  ]) {
+    expect([t, of(t)]).toEqual([t, { high: 0, medium: 1, low: 1 }]);
+  }
+});
+
 test("verdict_of: 'aprovo' approves, 'reprovo' rejects (ProudCougar 2b: YellowHare, 25/10)", () => {
   expect(Pipeline.verdict_of("Veredito: aprovo o PR #18.")).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false });
   expect(Pipeline.verdict_of("Veredito: aprovo o PR morum/uniichat#18 com ressalvas.\n- Baixa: x").verdict).toBe("approved_with_notes");

@@ -549,10 +549,17 @@ function uncoded(line: string): string {
 // abc1234)", "ressalvas corrigidas" are; "média (corrigida só em parte)"
 // isn't. On a folded label (label_of)
 const FIXED_WORD = /\b(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
+// what may come before the fixed word for it to be the label's state:
+// only a note's name, its number and its severity ("ressalva 1 (média,
+// ", "média (", "ressalvas ", "todas as ressalvas já ", "a1 (alta, ");
+// a title that says more ("**Baixa cobertura da nota corrigida.**",
+// "**Mantém alta a nota corrigida.**", "**Observação sobre ressalva
+// corrigida.**", SweetSheep, 25/10) only cites a fix: the note stays open
+const STATUS = /^[\s>#*_`\[(]*(?:(?:todas?|tudo|ambas)\s+)?(?:(?:as|os|a|o)\s+(?:(?:\d+|duas|tres|quatro|cinco)\s+)?)?(?:(?:ressalvas?|observac(?:ao|oes)|notas?)\b[\s*_`]*)?(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?(?:\s*(?:,|\be\b)\s*[a-z]?\d+[a-z]?)*\b[\s*_`]*)?(?:[(\[,;:—–-]\s*)*(?:(?:altas?|high|medias?|medium|baixas?|low)\b(?:\s*(?:,|\be\b|\bou\b)\s*(?:altas?|medias?|baixas?)\b)*)?[\s*_`()\[\],;:—–.-]*(?:(?:ja|foram|estao|foi|esta|todas?|tudo|ambas|as|os|duas|tres|quatro|cinco|\d+)\s+)*$/;
 const NOT_FIXED = /\b(?:nao|not|unfixed)\s+(?:\w+\s+){0,2}(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
 function fixed(label: string): boolean {
   const m = FIXED_WORD.exec(label);
-  if (m === null || NOT_FIXED.test(label)) {
+  if (m === null || NOT_FIXED.test(label) || !STATUS.test(label.slice(0, m.index))) {
     return false;
   }
   let said = label.slice(m.index);
@@ -634,11 +641,32 @@ function note_fixed(f: string): boolean {
   if (close >= 0 && (open < 0 || open > close)) {
     i += close + 1;
   }
+  // a parenthesis right after the severity is the label's, whatever ends
+  // it ("### Ressalva baixa (corrigida em abc1234)", "Ressalva baixa
+  // (corrigida)" with no bold nor ":", as "**Ressalva baixa (corrigida
+  // em abc1234)**", SweetSheep, 25/10)
+  for (let p = /^\s*[(\[]/.exec(f.slice(i)); p !== null; p = /^\s*[(\[]/.exec(f.slice(i))) {
+    let d = 0;
+    let k = i;
+    for (; k < f.length; k++) {
+      d += f[k] === "(" || f[k] === "[" ? 1 : f[k] === ")" || f[k] === "]" ? -1 : 0;
+      if (d === 0 && k >= i + p[0].length - 1) {
+        break;
+      }
+    }
+    if (k >= f.length) {
+      break;
+    }
+    i = k + 1;
+  }
   const sep = /:|\*\*|__|\s[—–-]\s|^\s*[—–]/.exec(f.slice(i));
   const end = sep === null ? i : i + sep.index;
   const label = f.slice(0, end);
   const text = f.slice(sep === null ? end : end + sep[0].length).replace(/[*_`]/g, "").replace(/^[\s:—–-]+/, "");
-  return fixed(label) || (text !== "" && ALL_FIXED.test(text));
+  // a parenthesis that opens the text, after the bold or the dash, says
+  // the label's state too ("**Ressalva baixa** (corrigida em abc1234)")
+  const paren = /^\([^()\n]*\)/.exec(text);
+  return fixed(label) || (paren !== null && fixed(label + " " + paren[0])) || (text !== "" && ALL_FIXED.test(text));
 }
 
 // the severity an item opens with (SEV_FIRST: "1. MÉDIA: …"), or the one
