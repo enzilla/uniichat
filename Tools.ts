@@ -255,7 +255,7 @@ const BOSS: Spec[] = [
     choices : { type: "array", items: STR, description: "Answers the user picks with one click (\"sim\", \"não\"), at most 9." },
     recommend : RECOMMEND_SPEC,
     kind    : { type: "string", enum: ["pr", "decision", "test"], description: "What it is, as when it's late counts, from when it became the user's to act on: pr (a PR's approval) 24 h, decision 72 h, test 2 h; none: 24 h (a GitHub pull link in its title makes it pr, a title opening with \"Teste\" makes it test; a link only in its detail says nothing: give the kind). A late one only says so: it never expires." },
-    priority : { type: "string", enum: ["high", "normal", "low"], description: "Sorts \"Agora\": the higher first, then the one that frees more tasks, then the older. Normal by default; high only for what truly comes first." },
+    priority : { type: "string", enum: ["high", "normal", "low"], description: "Sorts \"Agora\": the higher first, then the one that frees more tasks, then the one the user could act on longest (since it became actionable, or since it was created). Normal by default; high only for what truly comes first." },
     ref     : { type: "string", description: "What it belongs to: a project, an agent, a PR." },
     after   : { type: "array", items: STR, description: "Ids of the tasks this one waits for (\"P3\"), the user's or yours: while any is open it's hidden from the user and can't be resolved; once all are closed it shows, and your next turn is told it was freed." },
     fields  : FIELDS_SPEC,
