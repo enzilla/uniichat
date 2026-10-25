@@ -54,7 +54,7 @@ export const PRIORITIES: Priority[] = ["high", "normal", "low"];
 // priority nor ready)
 export type Timed = Dep & { title?: string; detail?: string; origin_url?: string | null; made: string; kind?: TaskKind | null; priority?: Priority | null; ready?: string | null };
 
-const PR_LINK = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
+export const PR_LINK = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
 
 // a task's kind: the one given, else as its title says (a PR link in
 // it, or opening with "Teste"); null: none
@@ -84,7 +84,8 @@ export function priority_of(t: Timed): Priority {
   return t.priority != null && PRIORITIES.includes(t.priority) ? t.priority : "normal";
 }
 
-// the order of the open tasks free to resolve (P3): the higher priority
+// the order of the open tasks free to resolve (P3): those to act on
+// before those only to read (kind info, R5), then the higher priority
 // first, then the one that frees more, then the user's (a task of Unii's
 // is in "Agora" only when its thread is the user's turn), then the one
 // to act on longest (ready_at: since it waits no more or was handed to
@@ -100,7 +101,11 @@ export function now_order<T extends Timed & { assignee?: string }>(tasks: T[]): 
   const p = (t: T) => PRIORITIES.indexOf(priority_of(t));
   const age = (t: T) => Date.parse(ready_at(t)) || 0;
   const whose = (t: T) => (t.assignee === undefined || t.assignee === "user" ? 0 : 1);
-  return (a, b) => p(a) - p(b) || n(b) - n(a) || whose(a) - whose(b) || age(a) - age(b) || Number(a.id.slice(1)) - Number(b.id.slice(1));
+  // only to read (info): after every task to act on, whatever its
+  // priority, so an old one never stands first in "Agora" nor is the
+  // "Próxima" while another waits for the user
+  const read = (t: T) => (kind_of(t) === "info" ? 1 : 0);
+  return (a, b) => read(a) - read(b) || p(a) - p(b) || n(b) - n(a) || whose(a) - whose(b) || age(a) - age(b) || Number(a.id.slice(1)) - Number(b.id.slice(1));
 }
 
 // a list's tasks by id

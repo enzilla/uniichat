@@ -10,8 +10,14 @@
 // takes it (Server.ts Chat.open), says the restart is done and gives
 // Unii a turn with what to resume, so work goes on with no prompt of the
 // user's. How the process restarts: UNII_RESTART, a shell command, run
-// apart from it; else, run by systemd (INVOCATION_ID set, the unit's
-// Restart=always), it exits and systemd starts it again; else none.
+// apart from it; else, run by systemd as the unit's own process
+// (INVOCATION_ID set and its parent systemd itself: a serve started from
+// a shell under the unit, an agent's, inherits INVOCATION_ID but not that
+// parent), it exits and the unit's Restart=always starts it again; else
+// none. The mark says the process that asked and when: a start takes it
+// only as a new process (not the one that asked) within MARK_TTL of the
+// asking, else it's dropped unsaid (the restart didn't happen as asked:
+// a later start, of any cause, must not say it did).
 
 import * as fs from "node:fs";
 import * as Tasks from "./Tasks.ts";
@@ -19,7 +25,10 @@ import * as Tasks from "./Tasks.ts";
 // a restart asked: why, what to resume, when (ISO), the agents it cut
 // and the task that let it (null: none ran, none needed), whether the
 // next start took it; used: the tasks that let a restart, each once
-export type Mark = { why: string; resume: string; at: string; agents: string[]; task: string | null; done: boolean; used: string[] };
+export type Mark = { why: string; resume: string; at: string; agents: string[]; task: string | null; done: boolean; used: string[]; pid?: number | null };
+
+// how long after it's asked a start takes a mark as its restart
+export const MARK_TTL = 10 * 60 * 1000;
 
 // how this process restarts: a command, or its exit (systemd); null: none
 export type How = { cmd: string } | "exit" | null;
@@ -33,9 +42,23 @@ export const USED   = 50;
 // answer, reach the views first)
 export const DELAY = 3000;
 
-export function how(env: Record<string, string | undefined>): How {
+// parent: the name of this process's parent (/proc's comm), systemd's
+// when the unit started it
+export function how(env: Record<string, string | undefined>, parent: string | null = parent_name()): How {
   const cmd = (env.UNII_RESTART ?? "").trim();
-  return cmd !== "" ? { cmd } : (env.INVOCATION_ID ?? "") !== "" ? "exit" : null;
+  if (cmd !== "") {
+    return { cmd };
+  }
+  return (env.INVOCATION_ID ?? "") !== "" && parent === "systemd" ? "exit" : null;
+}
+
+// the name of this process's parent; null: unknown
+export function parent_name(): string | null {
+  try {
+    return fs.readFileSync("/proc/" + process.ppid + "/comm", "utf8").trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 // the mark as kept; null: none, or not one
@@ -46,7 +69,7 @@ export function mark_read(dir: string): Mark | null {
       return null;
     }
     const list = (x: unknown) => (Array.isArray(x) ? x.filter((y) => typeof y === "string") : []);
-    return { why: o.why, resume: typeof o.resume === "string" ? o.resume : "", at: o.at, agents: list(o.agents), task: typeof o.task === "string" ? o.task : null, done: o.done !== false, used: list(o.used).slice(-USED) };
+    return { why: o.why, resume: typeof o.resume === "string" ? o.resume : "", at: o.at, agents: list(o.agents), task: typeof o.task === "string" ? o.task : null, done: o.done !== false, used: list(o.used).slice(-USED), pid: Number.isInteger(o.pid) ? o.pid : null };
   } catch {
     return null;
   }
@@ -58,14 +81,22 @@ export function mark_write(dir: string, mark: Mark): void {
   fs.renameSync(dir + FILE + ".new", dir + FILE);
 }
 
-// the mark a start finds not yet taken, now taken (saved done); null: none
-export function mark_take(dir: string): Mark | null {
+// the mark a start finds not yet taken, now taken (saved done); null:
+// none, or not this start's: asked by this very process (it didn't
+// restart), before it started, or longer than MARK_TTL ago (then saved
+// done, unsaid). pid and since: this process's, and when it started
+export function mark_take(dir: string, now = Date.now(), pid = process.pid, since = now - process.uptime() * 1000): Mark | null {
   const mark = mark_read(dir);
   if (mark === null || mark.done) {
     return null;
   }
+  if (mark.pid === pid) {
+    return null;
+  }
+  const at = Date.parse(mark.at);
+  const ours = Number.isFinite(at) && now - at <= MARK_TTL && since >= at - 1000;
   mark_write(dir, { ...mark, done: true });
-  return mark;
+  return ours ? mark : null;
 }
 
 // whether a restart may go now (P8): why not, else null. working: the
@@ -84,6 +115,11 @@ export function check(h: How, working: string[], task: Tasks.Task | null, given:
     }
     if (task.state !== "done" || Tasks.task_act(task) !== "unii") {
       return task.id + " doesn't let it: the user hasn't picked an option of yours (" + (Object.entries(task.acts).filter(([, a]) => a === "unii").map(([c]) => c).join(" | ") || "none") + ").";
+    }
+    // the user's pick only (the Mesa, the terminal): one Unii set itself
+    // (task_edit) is no leave
+    if (task.closed_by !== "user") {
+      return task.id + " doesn't let it: it was closed by you (task_edit), not by the user. Only the user's pick (the Mesa or the terminal) lets a restart while agents are at work: open it again for them, or wait for the agents' reports.";
     }
     if (used.includes(task.id)) {
       return task.id + " let a restart already: each lets one. Add a new task of kind restart.";

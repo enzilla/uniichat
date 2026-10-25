@@ -104,6 +104,7 @@ export type Task = {
   waits_for : string | null; // what outside the list it waits for ("CI do #42", "merge no GitHub"), beside after
   ready   : string; // since when it's the user's to act on (made, freed, opened again, handed to them): its lateness counts from then
   closed  : string | null;
+  closed_by : "user" | "unii" | null; // who closed it last (done or dropped): the user (Mesa, terminal: task_resolve) or Unii (task_edit); null: open, or closed before it was kept. Only the user's lets a restart (Restart.check)
   told    : boolean;
   rev     : number;
   after   : string[];
@@ -346,6 +347,7 @@ export function task_read(x: unknown, now: number): Task | null {
     waits_for : text(o.waits_for, WAITS_FOR, text_line) || null,
     ready   : time_read(o.ready, made),
     closed  : state === "open" ? null : time_read(o.closed, changed),
+    closed_by : state !== "open" && (o.closed_by === "user" || o.closed_by === "unii") ? o.closed_by : null,
     told    : o.told !== false,
     rev     : count_read(o.rev),
     after   : after_raw(o.after, "P" + Number(m[1])),
@@ -843,12 +845,23 @@ export function ref_args(s: Store, args: Edit): { ref?: string | null; added?: s
 
 // a task of kind pr (given, or as its title says) needs the PRs it asks
 // to approve, each with its link and the head verified (R5: what the
-// rule of 23/10 asked in words); else why not
-export function pr_sound(t: { title: string; kind: Deps.TaskKind | null; prs: PrCheck[] }): string | null {
-  if (Deps.kind_of({ id: "", state: "open", made: "", ...t }) !== "pr" || t.prs.length > 0) {
+// rule of 23/10 asked in words); and so does any task of the user's
+// whose title or detail cites a GitHub pull, whatever its kind (a kind
+// given doesn't get round the contract). A task of Unii's (assignee
+// unii) follows a PR up, it doesn't ask the user to approve it: held
+// only by its kind. Else why not
+export function pr_sound(t: { title: string; detail?: string; assignee?: Assignee | null; kind: Deps.TaskKind | null; prs: PrCheck[] }): string | null {
+  if (t.prs.length > 0) {
     return null;
   }
-  return "A PR's approval (kind pr" + (t.kind === "pr" ? "" : ", as its title's PR link says") + ") needs prs: [{url: the GitHub pull link, head: the commit verified (7 to 40 hex), verdict, verifier, notes: [{sev, text}], untested: [...]}]. Refused: no PR given with its link and head.";
+  if (Deps.kind_of({ id: "", state: "open", made: "", title: t.title, kind: t.kind }) === "pr") {
+    return "A PR's approval (kind pr" + (t.kind === "pr" ? "" : ", as its title's PR link says") + ") needs prs: [{url: the GitHub pull link, head: the commit verified (7 to 40 hex), verdict, verifier, notes: [{sev, text}], untested: [...]}]. Refused: no PR given with its link and head.";
+  }
+  const link = (t.assignee ?? "user") === "unii" ? null : (Deps.PR_LINK.exec(t.title) ?? Deps.PR_LINK.exec(t.detail ?? ""));
+  if (link === null) {
+    return null;
+  }
+  return "This task cites a PR (" + link[0] + ") in its " + (Deps.PR_LINK.test(t.title) ? "title" : "detail") + ": whatever its kind, a task of the user's that cites a PR goes with prs: [{url, head (the commit verified, 7 to 40 hex), verdict, verifier, notes, untested}]. Refused: no PR given with its link and head. (Drop the link if the PR isn't what it's about.)";
 }
 
 // what Unii's tools hold a task to besides (R5): task_add needs its
@@ -1141,7 +1154,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   }
   // from outside (the inbox) a PR's link says what it's about, not that
   // it was verified: only Unii's are held to the contract
-  const unsound = by === "inbox" ? null : pr_sound({ title, kind: kp.kind ?? null, prs: prs.prs });
+  const unsound = by === "inbox" ? null : pr_sound({ title, detail: text_body(args.detail, DETAIL), assignee: whose.assignee ?? "user", kind: kp.kind ?? null, prs: prs.prs });
   if (unsound !== null) {
     return unsound;
   }
@@ -1160,7 +1173,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   const ref = text_line(args.ref, REF);
   const task: Task = {
     id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, agent: whose.agent ?? null, by, choices, recommend: recommend.v, answer: null, note: null,
-    ref: ref === "" ? null : ref, made: at, changed: at, moved: at, kind: kp.kind ?? null, priority: kp.priority ?? "normal", prs: prs.prs, acts, waits_for: text_line(args.waits_for, WAITS_FOR) || null, ready: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
+    ref: ref === "" ? null : ref, made: at, changed: at, moved: at, kind: kp.kind ?? null, priority: kp.priority ?? (kp.kind === "info" ? "low" : "normal"), prs: prs.prs, acts, waits_for: text_line(args.waits_for, WAITS_FOR) || null, ready: at, closed: null, closed_by: null, told: true, rev: 0, after, freed: false, heard: null,
     fields: fields.fields, draft: {}, answers: null, thread: [], talk: null,
   };
   s.next += 1;
@@ -1334,7 +1347,7 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
   Object.assign(next, kp);
   // the contract held once the edit touches it (an older task, made
   // before it, keeps being edited otherwise)
-  const unsound = args.kind !== undefined || args.prs !== undefined || args.title !== undefined ? pr_sound(next) : null;
+  const unsound = args.kind !== undefined || args.prs !== undefined || args.title !== undefined || args.detail !== undefined || args.assignee !== undefined ? pr_sound(next) : null;
   if (unsound !== null && next.state !== "dropped" && args.state !== "dropped") {
     return unsound;
   }
@@ -1468,6 +1481,10 @@ function task_put(s: Store, task: Task, next: Task, now: number, told: boolean |
   next.ready = handed ? at : Deps.ready_at(task);
   next.changed = at;
   next.closed = next.state === "open" ? null : closes ? at : (task.closed ?? at);
+  // who closed it: told false is the user's act (task_resolve), else
+  // Unii's (task_edit); kept while the close itself doesn't change
+  const reclosed = closes || next.state !== task.state || next.answer !== task.answer;
+  next.closed_by = next.state === "open" ? null : reclosed ? (told === false ? "user" : "unii") : (task.closed_by ?? null);
   next.told = told ?? task.told;
   next.freed = told === null ? task.freed : false;
   next.heard = told === null ? task.heard : told ? null : { state: next.state, answer: next.answer, note: next.note, answers: next.answers };

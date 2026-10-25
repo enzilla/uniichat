@@ -431,7 +431,8 @@ test("acts: picking an option of Unii's starts its turn at once, said as an orde
 // chat and its resume a message that starts Unii's turn, once
 test("restart: the mark taken at start says it's back and starts a turn with what to resume, once", async () => {
   const Restart = await import("./Restart.ts");
-  Restart.mark_write(dir, { why: "aplicar a R5", resume: "Conferir o serve e seguir com a R6.", at: new Date().toISOString(), agents: [], task: null, done: false, used: [] });
+  // asked by another process (pid), before this one started: its restart
+  Restart.mark_write(dir, { why: "aplicar a R5", resume: "Conferir o serve e seguir com a R6.", at: new Date(Date.now() - process.uptime() * 1000 - 2000).toISOString(), agents: [], task: null, done: false, used: [], pid: process.pid + 1 });
   const before = ASKED.length;
   Chat.back(chat);
   await idle();

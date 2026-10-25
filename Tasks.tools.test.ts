@@ -26,8 +26,8 @@ test("only the master has the tools", () => {
 });
 
 test("add, edit, list; each change told to the views; tasks.json kept", async () => {
-  const add = await call("task_add", { title: "Abrir PR no fork?", origin: "chat", choices: ["sim", "não"], ref: "uniichat", ref_new: true, detail: "[PR](https://github.com/morum/uniichat/pull/2)" });
-  expect(add).toEqual({ text: "Added P1 [user] Abrir PR no fork? options: sim | não (ref uniichat, from chat, 0m)", fail: false });
+  const add = await call("task_add", { title: "Abrir PR no fork?", origin: "chat", choices: ["sim", "não"], ref: "uniichat", ref_new: true, detail: "[PR](https://github.com/morum/uniichat/pull/2)", prs: [{ url: "https://github.com/morum/uniichat/pull/2", head: "739a8be" }] });
+  expect(add).toEqual({ text: "Added P1 [user] Abrir PR no fork? options: sim | não (ref uniichat, from chat, pr https://github.com/morum/uniichat/pull/2 @739a8be pending, 0m)", fail: false });
   expect(changes).toBe(1);
   const twin = await call("task_add", { title: "abrir pr no fork?", origin: "chat" });
   expect(twin.fail).toBe(true);

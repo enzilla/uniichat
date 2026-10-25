@@ -957,7 +957,8 @@ function now_order(tasks) {
   const p = (t) => PRIORITIES.indexOf(priority_of(t));
   const age = (t) => Date.parse(ready_at(t)) || 0;
   const whose = (t) => t.assignee === undefined || t.assignee === "user" ? 0 : 1;
-  return (a, b) => p(a) - p(b) || n(b) - n(a) || whose(a) - whose(b) || age(a) - age(b) || Number(a.id.slice(1)) - Number(b.id.slice(1));
+  const read = (t) => kind_of(t) === "info" ? 1 : 0;
+  return (a, b) => read(a) - read(b) || p(a) - p(b) || n(b) - n(a) || whose(a) - whose(b) || age(a) - age(b) || Number(a.id.slice(1)) - Number(b.id.slice(1));
 }
 function by_id(tasks) {
   return new Map(tasks.map((t) => [t.id, t]));

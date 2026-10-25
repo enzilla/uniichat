@@ -189,21 +189,149 @@ test("restart tool: why needed; refused with no way to restart, or agents at wor
   expect(notes).toEqual(["Reiniciando o serve: aplicar a R5. O chat volta em alguns segundos, e o Unii retoma o trabalho sozinho. Agentes interrompidos: CalmCow (uniichat-ux-r4-impl); o Unii os retoma em seguida."]);
   expect(Restart.mark_read(dir)).toMatchObject({ why: "aplicar a R5", resume: "Seguir com a R6.", agents: ["CalmCow (uniichat-ux-r4-impl)"], task: t.id, done: false, used: [t.id] });
   expect(Tools.restart(tools, { why: "de novo", task: t.id }, "exit").text).toBe(t.id + " let a restart already: each lets one. Add a new task of kind restart.");
-  // the next start takes the mark once: said after, and what to resume
-  const back = Restart.mark_take(dir)!;
+  // this very process (it didn't restart) takes none; the next start
+  // takes the mark once: said after, and what to resume
+  expect(Restart.mark_take(dir)).toBeNull();
+  expect(Restart.mark_read(dir)!.done).toBe(false);
+  const asked = Date.parse(Restart.mark_read(dir)!.at);
+  const back = Restart.mark_take(dir, asked + 5000, process.pid + 1, asked + 4000)!;
   expect(Restart.said_after(back)).toStartWith("Serve reiniciado (pedido às ");
   expect(Restart.resume_said(back)).toContain("It cut these agents: CalmCow (uniichat-ux-r4-impl): tell each to go on. Resume now: Seguir com a R6.");
-  expect(Restart.mark_take(dir)).toBeNull();
+  expect(Restart.mark_take(dir, asked + 5000, process.pid + 1, asked + 4000)).toBeNull();
   // none at work: no task needed
   (tools.agents as Map<string, any>).clear();
   expect(Tools.restart(tools, { why: "aplicar a R5", resume: "x" }, { cmd: "true" }).fail).toBe(false);
   expect(restarts).toEqual(["exit", { cmd: "true" }]);
 });
 
-test("restart's way: UNII_RESTART's command, else systemd's (INVOCATION_ID), else none", () => {
-  expect(Restart.how({ UNII_RESTART: " ~/x/unii-restart ", INVOCATION_ID: "1" })).toEqual({ cmd: "~/x/unii-restart" });
-  expect(Restart.how({ INVOCATION_ID: "abc" })).toBe("exit");
-  expect(Restart.how({})).toBeNull();
+test("restart's way: UNII_RESTART's command, else systemd's (INVOCATION_ID and started by systemd itself), else none", () => {
+  expect(Restart.how({ UNII_RESTART: " ~/x/unii-restart ", INVOCATION_ID: "1" }, "bash")).toEqual({ cmd: "~/x/unii-restart" });
+  expect(Restart.how({ INVOCATION_ID: "abc" }, "systemd")).toBe("exit");
+  expect(Restart.how({}, "systemd")).toBeNull();
+  // a serve started from an agent's shell under the unit inherits
+  // INVOCATION_ID, not the parent: it must not exit as if systemd ran it
+  expect(Restart.how({ INVOCATION_ID: "abc" }, "bash")).toBeNull();
+  expect(Restart.how({ INVOCATION_ID: "abc" }, "bun")).toBeNull();
+  expect(Restart.how({ INVOCATION_ID: "abc" }, null)).toBeNull();
+  // this test's own process: bun under a shell, not systemd
+  expect(Restart.parent_name()).not.toBe("systemd");
+});
+
+test("restart mark: taken only by a new process started after it was asked, within MARK_TTL; else dropped unsaid", () => {
+  const at = Date.parse("2026-10-25T12:00:00Z");
+  const mark = (o: Partial<Restart.Mark> = {}): Restart.Mark => ({ why: "aplicar a R5", resume: "x", at: new Date(at).toISOString(), agents: [], task: null, done: false, used: [], pid: 4242, ...o });
+  // the process that asked: it didn't restart; the mark waits
+  Restart.mark_write(dir, mark());
+  expect(Restart.mark_take(dir, at + 5000, 4242, at - 3600e3)).toBeNull();
+  expect(Restart.mark_read(dir)!.done).toBe(false);
+  // another process, started before the asking (not a restart of it): dropped, said by none
+  expect(Restart.mark_take(dir, at + 5000, 777, at - 60e3)).toBeNull();
+  expect(Restart.mark_read(dir)!.done).toBe(true);
+  expect(Restart.mark_take(dir, at + 6000, 778, at + 5000)).toBeNull();
+  // a start long after it (the restart never happened as asked; a later start of any cause)
+  Restart.mark_write(dir, mark());
+  expect(Restart.mark_take(dir, at + Restart.MARK_TTL + 60e3, 779, at + Restart.MARK_TTL + 50e3)).toBeNull();
+  expect(Restart.mark_read(dir)!.done).toBe(true);
+  // the restart as asked: a new process, started after it, soon
+  Restart.mark_write(dir, mark());
+  expect(Restart.mark_take(dir, at + 8000, 780, at + 4000)).toMatchObject({ why: "aplicar a R5", pid: 4242 });
+  expect(Restart.mark_take(dir, at + 9000, 780, at + 4000)).toBeNull();
+  // a mark of before R5's fix (no pid): held by time alone
+  Restart.mark_write(dir, mark({ pid: null }));
+  expect(Restart.mark_take(dir, at + 8000, 781, at + 4000)).not.toBeNull();
+});
+
+test("restart with agents at work: only the user's pick lets it; Unii closing the task itself (task_edit) doesn't", async () => {
+  (tools.agents as Map<string, any>).set("CalmCow", { name: "CalmCow", label: "uniichat-ux-r4-impl", call: {} });
+  const s = T.tasks_load(dir);
+  const t = T.task_new(s, { title: "Reiniciar com agentes rodando?", kind: "restart" }, "main", NOW) as T.Task;
+  // Unii's own task_edit, done with "Sim, reinicie": recorded as Unii's, refused
+  const self = await call("task_edit", { id: t.id, state: "done", answer: T.RESTART_YES });
+  expect(self.fail).toBe(false);
+  expect(T.tasks_load(dir).tasks.find((x) => x.id === t.id)!.closed_by).toBe("unii");
+  const no = Tools.restart(tools, { why: "x", task: t.id }, "exit");
+  expect(no.fail).toBe(true);
+  expect(no.text).toContain("closed by you (task_edit), not by the user");
+  expect(restarts).toEqual([]);
+  expect(Restart.mark_read(dir)).toBeNull();
+  // opened again (who closed it forgotten), then the user's pick: lets it
+  const s2 = T.tasks_load(dir);
+  T.task_resolve(s2, t.id, "open", null, null, NOW);
+  expect(s2.tasks.find((x) => x.id === t.id)!.closed_by).toBeNull();
+  T.task_resolve(s2, t.id, "done", T.RESTART_YES, null, NOW);
+  expect(s2.tasks.find((x) => x.id === t.id)!.closed_by).toBe("user");
+  // kept on disk as the user's
+  T.tasks_forget();
+  expect(T.tasks_load(dir).tasks.find((x) => x.id === t.id)!.closed_by).toBe("user");
+  // Unii changing the answer afterwards makes it Unii's again: refused
+  await call("task_edit", { id: t.id, answer: T.RESTART_LATER });
+  await call("task_edit", { id: t.id, answer: T.RESTART_YES });
+  expect(T.tasks_load(dir).tasks.find((x) => x.id === t.id)!.closed_by).toBe("unii");
+  expect(Tools.restart(tools, { why: "x", task: t.id }, "exit").fail).toBe(true);
+  // a note alone by Unii keeps who closed it
+  const s3 = T.tasks_load(dir);
+  const u = T.task_new(s3, { title: "Outro reinício?", kind: "restart" }, "main", NOW) as T.Task;
+  T.task_resolve(s3, u.id, "done", T.RESTART_YES, null, NOW);
+  await call("task_edit", { id: u.id, note: "visto" });
+  expect(T.tasks_load(dir).tasks.find((x) => x.id === u.id)!.closed_by).toBe("user");
+  expect(Tools.restart(tools, { why: "x", task: u.id }, "exit").fail).toBe(false);
+  // a list of before it (no closed_by): a done task lets none
+  fs.writeFileSync(dir + "/tasks.json", JSON.stringify({ next: 2, rev: 0, tasks: [{ id: "P1", title: "Reiniciar?", kind: "restart", state: "done", answer: T.RESTART_YES, choices: [T.RESTART_YES, T.RESTART_LATER], acts: { [T.RESTART_YES]: "unii" }, made: "2026-10-24T10:00:00Z" }] }));
+  T.tasks_forget();
+  fs.rmSync(dir + "/restart.json", { force: true });
+  expect(Tools.restart(tools, { why: "x", task: "P1" }, "exit").text).toContain("not by the user");
+});
+
+test("a PR's contract can't be got round with a kind: a task of the user's citing a PR (title or detail) needs prs, whatever its kind", async () => {
+  for (const kind of ["decision", "action", "info", "test", "restart"]) {
+    const r = await call("task_add", { title: "Mesclar " + PR + " (" + kind + ")", origin: "chat", kind });
+    expect(r.fail).toBe(true);
+    expect(r.text).toContain("whatever its kind");
+    const d = await call("task_add", { title: "Decidir (" + kind + ")", detail: "Contexto: " + PR, origin: "chat", kind });
+    expect(d.fail).toBe(true);
+    expect(d.text).toContain("in its detail");
+  }
+  const none = await call("task_add", { title: "Decidir sem kind", detail: "ver " + PR, origin: "chat" });
+  expect(none.fail).toBe(true);
+  expect(T.tasks_load(dir).tasks.length).toBe(0);
+  // with its PR verified: kept, the kind given still its kind
+  const ok = await call("task_add", { title: "Decidir o rumo", detail: "Contexto: " + PR, origin: "chat", kind: "decision", prs: [GOOD] });
+  expect(ok.fail).toBe(false);
+  expect(T.tasks_load(dir).tasks[0].kind).toBe("decision");
+  // a task of Unii's follows a PR up: not an approval, held by its kind only
+  expect((await call("task_add", { title: "Acompanhar a R5", detail: "PR: " + PR, origin: "chat", assignee: "unii", agent: "CalmCow" })).fail).toBe(false);
+  // an edit can't add the link without prs, nor hand such a task to the user
+  const plain = await call("task_add", { title: "Escolher a frente", origin: "chat", kind: "decision" });
+  expect(plain.fail).toBe(false);
+  const id = T.tasks_load(dir).tasks.at(-1)!.id;
+  expect((await call("task_edit", { id, detail: "ver " + PR })).fail).toBe(true);
+  expect((await call("task_edit", { id, title: "Escolher " + PR, kind: "info" })).fail).toBe(true);
+  expect((await call("task_edit", { id: "P2", assignee: "user" })).fail).toBe(true);
+  // links that aren't a pull (an issue) need nothing
+  expect((await call("task_edit", { id, detail: "ver https://github.com/morum/uniichat/issues/3" })).fail).toBe(false);
+});
+
+test("info: priority low unless given; after every task to act on in Agora and never the Próxima while one waits", () => {
+  const s = T.tasks_load(dir);
+  const H = 3600e3;
+  const info = T.task_new(s, { title: "Leia: resumo da R4", kind: "info" }, "main", NOW - 500 * H) as T.Task;     // P1, old
+  const high = T.task_new(s, { title: "Leia: aviso urgente", kind: "info", priority: "high" }, "main", NOW - 400 * H) as T.Task; // P2
+  const low = T.task_new(s, { title: "Escolher a cor", kind: "decision", priority: "low" }, "main", NOW) as T.Task; // P3, new and low
+  const act = T.task_new(s, { title: "Rodar o teste", kind: "test" }, "main", NOW) as T.Task;                      // P4
+  expect([info.priority, high.priority, low.priority, act.priority]).toEqual(["low", "high", "low", "normal"]);
+  const tasks = T.tasks_view(s, NOW);
+  const now = View.desk_list(tasks).find((g) => g.group === "now")!.tasks.map((t) => t.id);
+  expect(now).toEqual([act.id, low.id, high.id, info.id]);
+  expect(View.desk_next(tasks, null)!.id).toBe(act.id);
+  expect(View.desk_next(tasks, act.id)!.id).toBe(low.id);
+  // an info of before (normal priority, kept as it was) still goes after
+  fs.writeFileSync(dir + "/tasks.json", JSON.stringify({ next: 3, rev: 0, tasks: [
+    { id: "P1", title: "Leia isto", kind: "info", priority: "normal", made: "2026-10-01T10:00:00Z" },
+    { id: "P2", title: "Aprovar algo", kind: "decision", priority: "low", made: "2026-10-25T10:00:00Z" },
+  ] }));
+  T.tasks_forget();
+  const old = T.tasks_view(T.tasks_load(dir), NOW);
+  expect(View.desk_list(old).find((g) => g.group === "now")!.tasks.map((t) => t.id)).toEqual(["P2", "P1"]);
 });
 
 test("the Mesa's detail: each PR verified a card (head, verdict, verifier, notes by severity, untested); other links still chips; escaped", async () => {

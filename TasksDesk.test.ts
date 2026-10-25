@@ -232,8 +232,9 @@ test("late: the user's move over TASK_LATE (= TaskPush.LATE) says how late, in t
 
 test("PRs: GitHub pull links of the detail and origin, each once, as repo#n; a link in the row's line and over the detail", () => {
   const s = T.tasks_load(dir);
-  add(s, { title: "Mesclar", detail: "https://github.com/Numih/dp-bk-http/pull/42 e de novo https://github.com/Numih/dp-bk-http/pull/42, depois https://github.com/Numih/fractal/pull/57. Issue https://github.com/Numih/x/issues/3; falso http://github.com/a/b/pull/1", origin: "github", origin_url: "https://github.com/Numih/infra-tf-numih/pull/1135" });
-  add(s, { title: "Um só", detail: "PR: https://github.com/morum/uniichat/pull/13" });
+  // from outside (as the inbox makes them): links only, no PR verified (the contract holds only Unii's, R5)
+  T.task_new(s, { title: "Mesclar", detail: "https://github.com/Numih/dp-bk-http/pull/42 e de novo https://github.com/Numih/dp-bk-http/pull/42, depois https://github.com/Numih/fractal/pull/57. Issue https://github.com/Numih/x/issues/3; falso http://github.com/a/b/pull/1", origin: "github", origin_url: "https://github.com/Numih/infra-tf-numih/pull/1135" }, "inbox", NOW);
+  add(s, { title: "Um só", detail: "PR: https://github.com/morum/uniichat/pull/13", prs: [{ url: "https://github.com/morum/uniichat/pull/13", head: "88f1899" }] });
   add(s, { title: "Nenhum", detail: "sem links <b>" });
   const tasks = T.tasks_view(s, NOW);
   expect(View.task_prs(tasks[0])).toEqual([
@@ -396,9 +397,9 @@ test("aguardando o Unii: how long since the user wrote, and why, by Unii's turn;
 
 test("blocked: its PR chips on the Mesa; what it waits for with whose it is; what a task frees, named", () => {
   const s = T.tasks_load(dir);
-  add(s, { title: "Mesclar o #46", detail: "https://github.com/Numih/infra-tf-numih/pull/1127" });  // P1
+  add(s, { title: "Mesclar o #46", detail: "https://github.com/Numih/infra-tf-numih/pull/1127", prs: [{ url: "https://github.com/Numih/infra-tf-numih/pull/1127", head: "88f1899" }] });  // P1
   add(s, { title: "Trocar o require", assignee: "unii" });                                    // P2
-  add(s, { title: "Aplicar em prod", after: ["P1", "P2"], detail: "PR: https://github.com/Numih/infra-tf-numih/pull/1128" }); // P3
+  add(s, { title: "Aplicar em prod", after: ["P1", "P2"], detail: "PR: https://github.com/Numih/infra-tf-numih/pull/1128", prs: [{ url: "https://github.com/Numih/infra-tf-numih/pull/1128", head: "88f1899" }] }); // P3
   const tasks = T.tasks_view(s, NOW);
   const p3 = tasks.find((t) => t.id === "P3")!;
   expect(View.task_waits_named(tasks, p3)).toBe("aguarda P1 (sua) e P2 (do Unii)");
