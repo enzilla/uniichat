@@ -99,6 +99,9 @@ export type Task = {
   moved   : string; // its last change but linking an agent alone (how long it stalled: View.task_stalled_said, vigia.ts)
   kind    : Deps.TaskKind | null; // what it is, as how long before it's late says (TaskDeps.late_after; null: as its links say)
   priority: Deps.Priority; // declared; sorts "Agora" first (TaskDeps.now_order)
+  prs     : PrCheck[]; // the pull requests it's about, each as verified (R5: a PR's approval needs one)
+  acts    : Record<string, Act>; // by choice, who acts once it's picked: the user did it (a report), or Unii must (an order, told at once)
+  waits_for : string | null; // what outside the list it waits for ("CI do #42", "merge no GitHub"), beside after
   ready   : string; // since when it's the user's to act on (made, freed, opened again, handed to them): its lateness counts from then
   closed  : string | null;
   told    : boolean;
@@ -112,6 +115,18 @@ export type Task = {
   thread  : Talk[];
   talk    : Who | null;
 };
+
+// a pull request as verified (R5, the task's contract): its link (a
+// GitHub pull), the head verified (7 to 40 hex), the verdict, the
+// verifier, the notes by severity and what wasn't tested
+export type Sev     = "high" | "medium" | "low";
+export type Verdict = "approved" | "approved_with_notes" | "rejected" | "pending";
+export type Note    = { sev: Sev; text: string };
+export type PrCheck = { url: string; head: string; verdict: Verdict; verifier: string | null; notes: Note[]; untested: string[] };
+
+// who acts once a choice is picked: the user (it reports what they did)
+// or Unii (it's an order: Unii is told at once, Server.ts)
+export type Act = "user" | "unii";
 
 // the user's last change as they made it, kept till Unii is told of it:
 // Unii changing the state meanwhile (task_edit) doesn't hide it
@@ -134,7 +149,9 @@ export type Talk = { who: Who; text: string; at: string };
 // the list of a chat's dir: the next id's number, the last version
 // stamped (only up), the tasks; shown: the changes the last block
 // showed, by id, at each one's rev
-export type Store = { dir: string; next: number; rev: number; tasks: Task[]; shown: Map<string, number> };
+// refs: the list's fronts, the refs a task of Unii's may be given (R5:
+// one not among them refused, unless it starts a new one, ref_new)
+export type Store = { dir: string; next: number; rev: number; tasks: Task[]; shown: Map<string, number>; refs: string[] };
 
 // a change asked: by Unii (task_add, task_edit) or the user (an act)
 export type Edit = {
@@ -150,6 +167,10 @@ export type Edit = {
   kind?    : unknown;
   priority? : unknown;
   ref?     : unknown;
+  ref_new? : unknown;
+  prs?     : unknown;
+  acts?    : unknown;
+  waits_for? : unknown;
   state?   : unknown;
   answer?  : unknown;
   note?    : unknown;
@@ -177,6 +198,24 @@ export const ORIGIN_URL = 500;
 // an agent's name, as a task links it (agent): its technical name
 // (WiseDolphin) or its label (uniichat-ux-impl)
 const AGENT = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+
+// a task's pull requests (R5): the most, a note's and an untested
+// item's length, the most of each; what it waits for outside, its
+// length; the most fronts (refs) kept
+export const PRS       = 8;
+export const NOTES     = 20;
+export const NOTE_TEXT = 300;
+export const UNTESTED  = 20;
+export const WAITS_FOR = 200;
+export const REFS      = 200;
+const PR_URL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
+const HEAD   = /^[0-9a-f]{7,40}$/;
+const SEVS: Record<string, Sev> = { high: "high", alta: "high", medium: "medium", "média": "medium", media: "medium", low: "low", baixa: "low" };
+const VERDICTS: Record<string, Verdict> = {
+  approved: "approved", aprovado: "approved", approved_with_notes: "approved_with_notes", "aprovado com ressalvas": "approved_with_notes",
+  rejected: "rejected", reprovado: "rejected", pending: "pending", pendente: "pending",
+};
+export const ACTS: Act[] = ["user", "unii"];
 
 // the most fields of a task, a label's length, a text answer's (NOTE);
 // a thread message's length, the most a thread keeps, the most views get
@@ -302,6 +341,9 @@ export function task_read(x: unknown, now: number): Task | null {
     moved   : time_read(o.moved, changed),
     kind    : Deps.KINDS.includes(o.kind as Deps.TaskKind) ? (o.kind as Deps.TaskKind) : null,
     priority: Deps.PRIORITIES.includes(o.priority as Deps.Priority) ? (o.priority as Deps.Priority) : "normal",
+    prs     : prs_read(o.prs).prs,
+    acts    : acts_clean(o.acts, choices),
+    waits_for : text(o.waits_for, WAITS_FOR, text_line) || null,
     ready   : time_read(o.ready, made),
     closed  : state === "open" ? null : time_read(o.closed, changed),
     told    : o.told !== false,
@@ -491,7 +533,7 @@ export function tasks_load(dir: string, now = Date.now()): Store {
   if (had !== undefined) {
     return had;
   }
-  const s: Store = { dir, next: 1, rev: 0, tasks: [], shown: new Map() };
+  const s: Store = { dir, next: 1, rev: 0, tasks: [], shown: new Map(), refs: [] };
   const file = dir + FILE;
   if (fs.existsSync(file)) {
     try {
@@ -527,6 +569,9 @@ export function tasks_load(dir: string, now = Date.now()): Store {
       s.tasks = tasks;
       s.next = Math.max(1, count_read(got.next), ...tasks.map((t) => Number(t.id.slice(1)) + 1));
       s.rev = Math.max(count_read(got.rev), ...tasks.map((t) => t.rev));
+      // a list of before R5 has no fronts: those its tasks of Unii's and
+      // the user's name (the inbox's, a conversation each, aren't)
+      s.refs = refs_clean(Array.isArray(got.refs) ? got.refs : tasks.filter((t) => t.by !== "inbox").map((t) => t.ref));
     } catch (err: any) {
       console.error("unii: " + file + " unreadable, kept as " + file + ".bad: " + (err?.message ?? err));
       fs.renameSync(file, file + ".bad");
@@ -547,7 +592,7 @@ export function tasks_forget(): void {
 export function tasks_save(s: Store): void {
   const file = s.dir + FILE;
   fs.mkdirSync(s.dir, { recursive: true });
-  fs.writeFileSync(file + ".new", JSON.stringify({ next: s.next, rev: s.rev, tasks: s.tasks.map((t) => ({ ...t, who: t.assignee === "unii" ? "unii" : "user" })) }));
+  fs.writeFileSync(file + ".new", JSON.stringify({ next: s.next, rev: s.rev, refs: s.refs, tasks: s.tasks.map((t) => ({ ...t, who: t.assignee === "unii" ? "unii" : "user" })) }));
   fs.renameSync(file + ".new", file);
   Disk.wrote(file);
 }
@@ -601,6 +646,233 @@ function recommend_read(x: unknown, choices: string[]): { v: string | null } | s
   }
   return { v: got };
 }
+
+// The task's contract (R5)
+// ------------------------
+
+// a task's pull requests as given: each {url, head, verdict?, verifier?,
+// notes?: [{sev, text}], untested?: [...]} (url: a GitHub pull link;
+// head: the commit verified, 7 to 40 hex; verdict: approved,
+// approved_with_notes, rejected, pending, by default; sev: high, medium,
+// low; Portuguese too), at most PRS, no link twice. prs: those sound;
+// why: the first that isn't (null: all are). A hand edit's file keeps
+// the sound ones; a tool refuses the list
+export function prs_read(x: unknown): { prs: PrCheck[]; why: string | null } {
+  if (x === undefined || x === null) {
+    return { prs: [], why: null };
+  }
+  if (!Array.isArray(x)) {
+    return { prs: [], why: "prs is a list of {url, head, verdict, verifier, notes, untested}." };
+  }
+  const prs: PrCheck[] = [];
+  let why: string | null = x.length > PRS ? "At most " + PRS + " prs." : null;
+  for (const [k, y] of x.slice(0, PRS).entries()) {
+    const got = pr_read(y, k + 1);
+    if (typeof got === "string") {
+      why ??= got;
+    } else if (prs.some((p) => p.url === got.url)) {
+      why ??= "prs " + (k + 1) + ": " + got.url + " is given twice.";
+    } else {
+      prs.push(got);
+    }
+  }
+  return { prs, why };
+}
+
+// one pull request as given (n: its place, for what's wrong); else why not
+function pr_read(x: unknown, n: number): PrCheck | string {
+  const at = "prs " + n + ": ";
+  if (typeof x !== "object" || x === null || Array.isArray(x)) {
+    return at + "each is an object {url, head, verdict, verifier, notes, untested}.";
+  }
+  const o = x as Record<string, unknown>;
+  const url = typeof o.url === "string" ? o.url.trim().replace(/\/+$/, "") : "";
+  if (!PR_URL.test(url)) {
+    return at + "url is the PR's GitHub link, https://github.com/<owner>/<repo>/pull/<n>" + (url === "" ? " (none given)." : ".");
+  }
+  const head = typeof o.head === "string" ? o.head.trim().toLowerCase() : "";
+  if (!HEAD.test(head)) {
+    return at + "head is the commit verified, 7 to 40 hex characters" + (head === "" ? " (none given)." : ".");
+  }
+  const said = o.verdict === undefined || o.verdict === null || o.verdict === "" ? "pending" : text_line(o.verdict, 40).toLowerCase();
+  const verdict = VERDICTS[said];
+  if (verdict === undefined) {
+    return at + "verdict is approved, approved_with_notes, rejected or pending.";
+  }
+  const verifier = o.verifier === undefined || o.verifier === null || o.verifier === "" ? null : agent_read(o.verifier);
+  if (o.verifier !== undefined && o.verifier !== null && o.verifier !== "" && verifier === null) {
+    return at + "verifier is an agent's name: letters, digits, . _ - (at most 64).";
+  }
+  const notes: Note[] = [];
+  if (o.notes !== undefined && o.notes !== null) {
+    if (!Array.isArray(o.notes) || o.notes.length > NOTES) {
+      return at + "notes is a list of at most " + NOTES + " {sev: high, medium or low, text}.";
+    }
+    for (const y of o.notes) {
+      const r = typeof y === "object" && y !== null ? (y as Record<string, unknown>) : {};
+      const sev = SEVS[text_line(r.sev, 10).toLowerCase()];
+      const text = text_line(r.text, NOTE_TEXT);
+      if (sev === undefined || text === "") {
+        return at + "each note is {sev: high, medium or low, text}.";
+      }
+      notes.push({ sev, text });
+    }
+  }
+  if (o.untested !== undefined && o.untested !== null && (!Array.isArray(o.untested) || o.untested.length > UNTESTED || o.untested.some((y) => typeof y !== "string"))) {
+    return at + "untested is a list of at most " + UNTESTED + " texts.";
+  }
+  const untested = (Array.isArray(o.untested) ? o.untested : []).map((y) => text_line(y, NOTE_TEXT)).filter((y) => y !== "");
+  return { url, head, verdict, verifier, notes, untested };
+}
+
+// who acts on each choice as given ({"Sim, reinicie": "unii"}): each key
+// one of choices (any case), each value user or unii; else why not
+function acts_read(x: unknown, choices: string[]): Record<string, Act> | string {
+  if (x === undefined || x === null) {
+    return {};
+  }
+  if (typeof x !== "object" || Array.isArray(x)) {
+    return "acts is an object: by choice, who acts once it's picked, user or unii.";
+  }
+  const out: Record<string, Act> = {};
+  for (const [k, v] of Object.entries(x as Record<string, unknown>)) {
+    const said = text_line(k, CHOICE);
+    const c = choices.find((y) => y === said) ?? choices.find((y) => y.toLowerCase() === said.toLowerCase());
+    if (c === undefined) {
+      return choices.length === 0 ? "acts names choices, and the task has none." : "acts: " + JSON.stringify(said) + " is not a choice; one of: " + choices.join(" | ") + ".";
+    }
+    const a = typeof v === "string" ? v.trim().toLowerCase() : "";
+    if (!ACTS.includes(a as Act)) {
+      return "acts: who acts on " + JSON.stringify(c) + " is user or unii.";
+    }
+    out[c] = a as Act;
+  }
+  return out;
+}
+
+// acts as read from tasks.json: those of its choices, each user or unii
+function acts_clean(x: unknown, choices: string[]): Record<string, Act> {
+  const out: Record<string, Act> = {};
+  if (typeof x === "object" && x !== null && !Array.isArray(x)) {
+    for (const [k, v] of Object.entries(x as Record<string, unknown>)) {
+      if (choices.includes(k) && ACTS.includes(v as Act)) {
+        out[k] = v as Act;
+      }
+    }
+  }
+  return out;
+}
+
+// who acts once a task's answer is picked (null: none said)
+export function task_act(t: { acts?: Record<string, Act> | null; answer?: string | null }, answer = t.answer ?? null): Act | null {
+  return answer === null ? null : (t.acts ?? {})[answer] ?? null;
+}
+
+// a list's fronts as read: texts, a line each, none twice (in any case),
+// at most REFS
+function refs_clean(x: unknown[]): string[] {
+  const out: string[] = [];
+  for (const y of x) {
+    const r = typeof y === "string" ? text_line(y, REF) : "";
+    if (r !== "" && !out.some((o) => o.toLowerCase() === r.toLowerCase())) {
+      out.push(r);
+    }
+  }
+  return out.slice(-REFS);
+}
+
+// the front a ref names, as the list has it (any case); null: none
+export function ref_known(s: Store, ref: string): string | null {
+  return s.refs.find((r) => r.toLowerCase() === ref.toLowerCase()) ?? null;
+}
+
+// the fronts nearest a ref unknown: those that hold it, or it them, or
+// a few letters apart, the nearest first, at most n
+export function refs_near(s: Store, ref: string, n = 3): string[] {
+  const a = ref.toLowerCase();
+  const far = (r: string) => {
+    const b = r.toLowerCase();
+    return b.includes(a) || a.includes(b) ? 0 : edits(a, b);
+  };
+  return s.refs.map((r) => [r, far(r)] as const).filter(([r, d]) => d <= Math.max(2, Math.floor(r.length / 3))).sort((x, y) => x[1] - y[1]).slice(0, n).map(([r]) => r);
+}
+
+// how many letters apart two texts are (Levenshtein)
+function edits(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, k) => k);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) {
+      next.push(Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
+    }
+    row = next;
+  }
+  return row[b.length];
+}
+
+// a front added to the list (one known: nothing), saved
+export function refs_add(s: Store, ref: string): void {
+  const r = text_line(ref, REF);
+  if (r !== "" && ref_known(s, r) === null) {
+    s.refs = refs_clean([...s.refs, r]);
+    tasks_save(s);
+  }
+}
+
+// a task's ref as Unii gives it (task_add, task_edit; R5): one of the
+// list's fronts, as the list writes it; ref_new: a new front, added once
+// the task is kept. "" or none: no ref. Else why not, with the nearest
+export function ref_args(s: Store, args: Edit): { ref?: string | null; added?: string } | string {
+  if (args.ref === undefined) {
+    return {};
+  }
+  const ref = text_line(args.ref, REF);
+  if (ref === "") {
+    return { ref: null };
+  }
+  const known = ref_known(s, ref);
+  if (known !== null) {
+    return { ref: known };
+  }
+  if (args.ref_new === true || args.ref_new === "true") {
+    return { ref, added: ref };
+  }
+  const near = refs_near(s, ref);
+  return "No front (ref) " + JSON.stringify(ref) + (near.length === 0 ? "" : "; did you mean " + near.map((r) => JSON.stringify(r)).join(" or ") + "?") + " Fronts: " + (s.refs.length === 0 ? "none yet" : s.refs.join(", ")) + ". To start a new front, give ref_new: true.";
+}
+
+// a task of kind pr (given, or as its title says) needs the PRs it asks
+// to approve, each with its link and the head verified (R5: what the
+// rule of 23/10 asked in words); else why not
+export function pr_sound(t: { title: string; kind: Deps.TaskKind | null; prs: PrCheck[] }): string | null {
+  if (Deps.kind_of({ id: "", state: "open", made: "", ...t }) !== "pr" || t.prs.length > 0) {
+    return null;
+  }
+  return "A PR's approval (kind pr" + (t.kind === "pr" ? "" : ", as its title's PR link says") + ") needs prs: [{url: the GitHub pull link, head: the commit verified (7 to 40 hex), verdict, verifier, notes: [{sev, text}], untested: [...]}]. Refused: no PR given with its link and head.";
+}
+
+// what Unii's tools hold a task to besides (R5): task_add needs its
+// origin given, never taken from the turn (turn: where it came from, said
+// only to help); a ref, of either, one of the list's fronts. The args
+// with the ref as the list writes it, and the front to add once the task
+// is kept (null: none); else why not
+export function tool_args(s: Store, name: string, args: Edit, turn: Origin | null): { args: Edit; added: string | null } | string {
+  if (name === "task_add" && (args.origin === undefined || args.origin === null || String(args.origin).trim() === "")) {
+    return "Give origin: where this task came from: chat (the user asked for it), timer (a schedule's turn), agent:<name> (a subagent's report), slack or github. It's not taken from the turn" + (turn === null ? "" : " (this one came from " + turn + ")") + ": say who it really came from.";
+  }
+  const ref = ref_args(s, args);
+  if (typeof ref === "string") {
+    return ref;
+  }
+  return { args: ref.ref === undefined ? args : { ...args, ref: ref.ref }, added: ref.added ?? null };
+}
+
+// the restart's template (kind restart, R5, P8): with no choices given,
+// "Sim, reinicie" (Unii acts: Restart.ts, recommended) or "Eu reinicio
+// depois" (the user does)
+export const RESTART_YES   = "Sim, reinicie";
+export const RESTART_LATER = "Eu reinicio depois";
+export const RESTART_DETAIL = "Política (P8): o Unii reinicia sozinho quando nenhum agente está rodando, avisando antes e depois. Esta pendência só existe porque há agentes rodando agora, e o reinício os interrompe.";
 
 // Fields
 // ------
@@ -826,12 +1098,26 @@ function kind_args(args: Edit): { kind?: Deps.TaskKind | null; priority?: Deps.P
 // (origin: where the turn came from, unless args give one)
 export function task_new(s: Store, args: Edit, by: string, now: number, origin: Origin | null = null): Task | string {
   const title = text_line(args.title, TITLE);
+  const restart = String(args.kind ?? "").trim().toLowerCase() === "restart";
+  // a restart with no choices given: its template's (R5, P8)
+  const plain = restart && (args.choices === undefined || args.choices === null || (Array.isArray(args.choices) && args.choices.length === 0));
+  if (plain) {
+    args = { ...args, choices: [RESTART_YES, RESTART_LATER], recommend: args.recommend ?? RESTART_YES, acts: args.acts ?? { [RESTART_YES]: "unii", [RESTART_LATER]: "user" }, detail: text_body(args.detail, DETAIL) === "" ? RESTART_DETAIL : args.detail };
+  }
   const choices = choices_read(args.choices);
   if (title === "") {
     return "A task needs a title.";
   }
   if (typeof choices === "string") {
     return choices;
+  }
+  const acts = acts_read(args.acts, choices);
+  if (typeof acts === "string") {
+    return acts;
+  }
+  const prs = prs_read(args.prs);
+  if (prs.why !== null) {
+    return prs.why;
   }
   const whose = whose_args(args, origin_read(origin));
   if (typeof whose === "string") {
@@ -853,6 +1139,12 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   if (typeof kp === "string") {
     return kp;
   }
+  // from outside (the inbox) a PR's link says what it's about, not that
+  // it was verified: only Unii's are held to the contract
+  const unsound = by === "inbox" ? null : pr_sound({ title, kind: kp.kind ?? null, prs: prs.prs });
+  if (unsound !== null) {
+    return unsound;
+  }
   const open = s.tasks.filter((t) => t.state === "open");
   const twin = open.find((t) => t.title.toLowerCase() === title.toLowerCase());
   if (twin !== undefined) {
@@ -868,7 +1160,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   const ref = text_line(args.ref, REF);
   const task: Task = {
     id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, agent: whose.agent ?? null, by, choices, recommend: recommend.v, answer: null, note: null,
-    ref: ref === "" ? null : ref, made: at, changed: at, moved: at, kind: kp.kind ?? null, priority: kp.priority ?? "normal", ready: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
+    ref: ref === "" ? null : ref, made: at, changed: at, moved: at, kind: kp.kind ?? null, priority: kp.priority ?? "normal", prs: prs.prs, acts, waits_for: text_line(args.waits_for, WAITS_FOR) || null, ready: at, closed: null, told: true, rev: 0, after, freed: false, heard: null,
     fields: fields.fields, draft: {}, answers: null, thread: [], talk: null,
   };
   s.next += 1;
@@ -1007,6 +1299,25 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
     }
     next.choices = choices;
   }
+  if (args.acts !== undefined) {
+    const acts = acts_read(args.acts, next.choices);
+    if (typeof acts === "string") {
+      return acts;
+    }
+    next.acts = acts;
+  } else {
+    next.acts = acts_clean(task.acts, next.choices);
+  }
+  if (args.prs !== undefined) {
+    const prs = prs_read(args.prs);
+    if (prs.why !== null) {
+      return prs.why;
+    }
+    next.prs = prs.prs;
+  }
+  if (args.waits_for !== undefined) {
+    next.waits_for = text_line(args.waits_for, WAITS_FOR) || null;
+  }
   if (args.recommend !== undefined) {
     const recommend = recommend_read(args.recommend, next.choices);
     if (typeof recommend === "string") {
@@ -1021,6 +1332,12 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
     return kp;
   }
   Object.assign(next, kp);
+  // the contract held once the edit touches it (an older task, made
+  // before it, keeps being edited otherwise)
+  const unsound = args.kind !== undefined || args.prs !== undefined || args.title !== undefined ? pr_sound(next) : null;
+  if (unsound !== null && next.state !== "dropped" && args.state !== "dropped") {
+    return unsound;
+  }
   if (args.ref !== undefined) {
     const ref = text_line(args.ref, REF);
     next.ref = ref === "" ? null : ref;
@@ -1336,7 +1653,7 @@ export function task_said(t: Task): string {
   if (t.freed && t.state === "open") {
     return "Pendência " + t.id + " liberada: “" + t.title + "”. As pendências de que dependia (" + t.after.join(", ") + ") foram resolvidas.";
   }
-  const answer = t.answer === null ? "" : " Resposta: " + t.answer + ".";
+  const answer = t.answer === null ? "" : " Resposta: " + t.answer + "." + (t.state === "done" && task_act(t) === "unii" ? " Essa opção é uma ordem: cabe ao Unii executá-la." : "");
   const answers = t.state === "done" ? values_said(t.fields, t.answers) : "";
   const note = t.note === null ? "" : " Comentário: “" + t.note + "”.";
   return "Pendência " + t.id + " " + SAID[t.state] + " pelo usuário: “" + t.title + "”." + answer + (answers === "" ? "" : " Respostas: " + answers + ".") + note;
@@ -1347,7 +1664,7 @@ export function task_said(t: Task): string {
 // how and its answer, not the title, the fields or the comment again
 // (R4: the batch half as long, the notes holding the whole)
 export function tasks_noted_said(tasks: Task[]): string {
-  const one = (t: Task) => t.id + " " + SAID[t.state] + (t.answer === null ? "" : " (" + t.answer + ")");
+  const one = (t: Task) => t.id + " " + SAID[t.state] + (t.answer === null ? "" : " (" + t.answer + (t.state === "done" && task_act(t) === "unii" ? ", ordem ao Unii" : "") + ")");
   return "O usuário resolveu, como dizem as notas acima: " + tasks.map(one).join("; ") + ".";
 }
 
@@ -1361,8 +1678,9 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const kind = (f: Field) => f.kind + (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.join(" | ") : "") + rec(f);
   const fields = t.fields.length === 0 ? "" : " fields: " + t.fields.map((f) => f.id + (f.required ? "*" : "") + " " + JSON.stringify(f.label) + " (" + kind(f) + ")").join("; ");
   const talk = t.talk === "unii" ? " [the user wrote in its thread: reply with task_reply]" : "";
-  const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ") + (t.recommend == null ? "" : " (recommended: " + t.recommend + ")")) + fields + deps + talk;
-  const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), (t.agent ?? null) === null ? "" : "agent " + t.agent, t.kind == null ? "" : "kind " + t.kind, Deps.priority_of(t) === "normal" ? "" : "priority " + Deps.priority_of(t), ago(t.made, now)].filter((x) => x !== "").join(", ");
+  const acted = Object.entries(t.acts ?? {}).filter(([, a]) => a === "unii").map(([c]) => c);
+  const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ") + (t.recommend == null ? "" : " (recommended: " + t.recommend + ")") + (acted.length === 0 ? "" : " (you act on: " + acted.join(" | ") + ")")) + fields + deps + talk;
+  const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), (t.agent ?? null) === null ? "" : "agent " + t.agent, t.kind == null ? "" : "kind " + t.kind, Deps.priority_of(t) === "normal" ? "" : "priority " + Deps.priority_of(t), (t.waits_for ?? null) === null ? "" : "waits for " + JSON.stringify(t.waits_for), ...(t.prs ?? []).map(pr_line), ago(t.made, now)].filter((x) => x !== "").join(", ");
   const how   = [t.state, t.answer === null ? "" : "answer: " + t.answer, t.note === null ? "" : "note: " + JSON.stringify(t.note)].filter((x) => x !== "");
   const state = t.state === "open" ? "" : " (" + how.join(", ") + ")";
   const head = "- " + t.id + " [" + t.assignee + "] " + t.title + state + opts + " (" + tail + ")";
@@ -1376,6 +1694,13 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
     t.thread.length === 0 ? "" : "thread (" + (t.talk === "unii" ? "waiting for your reply" : t.talk === "user" ? "the user's turn" : "quiet") + "):\n" + t.thread.slice(-VIEW_TALK).map((m) => (m.who === "user" ? "user: " : "you: ") + m.text).join("\n"),
   ].filter((x) => x !== "");
   return more.length === 0 ? head : head + "\n  " + more.join("\n").replace(/\n/g, "\n  ");
+}
+
+// a pull request as a task's line says it: "pr <link> @<head> <verdict> by
+// <verifier>, notes 1 high 2 low, untested 3"
+export function pr_line(p: PrCheck): string {
+  const count = (["high", "medium", "low"] as Sev[]).map((v) => [v, p.notes.filter((n) => n.sev === v).length] as const).filter(([, n]) => n > 0).map(([v, n]) => n + " " + v);
+  return ["pr " + p.url + " @" + p.head.slice(0, 12) + " " + p.verdict, p.verifier === null ? "" : "by " + p.verifier, count.length === 0 ? "" : "notes " + count.join(" "), p.untested.length === 0 ? "" : "untested " + p.untested.length].filter((x) => x !== "").join(" ");
 }
 
 // the tasks tool: the open ones (all: and those closed lately), or those
@@ -1415,7 +1740,7 @@ export function tasks_block(s: Store, now: number): string {
     }
     const h = t.heard ?? { state: t.state, answer: t.answer, note: t.note };
     const what = h.state === "open" ? "reopened" : h.state;
-    const answer = h.answer === null ? "" : " — answer: " + h.answer;
+    const answer = h.answer === null ? "" : " — answer: " + h.answer + (h.state === "done" && task_act(t, h.answer) === "unii" ? " (an order: you act on it now)" : "");
     const note = h.note === null ? "" : " — note: " + JSON.stringify(h.note);
     const said = h.state === "done" ? values_said(t.fields, h.answers === undefined ? t.answers : h.answers) : "";
     const answers = said === "" ? "" : " — fields: " + said;

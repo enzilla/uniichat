@@ -221,7 +221,8 @@ function task_origin(t: Task): string[] {
 }
 
 function task_meta(t: Task, more: string[]): string {
-  return `<p class="meta">${[...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...more, ...task_origin(t)].join(" · ")}</p>`;
+  const outside = View.task_waits_for_said(t);
+  return `<p class="meta">${[...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]), ...more, ...(outside === "" ? [] : [`<span class="waits-for">${esc(outside)}</span>`]), ...task_origin(t)].join(" · ")}</p>`;
 }
 
 function task_button(t: Task, state: Task["state"], text: string, cls: string, answer?: string): string {
@@ -283,22 +284,43 @@ function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(),
   const rec = View.task_rec(t);
   const opt = (c: string) => {
     const on = View.rec_is(rec, c);
-    const tagged = on && !View.rec_marked(c) ? ` <span class="rec-tag">recomendada</span>` : "";
+    const tagged = (on && !View.rec_marked(c) ? ` <span class="rec-tag">recomendada</span>` : "") + (View.act_unii(t, c) ? ` <span class="act-tag">${esc(View.ACT_SAID)}</span>` : "");
     return `<button class="opt${on ? " rec" : ""}"${act_html({ $: "Task", task: t.id, state: "done", answer: c })}>${esc(c)}${tagged}</button>`;
   };
   const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map(opt).join("")}</div>`;
   const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
   // "Aceitar as recomendadas" (View.task_accept): one act, key a
   const accept = View.task_accepts(t) ? `<button class="accept" aria-keyshortcuts="a" title="Atalho: a"${act_html({ $: "TaskAccept", task: t.id })}>${esc(View.task_accept_said(t))}</button>` : "";
-  const told = `<span class="hint told">O Unii é avisado sozinho em até 1 min.</span>`;
+  const orders = t.choices.some((c) => View.act_unii(t, c));
+  const told = `<span class="hint told">${orders ? `As opções marcadas “${esc(View.ACT_SAID)}” avisam o Unii na hora; as demais, em até 1 min.` : "O Unii é avisado sozinho em até 1 min."}</span>`;
   const acts = `<div class="acts">${told}${accept}${task_button(t, "done", "Concluir", "done")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
   return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
 }
 
-// the pull requests a task points to (View.task_prs), each a link by
-// its "repo#n", over its detail on the Mesa; "" for none
+// the pull requests a task points to: those verified (prs, R5) each a
+// card (its link, head, verdict, verifier, notes by severity, what wasn't
+// tested), then the other links (View.task_prs) each by its "repo#n",
+// over its detail on the Mesa; "" for none
 function task_prs_html(t: Task): string {
-  const prs = View.task_prs(t);
+  const verified = new Set((t.prs ?? []).map((p) => p.url));
+  const cards = (t.prs ?? []).length === 0 ? "" : `<section class="checks" aria-label="Verificação">${t.prs.map(check_html).join("")}</section>`;
+  const prs = View.task_prs(t).filter((p) => !verified.has(p.url));
+  if (prs.length === 0) {
+    return cards;
+  }
+  return cards + task_links_html(prs);
+}
+
+// a pull request as verified, a card
+function check_html(p: NonNullable<Task["prs"]>[number]): string {
+  const notes = p.notes.length === 0 ? "" : `<ul class="notes">${p.notes.map((n) => `<li class="sev ${esc(n.sev)}"><span class="sev-tag">${esc(View.SEV_SAID[n.sev][0])}</span> ${esc(n.text)}</li>`).join("")}</ul>`;
+  const untested = p.untested.length === 0 ? "" : `<p class="untested"><span class="lead">Não testado:</span> ${esc(p.untested.join("; "))}</p>`;
+  const by = p.verifier === null ? "" : ` por ${esc(p.verifier)}`;
+  return `<div class="check ${esc(p.verdict)}"><p class="check-head"><a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(View.pr_label(p.url))}</a> <span class="lead">head</span> <code class="head">${esc(p.head.slice(0, 12))}</code> <span class="verdict">${esc(View.VERDICT_SAID[p.verdict])}${by}</span> <span class="count">${esc(View.pr_notes_said(p))}</span></p>${notes}${untested}</div>`;
+}
+
+// links to pull requests, each by its "repo#n"
+function task_links_html(prs: { url: string; label: string }[]): string {
   const one = (p: { url: string; label: string }) => `<a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.label)}</a>`;
   return prs.length === 0 ? "" : `<p class="prs"><span class="lead">${prs.length === 1 ? "PR" : "PRs"}:</span> ${prs.map(one).join(" ")}</p>`;
 }
@@ -380,11 +402,15 @@ export function desk_html(tasks: Task[], q: string, ref: string, sel: string | n
     const talk = g === "closed" ? "" : View.task_talk_wait_said(t, now, turn);
     const prs = g === "closed" ? [] : View.task_prs(t);
     const prio = g === "closed" ? "" : View.task_priority_said(t);
+    const outside = g === "closed" ? "" : View.task_waits_for_said(t);
+    const rejected = g === "closed" ? 0 : (t.prs ?? []).filter((p) => p.verdict === "rejected").length;
     const more = [
       ...(prio === "" ? [] : [`<span class="prio ${esc(Deps.priority_of(t))}">${esc(prio)}</span>`]),
       ...(late === "" ? [] : [`<span class="late">${esc(late)}</span>`]),
       ...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]),
       ...(prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`]),
+      ...(rejected === 0 ? [] : [`<span class="late">${esc(rejected === 1 ? "1 PR reprovado" : rejected + " PRs reprovados")}</span>`]),
+      ...(outside === "" ? [] : [`<span class="waits-for">${esc(outside)}</span>`]),
       ...(talk === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(talk)}</span>`]),
       ...(t.assignee === "user" ? [] : [esc(View.assignee_said(t))]),
       ...(agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]),

@@ -98,16 +98,22 @@ test("a turn's origin: a message of the user's among them, chat; else the first'
   expect(T.turn_origin(["agent:<x>"])).toBe("chat");
 });
 
-test("tools: task_add takes the turn's origin, says it; who and assignee both accepted", async () => {
+test("tools: task_add needs its origin given, never the turn's (R5); says it; who and assignee both accepted", async () => {
   const tools = { mem: { dir }, agents: new Map(), hooks: { change: () => {} } } as unknown as Kit;
   const call = (name: string, args: object) => Tools.call(tools, "main", name, args, new AbortController().signal, "x");
-  expect((await call("task_add", { title: "A" })).text).toBe("Added P1 [user] A (from chat, 0m)");
+  expect((await call("task_add", { title: "A", origin: "chat" })).text).toBe("Added P1 [user] A (from chat, 0m)");
   tools.origin = "timer";
-  expect((await call("task_add", { title: "B", who: "unii" })).text).toBe("Added P2 [unii] B (from timer, 0m)");
+  expect((await call("task_add", { title: "B", who: "unii", origin: "timer" })).text).toBe("Added P2 [unii] B (from timer, 0m)");
+  // the turn came from an agent's report, but the task is Unii's own:
+  // the origin given is kept, the turn's never taken (P63, P67)
   tools.origin = "agent:SleepyToucan";
-  expect((await call("task_add", { title: "C", assignee: "unii", ref: "num-3182" })).text).toBe("Added P3 [unii] C (ref num-3182, from agent:SleepyToucan, 0m)");
+  const none = await call("task_add", { title: "Sem origem", assignee: "unii" });
+  expect(none.fail).toBe(true);
+  expect(none.text).toStartWith("Give origin: where this task came from");
+  expect(none.text).toContain("(this one came from agent:SleepyToucan)");
+  expect((await call("task_add", { title: "C", assignee: "unii", origin: "chat", ref: "num-3182", ref_new: true })).text).toBe("Added P3 [unii] C (ref num-3182, from chat, 0m)");
   expect((await call("task_add", { title: "D", origin: "github", origin_url: "https://github.com/a/b/pull/1" })).text).toBe("Added P4 [user] D (from github https://github.com/a/b/pull/1, 0m)");
-  expect(await call("task_add", { title: "E", assignee: "x" })).toEqual({ text: "assignee is one of: user, unii.", fail: true });
+  expect(await call("task_add", { title: "E", origin: "chat", assignee: "x" })).toEqual({ text: "assignee is one of: user, unii.", fail: true });
   const spec = Tools.list(tools, "main").find((s) => s.name === "task_add")! as any;
   const props = (spec.schema ?? spec.input_schema ?? spec.parameters ?? spec).properties ?? JSON.stringify(spec);
   expect(JSON.stringify(props)).toContain("assignee");

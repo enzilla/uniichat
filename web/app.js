@@ -922,9 +922,9 @@ function after_of(t) {
   return Array.isArray(t.after) ? t.after : [];
 }
 var LATE = 24 * 60 * 60 * 1000;
-var KINDS = ["pr", "decision", "test"];
+var KINDS = ["pr", "decision", "test", "action", "restart", "info"];
 var H = 60 * 60 * 1000;
-var LATE_BY = { pr: 24 * H, decision: 72 * H, test: 2 * H };
+var LATE_BY = { pr: 24 * H, decision: 72 * H, test: 2 * H, action: 24 * H, restart: 24 * H, info: Infinity };
 var PRIORITIES = ["high", "normal", "low"];
 var PR_LINK = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
 function kind_of(t) {
@@ -1432,10 +1432,27 @@ function task_late_said(t, blocked, now) {
   }
   return "atrasada há " + hours_said(age);
 }
-var KIND_SAID = { pr: "aprovação de PR", decision: "decisão", test: "teste" };
+var KIND_SAID = { pr: "aprovação de PR", decision: "decisão", test: "teste", action: "ação sua", restart: "reinício", info: "informação" };
 function task_kind_said(t) {
   const k = kind_of(t);
-  return k === null ? "" : KIND_SAID[k] + ", prazo " + LATE_BY[k] / 3600000 + " h";
+  return k === null ? "" : KIND_SAID[k] + (Number.isFinite(LATE_BY[k]) ? ", prazo " + LATE_BY[k] / 3600000 + " h" : ", sem prazo");
+}
+function task_waits_for_said(t) {
+  return t.state !== "open" || (t.waits_for ?? null) === null ? "" : "aguarda: " + t.waits_for;
+}
+function act_unii(t, c) {
+  return (t.acts ?? {})[c] === "unii";
+}
+var ACT_SAID = "o Unii executa";
+var VERDICT_SAID = { approved: "aprovado", approved_with_notes: "aprovado com ressalvas", rejected: "reprovado", pending: "aguardando verificação" };
+var SEV_SAID = { high: ["alta", "altas"], medium: ["média", "médias"], low: ["baixa", "baixas"] };
+function pr_label(url) {
+  const m = /^https:\/\/github\.com\/[\w.-]+\/([\w.-]+)\/pull\/(\d+)/.exec(url);
+  return m === null ? url : m[1] + "#" + m[2];
+}
+function pr_notes_said(p) {
+  const by = ["high", "medium", "low"].map((v) => [v, p.notes.filter((n) => n.sev === v).length]).filter(([, n]) => n > 0);
+  return by.length === 0 ? "sem ressalvas" : "ressalvas: " + and_said(by.map(([v, n]) => n + " " + SEV_SAID[v][n === 1 ? 0 : 1]));
 }
 function task_priority_said(t) {
   const p = priority_of(t);
@@ -1536,6 +1553,11 @@ var LINKS = 8;
 function task_prs(t) {
   const text = (t.detail ?? "") + " " + (t.origin_url ?? "");
   const seen = new Map;
+  for (const p of t.prs ?? []) {
+    if (!seen.has(p.url) && seen.size < LINKS) {
+      seen.set(p.url, pr_label(p.url));
+    }
+  }
   for (const m of text.matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/g)) {
     const url = m[0];
     if (!seen.has(url) && seen.size < LINKS) {
@@ -1546,7 +1568,7 @@ function task_prs(t) {
 }
 function task_whole(t) {
   const named = typeof t?.assignee === "string" && t.assignee !== "";
-  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined) {
+  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined && Array.isArray(t.prs) && t.acts !== undefined) {
     return t;
   }
   return {
@@ -1557,6 +1579,9 @@ function task_whole(t) {
     agent: t?.agent ?? null,
     kind: t?.kind ?? null,
     priority: t?.priority ?? "normal",
+    prs: Array.isArray(t?.prs) ? t.prs : [],
+    acts: t?.acts ?? {},
+    waits_for: t?.waits_for ?? null,
     ready: t?.ready ?? t?.made,
     choices: Array.isArray(t?.choices) ? t.choices : [],
     after: Array.isArray(t?.after) ? t.after : [],
@@ -2007,7 +2032,8 @@ function task_origin(t) {
   return [url === null ? `<span class="origin" title="Origem">${esc(said)}</span>` : `<a class="origin" title="Origem" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(said)}</a>`];
 }
 function task_meta(t, more) {
-  return `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more, ...task_origin(t)].join(" · ")}</p>`;
+  const outside = task_waits_for_said(t);
+  return `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more, ...outside === "" ? [] : [`<span class="waits-for">${esc(outside)}</span>`], ...task_origin(t)].join(" · ")}</p>`;
 }
 function task_button(t, state, text, cls, answer) {
   return `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
@@ -2054,18 +2080,33 @@ function task_open_html(t, tasks, desk, now = Date.now(), turn = null) {
   const rec = task_rec(t);
   const opt = (c) => {
     const on = rec_is(rec, c);
-    const tagged = on && !rec_marked(c) ? ` <span class="rec-tag">recomendada</span>` : "";
+    const tagged = (on && !rec_marked(c) ? ` <span class="rec-tag">recomendada</span>` : "") + (act_unii(t, c) ? ` <span class="act-tag">${esc(ACT_SAID)}</span>` : "");
     return `<button class="opt${on ? " rec" : ""}"${act_html({ $: "Task", task: t.id, state: "done", answer: c })}>${esc(c)}${tagged}</button>`;
   };
   const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map(opt).join("")}</div>`;
   const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
   const accept = task_accepts(t) ? `<button class="accept" aria-keyshortcuts="a" title="Atalho: a"${act_html({ $: "TaskAccept", task: t.id })}>${esc(task_accept_said(t))}</button>` : "";
-  const told = `<span class="hint told">O Unii é avisado sozinho em até 1 min.</span>`;
+  const orders = t.choices.some((c) => act_unii(t, c));
+  const told = `<span class="hint told">${orders ? `As opções marcadas “${esc(ACT_SAID)}” avisam o Unii na hora; as demais, em até 1 min.` : "O Unii é avisado sozinho em até 1 min."}</span>`;
   const acts = `<div class="acts">${told}${accept}${task_button(t, "done", "Concluir", "done")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
   return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
 }
 function task_prs_html(t) {
-  const prs = task_prs(t);
+  const verified = new Set((t.prs ?? []).map((p) => p.url));
+  const cards = (t.prs ?? []).length === 0 ? "" : `<section class="checks" aria-label="Verificação">${t.prs.map(check_html).join("")}</section>`;
+  const prs = task_prs(t).filter((p) => !verified.has(p.url));
+  if (prs.length === 0) {
+    return cards;
+  }
+  return cards + task_links_html(prs);
+}
+function check_html(p) {
+  const notes = p.notes.length === 0 ? "" : `<ul class="notes">${p.notes.map((n) => `<li class="sev ${esc(n.sev)}"><span class="sev-tag">${esc(SEV_SAID[n.sev][0])}</span> ${esc(n.text)}</li>`).join("")}</ul>`;
+  const untested = p.untested.length === 0 ? "" : `<p class="untested"><span class="lead">Não testado:</span> ${esc(p.untested.join("; "))}</p>`;
+  const by = p.verifier === null ? "" : ` por ${esc(p.verifier)}`;
+  return `<div class="check ${esc(p.verdict)}"><p class="check-head"><a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(pr_label(p.url))}</a> <span class="lead">head</span> <code class="head">${esc(p.head.slice(0, 12))}</code> <span class="verdict">${esc(VERDICT_SAID[p.verdict])}${by}</span> <span class="count">${esc(pr_notes_said(p))}</span></p>${notes}${untested}</div>`;
+}
+function task_links_html(prs) {
   const one = (p) => `<a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.label)}</a>`;
   return prs.length === 0 ? "" : `<p class="prs"><span class="lead">${prs.length === 1 ? "PR" : "PRs"}:</span> ${prs.map(one).join(" ")}</p>`;
 }
@@ -2123,11 +2164,15 @@ function desk_html(tasks, q, ref, sel, now = Date.now(), opts = {}) {
     const talk = g === "closed" ? "" : task_talk_wait_said(t, now, turn);
     const prs = g === "closed" ? [] : task_prs(t);
     const prio = g === "closed" ? "" : task_priority_said(t);
+    const outside = g === "closed" ? "" : task_waits_for_said(t);
+    const rejected = g === "closed" ? 0 : (t.prs ?? []).filter((p) => p.verdict === "rejected").length;
     const more = [
       ...prio === "" ? [] : [`<span class="prio ${esc(priority_of(t))}">${esc(prio)}</span>`],
       ...late === "" ? [] : [`<span class="late">${esc(late)}</span>`],
       ...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`],
       ...prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`],
+      ...rejected === 0 ? [] : [`<span class="late">${esc(rejected === 1 ? "1 PR reprovado" : rejected + " PRs reprovados")}</span>`],
+      ...outside === "" ? [] : [`<span class="waits-for">${esc(outside)}</span>`],
       ...talk === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(talk)}</span>`],
       ...t.assignee === "user" ? [] : [esc(assignee_said(t))],
       ...agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`],

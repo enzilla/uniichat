@@ -39,10 +39,13 @@ export const LATE = 24 * 60 * 60 * 1000;
 // then the one the user's to act on longest (ready_at: since it waits no
 // more, or was handed to them; else made) (P3).
 
-export type TaskKind = "pr" | "decision" | "test";
-export const KINDS: TaskKind[] = ["pr", "decision", "test"];
+// (R5, the task's contract: action, a step only the user can do, 24 h as
+// any; restart, the serve's restart (Restart.ts), 24 h; info, only to
+// read, never late)
+export type TaskKind = "pr" | "decision" | "test" | "action" | "restart" | "info";
+export const KINDS: TaskKind[] = ["pr", "decision", "test", "action", "restart", "info"];
 const H = 60 * 60 * 1000;
-export const LATE_BY: Record<TaskKind, number> = { pr: 24 * H, decision: 72 * H, test: 2 * H };
+export const LATE_BY: Record<TaskKind, number> = { pr: 24 * H, decision: 72 * H, test: 2 * H, action: 24 * H, restart: 24 * H, info: Infinity };
 
 export type Priority = "high" | "normal" | "low";
 export const PRIORITIES: Priority[] = ["high", "normal", "low"];

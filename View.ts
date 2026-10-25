@@ -15,7 +15,7 @@ import * as Md from "./Md.ts";
 import { LABELS, type Fall, type Move, Pick } from "./Pick.ts";
 import { GLYPH, WHO } from "./Theme.ts";
 import type { Timer } from "./Timer.ts";
-import type { Field, Task, Values } from "./Tasks.ts";
+import type { Field, PrCheck, Task, Values } from "./Tasks.ts";
 import * as Deps from "./TaskDeps.ts";
 
 // Types
@@ -940,10 +940,51 @@ export function task_late_said(t: Task, blocked: Set<string>, now: number): stri
 
 // a task's kind and its limit, as the views say it ("aprovação de PR,
 // prazo 24 h"); "" for none
-export const KIND_SAID: Record<Deps.TaskKind, string> = { pr: "aprovação de PR", decision: "decisão", test: "teste" };
+export const KIND_SAID: Record<Deps.TaskKind, string> = { pr: "aprovação de PR", decision: "decisão", test: "teste", action: "ação sua", restart: "reinício", info: "informação" };
 export function task_kind_said(t: Task): string {
   const k = Deps.kind_of(t);
-  return k === null ? "" : KIND_SAID[k] + ", prazo " + Deps.LATE_BY[k] / 3600e3 + " h";
+  return k === null ? "" : KIND_SAID[k] + (Number.isFinite(Deps.LATE_BY[k]) ? ", prazo " + Deps.LATE_BY[k] / 3600e3 + " h" : ", sem prazo");
+}
+
+// The task's contract (R5)
+// ------------------------
+
+// what a task waits for outside the list, as the views say it ("aguarda:
+// CI do #42"); "" for none
+export function task_waits_for_said(t: Task): string {
+  return t.state !== "open" || (t.waits_for ?? null) === null ? "" : "aguarda: " + t.waits_for;
+}
+
+// whether a choice is an order to Unii (acts): picking it tells it at
+// once; how the views mark it
+export function act_unii(t: Task, c: string): boolean {
+  return (t.acts ?? {})[c] === "unii";
+}
+export const ACT_SAID = "o Unii executa";
+
+// a verdict and a note's severity, as the views say them
+export const VERDICT_SAID: Record<PrCheck["verdict"], string> = { approved: "aprovado", approved_with_notes: "aprovado com ressalvas", rejected: "reprovado", pending: "aguardando verificação" };
+export const SEV_SAID: Record<PrCheck["notes"][number]["sev"], [string, string]> = { high: ["alta", "altas"], medium: ["média", "médias"], low: ["baixa", "baixas"] };
+
+// a pull request's label, "repo#n" (its link as given, else as is)
+export function pr_label(url: string): string {
+  const m = /^https:\/\/github\.com\/[\w.-]+\/([\w.-]+)\/pull\/(\d+)/.exec(url);
+  return m === null ? url : m[1] + "#" + m[2];
+}
+
+// a pull request's notes, counted by severity ("1 alta e 2 baixas");
+// "sem ressalvas" for none
+export function pr_notes_said(p: PrCheck): string {
+  const by = (["high", "medium", "low"] as const).map((v) => [v, p.notes.filter((n) => n.sev === v).length] as const).filter(([, n]) => n > 0);
+  return by.length === 0 ? "sem ressalvas" : "ressalvas: " + and_said(by.map(([v, n]) => n + " " + SEV_SAID[v][n === 1 ? 0 : 1]));
+}
+
+// a verification card as Markdown lines (the terminal's /p)
+export function pr_md(p: PrCheck): string {
+  const head = "- **" + pr_label(p.url) + "** " + p.url + " · head `" + p.head.slice(0, 12) + "` · " + VERDICT_SAID[p.verdict] + (p.verifier === null ? "" : " por " + p.verifier) + " · " + pr_notes_said(p);
+  const notes = p.notes.map((n) => "  - ressalva " + SEV_SAID[n.sev][0] + ": " + n.text);
+  const untested = p.untested.length === 0 ? [] : ["  - não testado: " + p.untested.join("; ")];
+  return [head, ...notes, ...untested].join("\n");
 }
 
 // a task's priority as the views say it, if not normal ("prioridade
@@ -1108,6 +1149,12 @@ export const LINKS = 8;
 export function task_prs(t: Task): { url: string; label: string }[] {
   const text = (t.detail ?? "") + " " + (t.origin_url ?? "");
   const seen = new Map<string, string>();
+  // those verified (R5) first, each as given
+  for (const p of t.prs ?? []) {
+    if (!seen.has(p.url) && seen.size < LINKS) {
+      seen.set(p.url, pr_label(p.url));
+    }
+  }
   for (const m of text.matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/g)) {
     const url = m[0];
     if (!seen.has(url) && seen.size < LINKS) {
@@ -1131,6 +1178,7 @@ export function desk_md(v: View, ref = ""): string {
       ...(t.ref === null || ref !== "" ? [] : [t.ref]),
       ...(t.assignee === "user" ? [] : [assignee_said(t)]),
       ...(g === "waiting" ? ["aguarda " + Deps.waits(v.tasks, t).join(", ")] : []),
+      ...(task_waits_for_said(t) === "" ? [] : [task_waits_for_said(t)]),
       ...(g === "closed" ? [t.state === "done" ? "concluída" : "descartada"] : []),
       ...(g === "closed" || g === "waiting" || task_frees_said(v, t) === "" ? [] : [task_frees_said(v, t)]),
     ];
@@ -1146,7 +1194,7 @@ export function desk_md(v: View, ref = ""): string {
 // user's, nor breaks on what it lacks
 export function task_whole(t: any): Task {
   const named = typeof t?.assignee === "string" && t.assignee !== "";
-  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined) {
+  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined && Array.isArray(t.prs) && t.acts !== undefined) {
     return t;
   }
   return {
@@ -1157,6 +1205,9 @@ export function task_whole(t: any): Task {
     agent      : t?.agent ?? null,
     kind       : t?.kind ?? null,
     priority   : t?.priority ?? "normal",
+    prs        : Array.isArray(t?.prs) ? t.prs : [],
+    acts       : t?.acts ?? {},
+    waits_for  : t?.waits_for ?? null,
     ready      : t?.ready ?? t?.made,
     choices    : Array.isArray(t?.choices) ? t.choices : [],
     after      : Array.isArray(t?.after) ? t.after : [],
@@ -1173,15 +1224,19 @@ export function task_whole(t: any): Task {
 export function tasks_md(v: View, one: Task | null = null, waiting = false): string {
   const STATE = { open: "aberta", done: "concluída", dropped: "descartada" };
   const tag = (t: Task) => (t.ref === null ? "" : " · " + t.ref) + (origin_said(t) === "" ? "" : " · origem: " + origin_said(t));
-  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c + (rec_is(task_rec(t), c) && !rec_marked(c) ? " (recomendada)" : "")).join("  "));
+  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c + (rec_is(task_rec(t), c) && !rec_marked(c) ? " (recomendada)" : "") + (act_unii(t, c) ? " (" + ACT_SAID + ")" : "")).join("  "));
   if (one !== null) {
     const said = [one.answer === null ? "" : "Resposta: " + one.answer + ".", one.note === null ? "" : "Comentário: " + one.note].filter((x) => x !== "").join(" ");
     const waits = Deps.waits(v.tasks, one);
     const frees = task_frees_said(v, one);
     const deps = (one.state === "open" && waits.length > 0 ? " · aguarda " + waits.join(", ") : "") + (frees === "" ? "" : " · " + frees);
     const talk = task_talk_said(one) === "" ? "" : " · " + task_talk_said(one);
-    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + assignee_said(one) + tag(one) + deps + talk + opts(one);
-    return [head, said, one.detail, fields_md(one), thread_md(one)].filter((x) => x !== "").join("\n\n");
+    const kind = task_kind_said(one) === "" ? "" : " · " + task_kind_said(one);
+    const outside = task_waits_for_said(one) === "" ? "" : " · " + task_waits_for_said(one);
+    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + assignee_said(one) + tag(one) + kind + deps + outside + talk + opts(one);
+    const acts = one.state === "open" && one.choices.some((c) => act_unii(one, c)) ? "_As opções marcadas “" + ACT_SAID + "” avisam o Unii na hora, com `/ok " + one.id + " opção`._" : "";
+    const prs = (one.prs ?? []).length === 0 ? "" : "**Verificação**\n\n" + one.prs.map(pr_md).join("\n");
+    return [head, acts, said, prs, one.detail, fields_md(one), thread_md(one)].filter((x) => x !== "").join("\n\n");
   }
   const { open, waiting: wait, closed } = view_tasks(v);
   const frees = (t: Task) => (task_frees_said(v, t) === "" ? "" : " · **" + task_frees_said(v, t) + "**");
