@@ -115,7 +115,9 @@ test("web: the list by group, the one shown marked; its detail whole, with field
   expect(html.list.find((x) => x.includes('data-desk="P3"'))).toContain("aguarda P2");
   expect(html.list.find((x) => x.includes('data-desk="P2"'))).toContain("libera 1");
   const d = html.detail.join("");
-  expect(html.detail.length).toBe(2);
+  // P4 waits for Unii: the next of Agora offered under it
+  expect(html.detail.length).toBe(3);
+  expect(html.detail[2]).toBe('<button class="next" type="button" data-desk="P1">Próxima: <span class="id">P1</span> Mesclar o PR →</button>');
   expect(d).toContain('<button class="back" type="button" data-desk-back');
   expect(d).toContain('<article class="task user talk-unii" data-task="P4">');
   expect(d).toContain('<div class="detail"><div class="md">');
@@ -189,4 +191,70 @@ test("a task of an older server (who, no assignee) is made whole: Unii's stays U
   add(s, { title: "Nova" });
   const whole = T.tasks_view(s, NOW)[0];
   expect(View.task_whole(whole)).toBe(whole);
+});
+
+test("web: after one resolved, the next of Agora; none past the last; a task of Agora shown offers none", () => {
+  const tasks = desk();
+  expect(View.desk_next(tasks, "P6")?.id).toBe("P1");
+  expect(View.desk_next(tasks, "P1")?.id).toBe("P5");
+  expect(Html.desk_html(tasks, "", "", "P6").detail.at(-1)).toContain('class="next" type="button" data-desk="P1"');
+  expect(Html.desk_html(tasks, "", "", "P1").detail.join("")).not.toContain('class="next"');
+  // the search narrows what's next too
+  expect(View.desk_next(tasks, "P6", "slack")?.id).toBe("P5");
+  expect(View.desk_next(tasks, "P6", "zzz")).toBe(null);
+  expect(Html.desk_html(tasks, "zzz", "", "P6").detail.join("")).not.toContain('class="next"');
+});
+
+test("late: the user's move over TASK_LATE (= TaskPush.LATE) says how late, in the row and the detail; not Unii's, waiting, closed", async () => {
+  const { LATE } = await import("./TaskPush.ts");
+  const Deps = await import("./TaskDeps.ts");
+  expect(View.TASK_LATE).toBe(LATE);
+  expect(View.TASK_LATE).toBe(Deps.LATE);
+  // one definition: neither TaskPush nor View writes the value again
+  for (const file of ["TaskPush.ts", "View.ts"]) {
+    expect(await Bun.file(import.meta.dir + "/" + file).text()).not.toMatch(/LATE\s*=\s*\d/);
+  }
+  const tasks = desk();
+  const blocked = new Set(["P3"]);
+  const p1 = tasks.find((t) => t.id === "P1")!;
+  expect(View.task_late_said(p1, blocked, NOW + View.TASK_LATE)).toBe("");
+  expect(View.task_late_said(p1, blocked, NOW + View.TASK_LATE + 3600e3)).toBe("atrasada há 25 h");
+  expect(View.task_late_said(p1, blocked, NOW + 3 * View.TASK_LATE + 1)).toBe("atrasada há 3 d");
+  for (const id of ["P2", "P3", "P4", "P6"]) {
+    expect(View.task_late_said(tasks.find((t) => t.id === id)!, blocked, NOW + 9 * View.TASK_LATE)).toBe("");
+  }
+  const html = Html.desk_html(tasks, "", "", "P1", NOW + 2 * View.TASK_LATE + 1);
+  expect(html.list.find((x) => x.includes('data-desk="P1"'))).toContain('<span class="late">atrasada há 2 d</span>');
+  expect(html.list.find((x) => x.includes('data-desk="P2"'))).not.toContain("atrasada");
+  expect(html.detail.join("")).toContain('<span class="late">atrasada há 2 d</span>');
+  expect(Html.desk_html(tasks, "", "", "P1", NOW).list.join("")).not.toContain("atrasada");
+});
+
+test("PRs: GitHub pull links of the detail and origin, each once, as repo#n; a link in the row's line and over the detail", () => {
+  const s = T.tasks_load(dir);
+  add(s, { title: "Mesclar", detail: "https://github.com/Numih/dp-bk-http/pull/42 e de novo https://github.com/Numih/dp-bk-http/pull/42, depois https://github.com/Numih/fractal/pull/57. Issue https://github.com/Numih/x/issues/3; falso http://github.com/a/b/pull/1", origin: "github", origin_url: "https://github.com/Numih/infra-tf-numih/pull/1135" });
+  add(s, { title: "Um só", detail: "PR: https://github.com/morum/uniichat/pull/13" });
+  add(s, { title: "Nenhum", detail: "sem links <b>" });
+  const tasks = T.tasks_view(s, NOW);
+  expect(View.task_prs(tasks[0])).toEqual([
+    { url: "https://github.com/Numih/dp-bk-http/pull/42", label: "dp-bk-http#42" },
+    { url: "https://github.com/Numih/fractal/pull/57", label: "fractal#57" },
+    { url: "https://github.com/Numih/infra-tf-numih/pull/1135", label: "infra-tf-numih#1135" },
+  ]);
+  const html = Html.desk_html(tasks, "", "", "P1", NOW);
+  expect(html.list.find((x) => x.includes('data-desk="P1"'))).toContain('<span class="pr">3 PRs</span>');
+  expect(html.list.find((x) => x.includes('data-desk="P2"'))).toContain('<span class="pr">PR uniichat#13</span>');
+  expect(html.list.find((x) => x.includes('data-desk="P3"'))).not.toContain('class="pr"');
+  expect(html.detail.join("")).toContain('<p class="prs"><span class="lead">PRs:</span> <a class="pr" href="https://github.com/Numih/dp-bk-http/pull/42" target="_blank" rel="noopener noreferrer">dp-bk-http#42</a>');
+  expect(Html.desk_html(tasks, "", "", "P3", NOW).detail.join("")).not.toContain('class="prs"');
+});
+
+test("web: a choice says it concludes, the comment comes before it; required fields marked for the browser's check", () => {
+  const s = T.tasks_load(dir);
+  add(s, { title: "Escolher", choices: ["Sim", "Não"], fields: [{ id: "a", label: "A", kind: "choice", choices: ["x", "y"] }, { id: "b", label: "B", kind: "text", required: false }] });
+  const d = Html.desk_html(T.tasks_view(s, NOW), "", "", "P1", NOW).detail.join("");
+  expect(d).toContain('<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>');
+  expect(d.indexOf('class="note"')).toBeLessThan(d.indexOf('class="opts"'));
+  expect(d).toContain('<fieldset class="field" data-field="a" data-kind="choice" data-required="true">');
+  expect(d).toContain('<fieldset class="field" data-field="b" data-kind="text">');
 });

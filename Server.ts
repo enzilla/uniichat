@@ -127,6 +127,8 @@ const LOCK       = config.DIR + "/lock";
 const PID        = config.DIR + "/server.pid";
 // where the chat is
 const CHAT       = config.DIR + "/chat";
+// a failed turn's note's start (Chat.failed; Chat.talked reads its why)
+const NO_REPLY   = "No reply: ";
 // a turn's head
 const HEAD       = "Turn: the user's new message:\n\n";
 // a goal's check (Chat.check): its own system prompt, asked after the
@@ -517,7 +519,7 @@ export namespace Chat {
 
   // a failed turn's why, as a note
   export function failed(chat: Chat, why: string): void {
-    Chat.note(chat, "No reply: " + why.replace(/\.$/, "") + ". Send a message to try again.");
+    Chat.note(chat, NO_REPLY + why.replace(/\.$/, "") + ". Send a message to try again.");
   }
 
   // a note in the chat, why work ended as it did
@@ -669,7 +671,9 @@ export namespace Chat {
       return;
     }
     const last = Memory.message(chat.mem, chat.mem.count - 1);
-    Tasks.tasks_talked(s, last !== null && last.kind === "unii" ? last.text : null, Date.now());
+    // the turn failed (Chat.failed's note last): its why in the thread too
+    const why = last !== null && last.kind === "note" && last.text.startsWith(NO_REPLY) ? last.text.slice(NO_REPLY.length).replace(/\. Send a message to try again\.$/, "") : null;
+    Tasks.tasks_talked(s, last !== null && last.kind === "unii" ? last.text : null, Date.now(), why);
   }
 
   // a turn's reply goes to no phone nor browser: only the pending list's

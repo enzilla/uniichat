@@ -237,18 +237,28 @@ function task_detail(t: Task, desk: boolean): string {
 
 // an open task free to resolve, an item of the list (desk: the Mesa's
 // detail, its detail and thread unfolded, an article)
-function task_open_html(t: Task, tasks: Task[], desk: boolean): string {
+function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now()): string {
   const n = Deps.frees(tasks, t);
   const mine = t.assignee === "user";
-  const who = [...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(mine ? [] : [esc(View.assignee_said(t))])];
-  const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => task_button(t, "done", c, "opt", c)).join("")}</div>`;
+  const late = desk ? View.task_late_said(t, Deps.blocked_ids(tasks), now) : "";
+  const who = [...(late === "" ? [] : [`<span class="late">${esc(late)}</span>`]), ...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]), ...(mine ? [] : [esc(View.assignee_said(t))])];
+  // a choice concludes the task at once (with the comment typed): said
+  const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map((c) => task_button(t, "done", c, "opt", c)).join("")}</div>`;
   const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
   const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
   const acts = `<div class="acts">${go}${task_button(t, "done", "Concluir", mine ? "done" : "done quiet")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
   const talk = View.task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(View.task_talk_said(t))}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
   const tag = desk ? "article" : "li";
-  return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${task_detail(t, desk)}${fields_html(t)}${opts}${note}${acts}${thread_html(t, desk)}</${tag}>`;
+  return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
+}
+
+// the pull requests a task points to (View.task_prs), each a link by
+// its "repo#n", over its detail on the Mesa; "" for none
+function task_prs_html(t: Task): string {
+  const prs = View.task_prs(t);
+  const one = (p: { url: string; label: string }) => `<a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.label)}</a>`;
+  return prs.length === 0 ? "" : `<p class="prs"><span class="lead">${prs.length === 1 ? "PR" : "PRs"}:</span> ${prs.map(one).join(" ")}</p>`;
 }
 
 // a task closed lately: how, and Reabrir (desk: with its detail, its
@@ -259,7 +269,7 @@ function task_closed_html(t: Task, desk: boolean): string {
   if (!desk) {
     return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${acts}</li>`;
   }
-  return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
+  return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
 }
 
 // a task waiting for others: what it waits for (desk: each a link to it
@@ -305,13 +315,18 @@ function thread_read_html(t: Task): string {
 // shown whole (task_open_html, task_closed_html, task_waiting_html) or,
 // none, a note (detail: its elements, the first ← back, for a phone).
 // ids: the rows' order (j and k go down and up them)
-export function desk_html(tasks: Task[], q: string, ref: string, sel: string | null): { list: string[]; detail: string[]; ids: string[] } {
+export function desk_html(tasks: Task[], q: string, ref: string, sel: string | null, now = Date.now()): { list: string[]; detail: string[]; ids: string[] } {
   const groups = View.desk_list(tasks, q, ref);
   const ids = groups.flatMap((g) => g.tasks.map((t) => t.id));
+  const blocked = Deps.blocked_ids(tasks);
   const row = (t: Task, g: View.Desk) => {
     const n = g === "closed" || g === "waiting" ? 0 : Deps.frees(tasks, t);
+    const late = View.task_late_said(t, blocked, now);
+    const prs = g === "closed" ? [] : View.task_prs(t);
     const more = [
+      ...(late === "" ? [] : [`<span class="late">${esc(late)}</span>`]),
       ...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]),
+      ...(prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`]),
       ...(View.task_talk_said(t) === "" || g === "closed" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(View.task_talk_said(t))}</span>`]),
       ...(t.assignee === "user" ? [] : [esc(View.assignee_said(t))]),
       ...(n === 0 ? [] : [`<span class="frees">libera ${n}</span>`]),
@@ -325,11 +340,13 @@ export function desk_html(tasks: Task[], q: string, ref: string, sel: string | n
   const searched = q.trim() !== "" || ref !== "";
   const none = tasks.length === 0 ? "Nenhuma pendência. Quando o Unii precisar de você, ela aparece aqui." : searched && ids.length === 0 ? "Nenhuma pendência na busca." : "";
   const t = sel === null ? undefined : tasks.find((x) => x.id === sel);
-  const blocked = Deps.blocked_ids(tasks);
   const back = `<button class="back" type="button" data-desk-back aria-label="Voltar à lista">← Pendências</button>`;
+  // resolved, or waiting: the next one of "now", a click away
+  const after = t === undefined || View.desk_group(t, blocked) === "now" ? null : View.desk_next(tasks, t.id, q, ref);
+  const next = after === null ? [] : [`<button class="next" type="button" data-desk="${esc(after.id)}">Próxima: <span class="id">${esc(after.id)}</span> ${esc(after.title)} →</button>`];
   const detail = t === undefined
     ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`]
-    : [back, t.state !== "open" ? task_closed_html(t, true) : blocked.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true)];
+    : [back, t.state !== "open" ? task_closed_html(t, true) : blocked.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true, now), ...next];
   return { list: none === "" ? list : [...list, `<p class="none">${esc(none)}</p>`], detail, ids };
 }
 
@@ -347,13 +364,14 @@ function fields_html(t: Task): string {
     const name = "f-" + t.id + "-" + f.id;
     const req = f.required ? ` <span class="req" title="Obrigatório">*</span>` : "";
     const legend = `<legend>${esc(f.label)}${req}</legend>`;
+    const must = f.required ? ` data-required="true"` : "";
     if (f.kind === "text") {
-      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text">${legend}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
+      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text"${must}>${legend}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
     }
     const type = f.kind === "multi" ? "checkbox" : "radio";
     const on = (c: string) => (Array.isArray(v) ? v.includes(c) : v === c);
     const boxes = f.choices.map((c) => `<label><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> ${esc(c)}</label>`).join("");
-    return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}">${legend}<div class="picks">${boxes}</div></fieldset>`;
+    return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}"${must}>${legend}<div class="picks">${boxes}</div></fieldset>`;
   };
   return `<div class="fields">${fields.map(one).join("")}</div>`;
 }

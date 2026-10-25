@@ -18,6 +18,10 @@ export function after_of(t: Dep): string[] {
 // the most ids a task waits for
 export const AFTER = 20;
 
+// how long a task stays the user's before it's late (ms): the one value
+// the late push (TaskPush) and the views' "atrasada há" (View) both read
+export const LATE = 24 * 60 * 60 * 1000;
+
 // a list's tasks by id
 function by_id<T extends Dep>(tasks: T[]): Map<string, T> {
   return new Map(tasks.map((t) => [t.id, t]));

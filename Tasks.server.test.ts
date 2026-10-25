@@ -19,7 +19,12 @@ import * as View from "./View.ts";
 if (!config.DIR.startsWith("/tmp/")) {
   throw new Error("run with UNII_DIR in /tmp: " + config.DIR);
 }
-afterAll(() => fs.rmSync(config.DIR, { recursive: true, force: true }));
+// emptied, not removed: a flush (Disk.ts) syncs the dir itself, and
+// may come later; TestSetup.ts removes it as the run ends
+afterAll(() => {
+  fs.rmSync(config.DIR, { recursive: true, force: true });
+  fs.mkdirSync(config.DIR, { recursive: true });
+});
 
 // what each turn's call was asked; the next call's end
 const ASKED: Ask[] = [];
@@ -239,7 +244,8 @@ test("a talk in a task's thread: a marked message of the chat, a turn; Unii's re
   await act({ $: "task_say", task: t.id, text: "E agora?" });
   await idle();
   END = { ok: true, text: "", left: [] };
-  expect(Tasks.task_find(s, t.id)!.thread.at(-1)!.text).toBe("O Unii não respondeu aqui; veja a conversa principal.");
+  // its why said there, not "see the main chat" for a reply that isn't there
+  expect(Tasks.task_find(s, t.id)!.thread.at(-1)!.text).toBe("O Unii não conseguiu responder (down). Escreva de novo aqui para tentar outra vez.");
   expect(Tasks.task_find(s, t.id)!.talk).toBe("user");
 });
 

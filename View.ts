@@ -792,6 +792,43 @@ export function desk_step(ids: string[], at: string | null, by: number): string 
   return ids[Math.max(0, Math.min(ids.length - 1, k + by))];
 }
 
+// the task to offer after the one shown was resolved (or waits): the
+// first of "now" in the list's order but it; none: null
+export function desk_next(tasks: Task[], sel: string | null, q = "", ref = ""): Task | null {
+  const now = desk_list(tasks, q, ref).find((g) => g.group === "now");
+  return now?.tasks.find((t) => t.id !== sel) ?? null;
+}
+
+// how long a task stays the user's before it's late (ms): TaskDeps.LATE,
+// the same value the late push (TaskPush.LATE) reads
+export const TASK_LATE = Deps.LATE;
+
+// a task late (open, the user's move, made over TASK_LATE ago): how
+// late, "atrasada há 30 h" (under 2 days) or "atrasada há 3 d"; else ""
+export function task_late_said(t: Task, blocked: Set<string>, now: number): string {
+  const age = now - Date.parse(t.made);
+  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > TASK_LATE)) {
+    return "";
+  }
+  const h = Math.floor(age / 3600e3);
+  return "atrasada há " + (h < 48 ? h + " h" : Math.floor(h / 24) + " d");
+}
+
+// the GitHub pull requests a task points to (its detail, its origin's
+// link), each once, in order, at most LINKS: the link and "repo#n"
+export const LINKS = 8;
+export function task_prs(t: Task): { url: string; label: string }[] {
+  const text = (t.detail ?? "") + " " + (t.origin_url ?? "");
+  const seen = new Map<string, string>();
+  for (const m of text.matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/g)) {
+    const url = m[0];
+    if (!seen.has(url) && seen.size < LINKS) {
+      seen.set(url, m[2] + "#" + m[3]);
+    }
+  }
+  return [...seen].map(([url, label]) => ({ url, label }));
+}
+
 // the Mesa as Markdown, for the terminal's /mesa: its groups, each task
 // a line (ref: that project's only)
 export function desk_md(v: View, ref = ""): string {

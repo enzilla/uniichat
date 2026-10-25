@@ -344,6 +344,8 @@ function click(ev: MouseEvent): void {
     const made = JSON.parse(a) as View.Act;
     if (made.$ === "TaskSay") {
       task_say(made.task, el.closest<HTMLElement>("#tasks, #desk") ?? $("#tasks"));
+    } else if (made.$ === "Task" && made.state === "done" && task_missing(el)) {
+      return;
     } else {
       act(task_act(el, made));
     }
@@ -432,6 +434,41 @@ function task_fields(item: Element): Record<string, unknown> {
   return out;
 }
 
+// a field marked unanswered (or not): aria-invalid on the fieldset (its
+// red border) and on each of its controls, which screen readers announce
+// more reliably than a fieldset's
+function field_invalid(set: HTMLElement, on: boolean): void {
+  for (const el of [set, ...set.querySelectorAll<HTMLElement>("input, textarea, select")]) {
+    if (on) {
+      el.setAttribute("aria-invalid", "true");
+    } else {
+      el.removeAttribute("aria-invalid");
+    }
+  }
+}
+
+// a Concluir (or a choice) with required fields unanswered: each marked
+// (aria-invalid), the first focused, which ones said; nothing sent (the
+// server refuses it too). Whether any was missing
+function task_missing(el: HTMLElement): boolean {
+  const item = el.closest("[data-task]");
+  const sets = item === null ? [] : [...item.querySelectorAll<HTMLElement>("fieldset.field[data-required]")];
+  const empty = (set: HTMLElement) => {
+    const v = field_value(set);
+    return Array.isArray(v) ? v.length === 0 : String(v).trim() === "";
+  };
+  const missing = sets.filter(empty);
+  sets.forEach((set) => field_invalid(set, missing.includes(set)));
+  if (missing.length === 0) {
+    return false;
+  }
+  missing[0].scrollIntoView({ block: "center", behavior: "smooth" });
+  missing[0].querySelector<HTMLElement>("input, textarea")?.focus({ preventScroll: true });
+  const said = missing.map((set) => "“" + (set.querySelector("legend")?.firstChild?.textContent ?? "").trim() + "”").join(", ");
+  toast("Para concluir, responda " + said + ". Nada foi enviado.");
+  return true;
+}
+
 // a field changed (a radio, a box, a text left): kept as a draft
 function task_draft(ev: Event): void {
   const set = (ev.target as HTMLElement).closest<HTMLElement>("fieldset.field");
@@ -439,6 +476,7 @@ function task_draft(ev: Event): void {
   if (set === null || set === undefined || item === null || item === undefined) {
     return;
   }
+  field_invalid(set, false);
   act({ $: "TaskDraft", task: item.dataset.task!, fields: { [set.dataset.field!]: field_value(set) } });
 }
 

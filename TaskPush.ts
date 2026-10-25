@@ -47,8 +47,9 @@ export const FILE = "/push.json";
 // how long tasks made or freed wait to go together (ms)
 export const WINDOW = 45 * 1000;
 
-// how long a task stays the user's before it's late (ms)
-export const LATE = 24 * 60 * 60 * 1000;
+// how long a task stays the user's before it's late (ms): TaskDeps.LATE,
+// shared with the views
+export const LATE = Deps.LATE;
 
 // the local hour the daily reminder goes, at or after
 export const REMIND = 9;
