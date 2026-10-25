@@ -409,6 +409,12 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
       if (/ressalva|observa[cç]/i.test(line) && fixed(label_of(line))) {
         within = "other";
         given = null;
+      } else if (para !== null && /^[\s>*_`]*(?:ressalva|observacao)\s/.test(fold(line))) {
+        // one note, said on its line ("**Ressalva baixa:** um título
+        // …", WarmParrot): its items are its details ("- `### …` com
+        // `1. **MÉDIA** a` conta 1 média"), not notes
+        within = "other";
+        given = null;
       } else if (/ressalva|observa[cç]/i.test(line)) {
         within = "notes";
         given = own;
@@ -483,11 +489,17 @@ function fixed(label: string): boolean {
   return FIXED_WORD.test(label) && !NOT_FIXED.test(label);
 }
 
-// a line's label, folded: its words up to its first ":" (within 160
-// characters), else its first bold words ("1. **MÉDIA (corrigida)**
-// x"), else none (""): "Baixa: corrigida em abc" says it of the text,
-// not of the label, so it stays a note
+// a line's label, folded: a heading's whole title ("### Ressalvas
+// corrigidas", "## Ressalvas (corrigidas)", WarmParrot), else its words
+// up to its first ":" (within 160 characters), else its first bold
+// words ("1. **MÉDIA (corrigida)** x"), else none (""): "Baixa:
+// corrigida em abc" says it of the text, not of the label, so it stays
+// a note
 function label_of(line: string): string {
+  const heading = /^\s*#{1,6}\s+(.*)$/.exec(fold(line.slice(0, 160)));
+  if (heading !== null) {
+    return heading[1].replace(/[*_`]/g, "").trim();
+  }
   const f = fold(line.slice(0, 160)).replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "");
   // a quote opens it: what it says is cited, not its label
   // ("1. \"Ressalva baixa (corrigida): ok\" conta 1 nota", WhitePelican)

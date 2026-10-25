@@ -159,6 +159,18 @@ test("verdict_of: a note its label says fixed isn't open (WhitePelican 1, 25/10)
   // a heading on fixed notes: its items aren't open
   const both = "Veredito: aprovado com ressalvas.\n\n**Ressalvas corrigidas:**\n1. Média: x\n2. Baixa: y\n\n**Ressalvas:**\n1. Baixa: z";
   expect(Pipeline.verdict_of(both).notes).toEqual({ high: 0, medium: 0, low: 1 });
+  // a '#' heading on fixed notes, with no ':' (WarmParrot, 25/10): its whole title is its label
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n### Ressalvas corrigidas\n1. **MÉDIA** a")).toEqual(none);
+  expect(Pipeline.verdict_of("Veredito: aprovado.\n\n## Ressalvas (corrigidas)\n1. **MÉDIA** a\n2. Baixa: b")).toEqual(none);
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n### Ressalvas corrigidas\n1. **MÉDIA** a\n\n### Ressalvas\n1. **BAIXA** b").notes).toEqual({ high: 0, medium: 0, low: 1 });
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n## Ressalvas (corrigidas)\n1. **MÉDIA** a\n\n## Ressalvas abertas\n1. **BAIXA** b").notes).toEqual({ high: 0, medium: 0, low: 1 });
+  // one note said on its line: its items are its details, not notes (WarmParrot's own report)
+  expect(Pipeline.verdict_of("Veredito: aprovado com 1 ressalva baixa.\n\n**Ressalva baixa:** um título sem dois pontos.\n- `### Ressalvas corrigidas` com `1. **MÉDIA** a` conta 1 média.\n- `## Ressalvas (corrigidas)` também conta 1 média.\n- Correção sugerida: usar o título inteiro.").notes).toEqual({ high: 0, medium: 0, low: 1 });
+  // a list under a plural label still counts its items
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalvas baixas:**\n- a\n- b").notes.low).toBe(2);
+  // a heading that says them open still counts them
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n### Ressalvas\n1. **MÉDIA** a").notes.medium).toBe(1);
+  expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n### Ressalvas não corrigidas\n1. **MÉDIA** a").notes.medium).toBe(1);
   // not fixed: "não corrigida" in the label, or "corrigida" said of the text
   expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n- **Ressalva média (não corrigida):** x").notes.medium).toBe(1);
   expect(Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n- **Ressalva média (ainda não resolvida):** x").notes.medium).toBe(1);
