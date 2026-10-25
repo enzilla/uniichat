@@ -55,8 +55,17 @@ export const PRIORITIES: Priority[] = ["high", "normal", "low"];
 export type Timed = Dep & { title?: string; detail?: string; origin_url?: string | null; made: string; kind?: TaskKind | null; priority?: Priority | null; ready?: string | null };
 
 // as people write it: https or http or no scheme, www. or not, any case
-// (not part of another host or path: evil.com/github.com/... isn't one)
-export const PR_LINK = /(?<![\w.\/@-])(?:https?:\/\/)?(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/i;
+// (not part of another host or path: evil.com/github.com/... isn't one).
+// The char before it is matched, not looked behind (Safari before 16.4
+// can't parse a lookbehind, and web/app.js holds this): the link is m[1]
+// (pr_link)
+export const PR_LINK = /(?:^|[^\w.\/@-])((?:https?:\/\/)?(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)/i;
+
+// the first PR link in s, as written; null: none
+export function pr_link(s: string): string | null {
+  const m = PR_LINK.exec(s);
+  return m === null ? null : m[1];
+}
 
 // a task's kind: the one given, else as its title says (a PR link in
 // it, or opening with "Teste"); null: none

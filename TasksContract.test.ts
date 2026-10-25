@@ -415,9 +415,14 @@ test("a PR link is known as people write it: http, no scheme, www., any case; no
     expect(r.fail).toBe(true);
     expect(r.text).toContain("in its detail");
   }
-  for (const l of ["https://evil.com/github.com/a/b/pull/3", "https://notgithub.com/a/b/pull/3", "https://github.com/a/b/issues/3", "x@github.com/a/b/pull/3"]) {
+  for (const l of ["https://evil.com/github.com/a/b/pull/3", "evil.com/github.com/a/b/pull/3", "https://notgithub.com/a/b/pull/3", "notgithub.com/a/b/pull/3", "xgithub.com/a/b/pull/3", "https://github.com/a/b/issues/3", "x@github.com/a/b/pull/3", "a.github.com/a/b/pull/3", "github.com.evil.com/a/b/pull/3", "https://github.com.evil.com/a/b/pull/3"]) {
     expect(D.PR_LINK.test(l)).toBe(false);
+    expect(D.pr_link(l)).toBeNull();
   }
+  // the link alone, without the char before it (matched, not looked behind)
+  expect(D.pr_link("ver (github.com/a/b/pull/3)")).toBe("github.com/a/b/pull/3");
+  expect(D.pr_link("Mesclar HTTPS://WWW.GitHub.com/a/b/pull/3 hoje")).toBe("HTTPS://WWW.GitHub.com/a/b/pull/3");
+  expect(D.pr_link("https://github.com/a/b/pull/3")).toBe("https://github.com/a/b/pull/3");
   expect(T.tasks_load(dir).tasks.length).toBe(0);
 });
 

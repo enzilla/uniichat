@@ -859,11 +859,11 @@ export function pr_sound(t: { title: string; detail?: string; assignee?: Assigne
   if (unii ? t.kind === "pr" : Deps.kind_of({ id: "", state: "open", made: "", title: t.title, kind: t.kind }) === "pr") {
     return "A PR's approval (kind pr" + (t.kind === "pr" ? "" : ", as its title's PR link says") + ") needs prs: [{url: the GitHub pull link, head: the commit verified (7 to 40 hex), verdict, verifier, notes: [{sev, text}], untested: [...]}]. Refused: no PR given with its link and head.";
   }
-  const link = unii ? null : (Deps.PR_LINK.exec(t.title) ?? Deps.PR_LINK.exec(t.detail ?? ""));
+  const link = unii ? null : (Deps.pr_link(t.title) ?? Deps.pr_link(t.detail ?? ""));
   if (link === null) {
     return null;
   }
-  return "This task cites a PR (" + link[0] + ") in its " + (Deps.PR_LINK.test(t.title) ? "title" : "detail") + ": whatever its kind, a task of the user's that cites a PR goes with prs: [{url, head (the commit verified, 7 to 40 hex), verdict, verifier, notes, untested}]. Refused: no PR given with its link and head. (Drop the link if the PR isn't what it's about.)";
+  return "This task cites a PR (" + link + ") in its " + (Deps.PR_LINK.test(t.title) ? "title" : "detail") + ": whatever its kind, a task of the user's that cites a PR goes with prs: [{url, head (the commit verified, 7 to 40 hex), verdict, verifier, notes, untested}]. Refused: no PR given with its link and head. (Drop the link if the PR isn't what it's about.)";
 }
 
 // what Unii's tools hold a task to besides (R5): task_add needs its

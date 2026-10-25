@@ -66,8 +66,8 @@ const SPAN  = new RegExp([
   "\\[([^\\]\\n]+)\\]\\((<" + HREF + "[^>" + CTRL + "]*>|" + HREF + "(?:[^\\s()" + CTRL + "]|\\([^\\s()" + CTRL + "]*\\))*)" + /(?:\s+"[^"\n]*")?\)/.source,
   NAME.source,
   "\\*\\*(?!\\*)((?:" + IN + "|\\*(?!\\*))+?)\\*\\*",
-  "(?<![*\\w])\\*(?![*\\s])((?:" + IN + ")+?)\\*(?![\\w*])",
-  /(?<![^\s(])(https?:\/\/(?:[^\s<()\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\))*(?:[^\s<().,;:!?\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\)))/.source,
+  "\\*(?![*\\s])((?:" + IN + ")+?)\\*(?![\\w*])",
+  /(?:^|[\s(])(https?:\/\/(?:[^\s<()\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\))*(?:[^\s<().,;:!?\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\)))/.source,
   /<(https?:\/\/[^\s<>\x00-\x1f\x7f]+)>/.source,
 ].join("|"), "g");
 const LIST  = /^ {0,3}([-*+]|\d{1,9}[.)])(?=[ \t]|$)/;
@@ -100,18 +100,35 @@ export function Name(x: string): Span {
 // Parse
 // =====
 
-// the text between the matches of re, and each match as mark reads it
-function spans_by(s: string, re: RegExp, mark: (m: RegExpMatchArray) => Span): Span[] {
+// the text between the matches of re (global) that keep allows, and
+// each match as mark reads it; one keep refuses is tried again a char on,
+// as a lookbehind would (none here: Safari before 16.4 can't parse one,
+// and so would load no app.js at all). lead: how many chars a match
+// opens with that are only the char before it, text
+function spans_by(s: string, re: RegExp, mark: (m: RegExpMatchArray) => Span, keep: (s: string, m: RegExpExecArray) => boolean = () => true, lead: (m: RegExpExecArray) => number = () => 0): Span[] {
   const out: Span[] = [];
   let at = 0;
-  for (const m of s.matchAll(re)) {
-    const i = m.index ?? 0;
-    if (i > at) {
-      out.push(Text(s.slice(at, i)));
+  let from = 0;
+  for (;;) {
+    // set each time: mark may parse the match's inside with the same re
+    re.lastIndex = from;
+    const m = re.exec(s);
+    if (m === null) {
+      break;
     }
+    const i = m.index;
+    if (!keep(s, m)) {
+      from = i + 1;
+      continue;
+    }
+    const j = i + lead(m);
+    if (j > at) {
+      out.push(Text(s.slice(at, j)));
+    }
+    from = at = i + m[0].length;
     out.push(mark(m));
-    at = i + m[0].length;
   }
+  re.lastIndex = 0;
   if (at < s.length) {
     out.push(Text(s.slice(at)));
   }
@@ -119,7 +136,24 @@ function spans_by(s: string, re: RegExp, mark: (m: RegExpMatchArray) => Span): S
 }
 
 export function span_parse(s: string): Span[] {
-  return spans_by(s, SPAN, span_mark);
+  return spans_by(s, SPAN, span_mark, span_keep, span_lead);
+}
+
+// italics (m[6]) not after a "*" nor a word char (in SPAN a lookbehind
+// once, which Safari before 16.4 can't parse; checked here, cheap: their
+// inside holds no "*")
+function span_keep(s: string, m: RegExpExecArray): boolean {
+  if (m[6] === undefined || m.index === 0) {
+    return true;
+  }
+  return !/[*\w]/.test(s[m.index - 1]);
+}
+
+// a bare link (m[7]) only first or after a space or a "(": SPAN matches
+// that char with it (checked after, a link run long would be read again
+// from each char of it), and it's text
+function span_lead(m: RegExpExecArray): number {
+  return m[7] === undefined ? 0 : m[0].length - m[7].length;
 }
 
 function span_mark(m: RegExpMatchArray): Span {
@@ -405,6 +439,19 @@ function list_kind(l: string): string | null {
 
 // a table row's cells, split at each | but an escaped one (\|)
 function row_cells(line: string): Span[][] {
-  const cells = line.trim().replace(/^\||(?<!\\)\|$/g, "").split(/(?<!\\)\|/);
+  const t = line.trim();
+  const a = t.startsWith("|") ? 1 : 0;
+  const z = t.length > a && t.endsWith("|") && t[t.length - 2] !== "\\" ? t.length - 1 : t.length;
+  const u = t.slice(a, z);
+  // split at each | not after a \ (no lookbehind: Safari before 16.4)
+  const cells: string[] = [];
+  let from = 0;
+  for (let k = 0; k < u.length; k++) {
+    if (u[k] === "|" && (k === 0 || u[k - 1] !== "\\")) {
+      cells.push(u.slice(from, k));
+      from = k + 1;
+    }
+  }
+  cells.push(u.slice(from));
   return cells.map((c) => span_parse(c.trim().replace(/\\\|/g, "|")));
 }

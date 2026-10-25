@@ -498,8 +498,8 @@ var SPAN = new RegExp([
   "\\[([^\\]\\n]+)\\]\\((<" + HREF + "[^>" + CTRL + "]*>|" + HREF + "(?:[^\\s()" + CTRL + "]|\\([^\\s()" + CTRL + "]*\\))*)" + /(?:\s+"[^"\n]*")?\)/.source,
   NAME2.source,
   "\\*\\*(?!\\*)((?:" + IN + "|\\*(?!\\*))+?)\\*\\*",
-  "(?<![*\\w])\\*(?![*\\s])((?:" + IN + ")+?)\\*(?![\\w*])",
-  /(?<![^\s(])(https?:\/\/(?:[^\s<()\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\))*(?:[^\s<().,;:!?\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\)))/.source,
+  "\\*(?![*\\s])((?:" + IN + ")+?)\\*(?![\\w*])",
+  /(?:^|[\s(])(https?:\/\/(?:[^\s<()\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\))*(?:[^\s<().,;:!?\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\)))/.source,
   /<(https?:\/\/[^\s<>\x00-\x1f\x7f]+)>/.source
 ].join("|"), "g");
 var LIST = /^ {0,3}([-*+]|\d{1,9}[.)])(?=[ \t]|$)/;
@@ -520,24 +520,45 @@ function Text(x) {
 function Name(x) {
   return { $: "Name", x };
 }
-function spans_by(s, re, mark) {
+function spans_by(s, re, mark, keep = () => true, lead = () => 0) {
   const out = [];
   let at = 0;
-  for (const m of s.matchAll(re)) {
-    const i = m.index ?? 0;
-    if (i > at) {
-      out.push(Text(s.slice(at, i)));
+  let from = 0;
+  for (;; ) {
+    re.lastIndex = from;
+    const m = re.exec(s);
+    if (m === null) {
+      break;
     }
+    const i = m.index;
+    if (!keep(s, m)) {
+      from = i + 1;
+      continue;
+    }
+    const j = i + lead(m);
+    if (j > at) {
+      out.push(Text(s.slice(at, j)));
+    }
+    from = at = i + m[0].length;
     out.push(mark(m));
-    at = i + m[0].length;
   }
+  re.lastIndex = 0;
   if (at < s.length) {
     out.push(Text(s.slice(at)));
   }
   return out;
 }
 function span_parse(s) {
-  return spans_by(s, SPAN, span_mark);
+  return spans_by(s, SPAN, span_mark, span_keep, span_lead);
+}
+function span_keep(s, m) {
+  if (m[6] === undefined || m.index === 0) {
+    return true;
+  }
+  return !/[*\w]/.test(s[m.index - 1]);
+}
+function span_lead(m) {
+  return m[7] === undefined ? 0 : m[0].length - m[7].length;
 }
 function span_mark(m) {
   if (m[1] !== undefined) {
@@ -781,7 +802,19 @@ function list_kind(l) {
   return m === null || RULE.test(l) ? null : m[1].slice(-1);
 }
 function row_cells(line) {
-  const cells = line.trim().replace(/^\||(?<!\\)\|$/g, "").split(/(?<!\\)\|/);
+  const t = line.trim();
+  const a = t.startsWith("|") ? 1 : 0;
+  const z = t.length > a && t.endsWith("|") && t[t.length - 2] !== "\\" ? t.length - 1 : t.length;
+  const u = t.slice(a, z);
+  const cells = [];
+  let from = 0;
+  for (let k = 0;k < u.length; k++) {
+    if (u[k] === "|" && (k === 0 || u[k - 1] !== "\\")) {
+      cells.push(u.slice(from, k));
+      from = k + 1;
+    }
+  }
+  cells.push(u.slice(from));
   return cells.map((c) => span_parse(c.trim().replace(/\\\|/g, "|")));
 }
 
@@ -926,7 +959,7 @@ var KINDS = ["pr", "decision", "test", "action", "restart", "info"];
 var H = 60 * 60 * 1000;
 var LATE_BY = { pr: 24 * H, decision: 72 * H, test: 2 * H, action: 24 * H, restart: 24 * H, info: Infinity };
 var PRIORITIES = ["high", "normal", "low"];
-var PR_LINK = /(?<![\w.\/@-])(?:https?:\/\/)?(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/i;
+var PR_LINK = /(?:^|[^\w.\/@-])((?:https?:\/\/)?(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)/i;
 function kind_of(t) {
   if (t.kind != null && KINDS.includes(t.kind)) {
     return t.kind;
