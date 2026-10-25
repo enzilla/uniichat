@@ -1298,6 +1298,31 @@ function desk_step(ids, at, by) {
   }
   return ids[Math.max(0, Math.min(ids.length - 1, k + by))];
 }
+function desk_next(tasks, sel, q = "", ref = "") {
+  const now = desk_list(tasks, q, ref).find((g) => g.group === "now");
+  return now?.tasks.find((t) => t.id !== sel) ?? null;
+}
+var TASK_LATE = 24 * 60 * 60 * 1000;
+function task_late_said(t, blocked, now) {
+  const age = now - Date.parse(t.made);
+  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > TASK_LATE)) {
+    return "";
+  }
+  const h = Math.floor(age / 3600000);
+  return "atrasada há " + (h < 48 ? h + " h" : Math.floor(h / 24) + " d");
+}
+var LINKS = 8;
+function task_prs(t) {
+  const text = (t.detail ?? "") + " " + (t.origin_url ?? "");
+  const seen = new Map;
+  for (const m of text.matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/g)) {
+    const url = m[0];
+    if (!seen.has(url) && seen.size < LINKS) {
+      seen.set(url, m[2] + "#" + m[3]);
+    }
+  }
+  return [...seen].map(([url, label]) => ({ url, label }));
+}
 function task_whole(t) {
   const named = typeof t?.assignee === "string" && t.assignee !== "";
   if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined) {
@@ -1769,18 +1794,24 @@ function task_detail(t, desk) {
   const md = `<div class="md">${md_parse(t.detail).map(block_html).join("")}</div>`;
   return desk ? `<div class="detail">${md}</div>` : `<details><summary>Detalhes</summary>${md}</details>`;
 }
-function task_open_html(t, tasks, desk) {
+function task_open_html(t, tasks, desk, now = Date.now()) {
   const n = frees(tasks, t);
   const mine = t.assignee === "user";
-  const who = [...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...mine ? [] : [esc(assignee_said(t))]];
-  const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map((c) => task_button(t, "done", c, "opt", c)).join("")}</div>`;
+  const late = desk ? task_late_said(t, blocked_ids(tasks), now) : "";
+  const who = [...late === "" ? [] : [`<span class="late">${esc(late)}</span>`], ...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...mine ? [] : [esc(assignee_said(t))]];
+  const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map((c) => task_button(t, "done", c, "opt", c)).join("")}</div>`;
   const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
   const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
   const acts = `<div class="acts">${go}${task_button(t, "done", "Concluir", mine ? "done" : "done quiet")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
   const talk = task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
   const tag = desk ? "article" : "li";
-  return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${task_detail(t, desk)}${fields_html(t)}${opts}${note}${acts}${thread_html(t, desk)}</${tag}>`;
+  return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
+}
+function task_prs_html(t) {
+  const prs = task_prs(t);
+  const one = (p) => `<a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.label)}</a>`;
+  return prs.length === 0 ? "" : `<p class="prs"><span class="lead">${prs.length === 1 ? "PR" : "PRs"}:</span> ${prs.map(one).join(" ")}</p>`;
 }
 function task_closed_html(t, desk) {
   const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii ainda não viu"]];
@@ -1788,7 +1819,7 @@ function task_closed_html(t, desk) {
   if (!desk) {
     return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${acts}</li>`;
   }
-  return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
+  return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
 }
 function task_waiting_html(t, tasks, desk) {
   const whose = (u) => u === undefined || u.assignee === "user" ? "" : " (" + assignee_said(u) + ")";
@@ -1819,13 +1850,18 @@ function thread_read_html(t) {
   const thread = t.thread ?? [];
   return thread.length === 0 ? "" : `<section class="thread read"><p class="sub">Conversa (${thread.length})</p><ol>${thread.map(thread_msg_html).join("")}</ol></section>`;
 }
-function desk_html(tasks, q, ref, sel) {
+function desk_html(tasks, q, ref, sel, now = Date.now()) {
   const groups = desk_list(tasks, q, ref);
   const ids = groups.flatMap((g) => g.tasks.map((t) => t.id));
+  const blocked = blocked_ids(tasks);
   const row = (t, g) => {
     const n = g === "closed" || g === "waiting" ? 0 : frees(tasks, t);
+    const late = task_late_said(t, blocked, now);
+    const prs = g === "closed" ? [] : task_prs(t);
     const more = [
+      ...late === "" ? [] : [`<span class="late">${esc(late)}</span>`],
       ...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`],
+      ...prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`],
       ...task_talk_said(t) === "" || g === "closed" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`],
       ...t.assignee === "user" ? [] : [esc(assignee_said(t))],
       ...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`],
@@ -1839,9 +1875,10 @@ function desk_html(tasks, q, ref, sel) {
   const searched = q.trim() !== "" || ref !== "";
   const none = tasks.length === 0 ? "Nenhuma pendência. Quando o Unii precisar de você, ela aparece aqui." : searched && ids.length === 0 ? "Nenhuma pendência na busca." : "";
   const t = sel === null ? undefined : tasks.find((x) => x.id === sel);
-  const blocked = blocked_ids(tasks);
   const back = `<button class="back" type="button" data-desk-back aria-label="Voltar à lista">← Pendências</button>`;
-  const detail = t === undefined ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`] : [back, t.state !== "open" ? task_closed_html(t, true) : blocked.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true)];
+  const after = t === undefined || desk_group(t, blocked) === "now" ? null : desk_next(tasks, t.id, q, ref);
+  const next = after === null ? [] : [`<button class="next" type="button" data-desk="${esc(after.id)}">Próxima: <span class="id">${esc(after.id)}</span> ${esc(after.title)} →</button>`];
+  const detail = t === undefined ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`] : [back, t.state !== "open" ? task_closed_html(t, true) : blocked.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true, now), ...next];
   return { list: none === "" ? list : [...list, `<p class="none">${esc(none)}</p>`], detail, ids };
 }
 function fields_html(t) {
@@ -1855,13 +1892,14 @@ function fields_html(t) {
     const name = "f-" + t.id + "-" + f.id;
     const req = f.required ? ` <span class="req" title="Obrigatório">*</span>` : "";
     const legend = `<legend>${esc(f.label)}${req}</legend>`;
+    const must = f.required ? ` data-required="true"` : "";
     if (f.kind === "text") {
-      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text">${legend}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
+      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text"${must}>${legend}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
     }
     const type = f.kind === "multi" ? "checkbox" : "radio";
     const on = (c) => Array.isArray(v) ? v.includes(c) : v === c;
     const boxes = f.choices.map((c) => `<label><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> ${esc(c)}</label>`).join("");
-    return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}">${legend}<div class="picks">${boxes}</div></fieldset>`;
+    return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}"${must}>${legend}<div class="picks">${boxes}</div></fieldset>`;
   };
   return `<div class="fields">${fields.map(one).join("")}</div>`;
 }
@@ -2368,6 +2406,8 @@ function click(ev) {
     const made = JSON.parse(a);
     if (made.$ === "TaskSay") {
       task_say(made.task, el.closest("#tasks, #desk") ?? $("#tasks"));
+    } else if (made.$ === "Task" && made.state === "done" && task_missing(el)) {
+      return;
     } else {
       act(task_act(el, made));
     }
@@ -2435,12 +2475,31 @@ function task_fields(item) {
   }
   return out;
 }
+function task_missing(el) {
+  const item = el.closest("[data-task]");
+  const sets = item === null ? [] : [...item.querySelectorAll("fieldset.field[data-required]")];
+  const empty = (set) => {
+    const v = field_value(set);
+    return Array.isArray(v) ? v.length === 0 : String(v).trim() === "";
+  };
+  const missing = sets.filter(empty);
+  sets.forEach((set) => missing.includes(set) ? set.setAttribute("aria-invalid", "true") : set.removeAttribute("aria-invalid"));
+  if (missing.length === 0) {
+    return false;
+  }
+  missing[0].scrollIntoView({ block: "center", behavior: "smooth" });
+  missing[0].querySelector("input, textarea")?.focus({ preventScroll: true });
+  const said = missing.map((set) => "“" + (set.querySelector("legend")?.firstChild?.textContent ?? "").trim() + "”").join(", ");
+  toast("Para concluir, responda " + said + ". Nada foi enviado.");
+  return true;
+}
 function task_draft(ev) {
   const set = ev.target.closest("fieldset.field");
   const item = set?.closest("[data-task]");
   if (set === null || set === undefined || item === null || item === undefined) {
     return;
   }
+  set.removeAttribute("aria-invalid");
   act({ $: "TaskDraft", task: item.dataset.task, fields: { [set.dataset.field]: field_value(set) } });
 }
 function task_say(task, root) {
