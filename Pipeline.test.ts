@@ -588,8 +588,10 @@ test("verdict_of: a paragraph labeled by a severity, its fix qualified, and a qu
   ]) {
     expect([t, juicy_para(t), juicy_list(t)]).toEqual([t, { high: 0, medium: 2, low: 0 }, { high: 0, medium: 1, low: 1 }]);
   }
-  // a severity in bold that says no state, in a paragraph: none, as before
-  expect(juicy_para("**Média** dos testes caiu")).toEqual({ high: 0, medium: 1, low: 0 });
+  // a severity in bold, then its text, in a paragraph: a note, as in a list
+  // (MagicWhale 2, 25/10); a sentence that only opens with it is a false
+  // alarm, the safe side
+  expect(juicy_para("**Média** dos testes caiu")).toEqual({ high: 0, medium: 2, low: 0 });
   // the next line, an item's indented one or a paragraph's, qualifies it
   for (const t of ["**Ressalva baixa (corrigida em abc1234)**\n   — mas o Safari falha", "**Ressalva baixa (corrigida em abc1234)**\n   falta teste no iPhone"]) {
     expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 2 }]);
@@ -1031,4 +1033,56 @@ test("verdict_of: the next line goes on the fixed label's sentence or says somet
     expect([t, juicy_para(t)]).toEqual([t, { high: 0, medium: 1, low: 1 }]);
   }
   expect(juicy_para("**Ressalva baixa (corrigida em abc1234)**\nO parser lia mal a lista.")).toEqual({ high: 0, medium: 1, low: 0 });
+});
+
+// MagicWhale (V17, 25/10): a paragraph, bold or not, numbered or not, as a list's item
+const v17_list = (t: string) => Pipeline.verdict_of(`Veredito: aprovado\n\n**Ressalvas:**\n- ${t}\n\n**Não testado:** iPhone\n`).notes;
+const v17_num = (t: string) => Pipeline.verdict_of(`Veredito: aprovado\n\n**Ressalvas:**\n1. ${t}\n\n**Não testado:** iPhone\n`).notes;
+const v17_para = (t: string) => Pipeline.verdict_of(`Veredito: aprovado\n\n${t}\n\n**Não testado:** iPhone\n`).notes;
+const v17 = (t: string) => [v17_list(t), v17_num(t), v17_para(t)].map((n) => n.high + n.medium + n.low);
+
+test("verdict_of: a paragraph labeled by a note's severity, its fix qualified, counts as in a list (MagicWhale 1, 25/10)", () => {
+  expect(v17("Ressalva baixa corrigida, falta o iPhone")).toEqual([1, 1, 1]);
+  expect(v17("Ressalva baixa corrigida; o Safari quebra")).toEqual([1, 1, 1]);
+  expect(v17("Ressalva baixa resolvida, não testada no Safari")).toEqual([1, 1, 1]);
+  expect(v17("Ressalva baixa corrigida na linha 42")).toEqual([1, 1, 1]);
+  // its severity is the label's
+  expect(v17_para("Ressalva média corrigida, falta o iPhone")).toEqual({ high: 0, medium: 1, low: 0 });
+  // only a reference after it: fixed, in every form
+  for (const t of ["Ressalva baixa corrigida em abc1234", "Ressalva baixa corrigida (item 3)", "Ressalva baixa corrigida em Pipeline.ts", "Ressalva baixa corrigida e testada no Safari 17", "Ressalva baixa resolvida (PR #19)"]) {
+    expect([t, v17(t)]).toEqual([t, [0, 0, 0]]);
+  }
+});
+
+test("verdict_of: a bold severity with its text, in a paragraph, counts as in a list (MagicWhale 2, 25/10)", () => {
+  expect(v17("**Média** o botão some")).toEqual([1, 1, 1]);
+  expect(v17_para("**Média** o botão some")).toEqual({ high: 0, medium: 1, low: 0 });
+  // and a list's item under no heading on notes, as the paragraph
+  expect(Pipeline.verdict_of("Veredito: aprovado\n\n- **Média** o botão some\n").notes).toEqual({ high: 0, medium: 1, low: 0 });
+  expect(v17_para("**Alta** — o auth aceita sem assinatura")).toEqual({ high: 1, medium: 0, low: 0 });
+  expect(v17_para("Ressalva baixa o botão some")).toEqual({ high: 0, medium: 0, low: 1 });
+  // a bold title that goes on, or a label alone, isn't one
+  expect(v17_para("**Baixa cobertura** no iPhone")).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(v17_para("**Média**")).toEqual({ high: 0, medium: 0, low: 0 });
+  // under another heading, as an item there: not a note
+  expect(Pipeline.verdict_of("Veredito: aprovado\n\n**Não testado:**\n**Alta** carga real no iPhone\n").notes).toEqual({ high: 0, medium: 0, low: 0 });
+  expect(Pipeline.verdict_of("Veredito: aprovado\n\n**Não testado:**\n- **Alta** carga real no iPhone\n").notes).toEqual({ high: 0, medium: 0, low: 0 });
+  // fixed: none
+  expect(v17("**Média** (corrigida em abc1234)")).toEqual([0, 0, 0]);
+});
+
+test("verdict_of: after ':' the text is the note's own; open only if it goes on the state with what's left (MagicWhale 3, 25/10)", () => {
+  for (const t of ["**Ressalva baixa (corrigida):** mas falha no Safari", "**Média** (corrigida em abc1234): mas falha no Safari", "**Ressalva baixa (corrigida em abc1234)**: falta o iPhone", "**Ressalva baixa (corrigida):** e continua quebrando no Safari", "**Ressalva baixa (corrigida):** sem teste no iPhone", "**Ressalva baixa (corrigida):** não testada no Safari", "**Ressalva baixa (corrigida):** ainda falha no iOS", "Ressalva baixa (corrigida): mas falha no Safari"]) {
+    expect([t, v17(t)]).toEqual([t, [1, 1, 1]]);
+  }
+  // a description after ':' (a real report's, CrispyWasp: "2. **Ressalva 1, resolvida:** quando o Unii edita…")
+  for (const t of ["**Média** (corrigida em abc1234): texto", "**Ressalva baixa (corrigida em abc1234)**: texto", "**Ressalva baixa (corrigida):** só o título mudava", "**Ressalva 1, resolvida:** quando o Unii edita o detalhe, a resolução fica", "**Ressalva baixa (corrigida):** O título não renderizava."]) {
+    expect([t, v17(t)]).toEqual([t, [0, 0, 0]]);
+  }
+});
+
+test("verdict_of: references after a fixed label stay fixed in list, numbered and paragraph (MagicWhale, 25/10)", () => {
+  for (const t of ["Ressalva baixa corrigida em abc1234", "**Média** (corrigida em abc1234)", "**Ressalva baixa (corrigida)** (item 2)", "**Ressalva baixa (corrigida)** (PR #19)", "**Ressalva baixa (corrigida)** bun 262/0", "**Ressalva baixa (corrigida)** CI verde", "**Ressalva baixa (corrigida)** testada no iPhone", "**Ressalva baixa (corrigida)** e testada em def5678"]) {
+    expect([t, v17(t)]).toEqual([t, [0, 0, 0]]);
+  }
 });
