@@ -399,7 +399,7 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     // abc1234)**\n   — mas o Safari falha", BraveTiger 3, 25/10)
     const after = lines[at + 1] ?? "";
     const goes_on = after.trim() !== "" && !/^\s*(?:\d+[.)]|[-*•])\s/.test(after) && (item === null ? raw.trim() !== "" && !/^\s*(?:#|\*\*|__|>|\|)/.test(after) : /^\s/.test(after));
-    const next_open = goes_on && !raw.includes(":") && open_after(fold(after.replace(/[*_`]/g, "")));
+    const next_open = goes_on && !raw.includes(":") && open_next(after);
     // an item that opens with its label in code, a severity or a note's
     // label with one, then ":" or a dash ("1. `MÉDIA`: a", "- `Ressalva 1
     // (média)`: b", SleepyMoose, 25/10), says it: the label is not cited
@@ -590,34 +590,68 @@ const FIXED_WORD = /\b(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
 // corrigida**", JuicyTuna, 25/10)
 const STATUS = /^[\s>#*_`\[(]*(?:(?:todas?|tudo|ambas)\s+)?(?:(?:as|os|a|o)\s+(?:(?:\d+|duas|tres|quatro|cinco)\s+)?)?(?:(?:ressalvas?|observac(?:ao|oes)|notas?)\b[\s*_`]*)?(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?(?:\s*(?:,|\be\b)\s*[a-z]?\d+[a-z]?)*\b[\s*_`]*)?(?:[(\[,;:—–.)-]\s*)*(?:(?:altas?|high|medias?|medium|baixas?|low)\b(?:\s*(?:,|\be\b|\bou\b)\s*(?:altas?|medias?|baixas?)\b)*)?[\s*_`()\[\],;:—–.-]*(?:(?:ja|foram|estao|foi|esta|todas?|tudo|ambas|as|os|duas|tres|quatro|cinco|\d+)\s+)*$/;
 const NOT_FIXED = /\b(?:nao|not|unfixed)\s+(?:\w+\s+){0,2}(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
-// what follows a state that says fixed and goes on qualifying it keeps the
-// note open (open_after): a word that limits it, first ("… mas ainda
-// falha", "… exceto no Safari", "… apenas no Chromium", "… ainda não
-// verificada", "… falta teste", "(mas não no iOS)"), or, after a
-// connector (",", ";", a dash, a parenthesis, "e"), a word that says
-// something is left ("… e falta teste", "… e o teste falha", "(aberta)",
-// "(a confirmar)", "(iOS desconhecido)", "… e outra coisa", JuicyTuna).
-// Text that only describes the note or its fix doesn't, connector or not
-// ("… não renderizava o título", "… sem efeito colateral", "… só o título
-// mudava", "… e o botão agora aparece", "…, o botão não aparecia", "(item
-// 2)", "(commit abc1234)", "(PR #19)", "[testada]", "… e verificada",
-// "(testada no iPhone)", BraveTiger, 25/10), as before round 12. "só" or
-// "apenas" limits only where or how much ("só no Safari", "apenas a
-// primeira", "só em parte"), not a description ("só o título mudava");
-// "não" or "sem" only a check ("não testada", "sem teste"), not the bug
-// ("não renderizava", "sem efeito colateral"). On a folded text
-const OPEN_LEAD = /^[\s*_`]*(?:[(\[,;]\s*|[—–-]\s*)*(?:(?:e|and)\s+)?(?:(?:mas|porem|contudo|entretanto|todavia|exceto|salvo|menos|ainda|falta|faltam|faltando|pendente|but|except|still|missing|pending)\b|(?:so|somente|apenas|only)(?:\s+(?:no|na|nos|nas|em|para|com|ao|a\s+primeira|o\s+primeiro|as\s+primeiras|os\s+primeiros|parte|parcial\w*|localmente|in|on|for|partly)\b|\s*(?:[).,;\]]|$)))/;
-const OPEN_CONNECT = /^[\s*_`]*(?:[(\[,;]|[—–-]|(?:e|and)\b)/;
-// a check not done or a part left: may open the text too ("… sem teste",
-// "… não testada no iPhone", "… parcialmente")
-const OPEN_CHECK = String.raw`(?:nao|sem)\s+(?:foi\s+|esta\s+|e\s+)?(?:testad|verificad|conferid|validad|confirmad|cobert|corrigid|resolvid)\w*|sem\s+(?:testes?|cobertura|verificac\w*|confirmac\w*)|parcia\w*|em\s+parte|incomplet\w*|untested|unverified|partial\w*|not\s+(?:tested|verified|fixed)`;
-const OPEN_CHECK_LEAD = new RegExp(String.raw`^[\s*_\x60]*(?:[(\[,;]\s*|[—–-]\s*)*(?:(?:e|and)\s+)?(?:` + OPEN_CHECK + String.raw`)\b`);
-// "aberta" says the note open alone or after a verb ("(aberta)", "segue
-// aberta"), not of a thing ("a modal aberta fecha"); "apenas" at the end
-// limits what it follows ("(testada no Chromium apenas)")
-const OPEN_WORD = new RegExp(String.raw`(?:^|[(\[,;]\s*|\b(?:segue|seguem|continua|continuam|fica|ficam|ficou|permanece|permanecem|esta|estao|ainda)\s+)abert[ao]s?\b|\b(?:apenas|somente|so|only)\s*(?:[).,;\]]|$)|\b(?:falta|faltam|faltando|pendentes?|em\s+aberto|falha|falham|quebra|quebram|desconhecid\w*|a\s+confirmar|metade|limitad\w*|restant\w*|outr[ao]s?\s+(?:coisas?|problemas?|falhas?|bugs?|pontos?|casos?)|fails?|missing|pending|` + OPEN_CHECK + String.raw`)\b`);
+// what follows a state that says fixed keeps the note open (open_after)
+// unless it is only a reference to the fix or to its check (refs_only):
+// a hash, a token with a digit, "#", "." or ":" ("#19", "PR #19",
+// "Pipeline.ts", "bun 262/0"), "(item 2)", "CI verde", where it was
+// tested ("no iPhone"), "e verificada", "e testada em def5678",
+// "(testada no Chromium)", "[testada]", joined by ",", ";", "e", a dash
+// or a parenthesis. Any other word keeps it open, so no list of caveats
+// is needed: "… e continua quebrando no Safari", "… e persiste no iOS",
+// "(regrediu)", "… no entanto falta o teste", "… embora falte teste", "(em
+// andamento)", "(a verificar)", "… sem testar no iPhone", "… sem CI",
+// "(sem iPhone)", "— TODO" (GentleShrimp, 25/10), as "… mas ainda
+// falha", "… exceto no Safari", "… apenas no Chromium", "… (aberta)",
+// "(iOS desconhecido)". The safe side: a text that only describes the
+// note or its fix ("… não renderizava o título", "… e o botão agora
+// aparece") keeps it open too, a false alarm, not a note lost; so does
+// "parcialmente" or "testada só no Chromium" (a limit said). On a folded
+// text
+function refs_only(text: string): boolean {
+  let t = text.replace(/[*_`]/g, "").trim();
+  while (t !== "") {
+    // a parenthesis (or brackets) is a reference if what it holds is
+    if (t[0] === "(" || t[0] === "[") {
+      let d = 0;
+      let k = 0;
+      for (; k < t.length; k++) {
+        d += t[k] === "(" || t[k] === "[" ? 1 : t[k] === ")" || t[k] === "]" ? -1 : 0;
+        if (d === 0) {
+          break;
+        }
+      }
+      if (k >= t.length || t.slice(1, k).trim() === "" || !refs_only(t.slice(1, k))) {
+        return false;
+      }
+      t = t.slice(k + 1).trim();
+      continue;
+    }
+    const piece = REF_ONLY_PIECES.map((r) => r.exec(t)).find((m) => m !== null && m[0] !== "");
+    if (piece === undefined || piece === null) {
+      return false;
+    }
+    t = t.slice(piece[0].length).trim();
+  }
+  return true;
+}
 function open_after(text: string): boolean {
-  return OPEN_LEAD.test(text) || OPEN_CHECK_LEAD.test(text) || (OPEN_CONNECT.test(text) && OPEN_WORD.test(text));
+  return !refs_only(text);
+}
+// the line after a label that says fixed, without ":": its text is the
+// note's own, a description, unless it goes on the label's sentence (a
+// connector, punctuation or a lower case word first: "…**\n   — mas o
+// Safari falha", "…**\n   e continua quebrando"), read as open_after, or
+// says something left ("…**\nMas o Safari ainda falha.", "…**\nO teste
+// falha no iPhone.", BraveTiger 3, 25/10). Not on a folded text: its
+// case says if it goes on
+const NEXT_PENDING = /^(?:mas|porem|contudo|entretanto|todavia|no\s+entanto|embora|exceto|salvo|ainda|falta|faltam|pendente|todo|but|except|still|missing|pending)\b|\b(?:falta|faltam|faltando|falte|faltem|pendentes?|em\s+aberto|falha|falham|falhando|quebra|quebram|quebrando|persiste|persistem|regrediu|regride|regressao|continua|continuam|nao\s+(?:funciona|testad|verificad|validad|consegui)\w*|sem\s+(?:teste|testar|verificar|validac|ci\b|cobertura)\w*|parcia\w*|em\s+parte|incomplet\w*|todo\b|fixme|a\s+(?:revisar|verificar|confirmar|testar)|em\s+andamento|desconhecid\w*|fails?|failing|broken|missing|pending|untested|unverified)\b/;
+function open_next(line: string): boolean {
+  const t = line.replace(/[*_`]/g, "").trim();
+  const f = fold(t);
+  if (/^(?:[\p{Ll}(\[,;.—–-])/u.test(t)) {
+    return open_after(f);
+  }
+  return NEXT_PENDING.test(f);
 }
 function fixed(label: string): boolean {
   const m = FIXED_WORD.exec(label);
@@ -669,7 +703,7 @@ function fixed(label: string): boolean {
 const HASH = String.raw`(?=[a-f]*\d)[0-9a-f]{7,40}\b`;
 const TOKEN = String.raw`(?!\d+\/\d+(?![\w#:\/-]|\.\w))(?=[\w#./:-]*(?:\d|#|[.:]\w))[\w#./:-]*[\w#/]`;
 const ENV = String.raw`(?:iphone|ipad|ios|safari|chromium|chrome|firefox|webkit|android|macos|linux|windows|navegador|browser|desktop|celular|pwa)(?:\s+\d+(?:\.\d+)*)?\b`;
-const REF = String.raw`(?:` + HASH + String.raw`|ci\b|` + ENV + String.raw`|` + TOKEN + String.raw`)`;
+const REF = String.raw`(?:` + HASH + String.raw`|ci(?:\s+(?:verde|ok|passou|passando|green|passing|passed))?\b|` + ENV + String.raw`|` + TOKEN + String.raw`)`;
 const REF_NOUN = String.raw`(?:commit|commits|head|hash|pr|prs|pull|branch|issue|teste|testes|test|tests|bun|arquivo|arquivos|file|files|build|run|job|item|itens|ponto|pontos|ressalva|ressalvas)`;
 const ART = String.raw`(?:(?:o|a|os|as|the)\s+)?`;
 const REF_ONE = ART + String.raw`(?:(?:` + REF_NOUN + String.raw`\s+){1,2}(?:\d+\/\d+|` + REF + String.raw`)|` + REF + String.raw`)(?:\s+(?:casos|testes|frases|relatos|cenarios|bordas))?`;
@@ -683,6 +717,16 @@ const ALL_FIXED = new RegExp(
     fix_where("em|no|na|nos|nas|pelo|pela|por|com|in|on|by|at|with") +
     String.raw`)?\s*\.?\s*$`,
 );
+
+// the pieces of a text that only refers (refs_only)
+const REF_ONLY_PIECES = [
+  /^(?:[.,;]+|[—–-]+|(?:e|and)\b)/,
+  /^(?:corrigid|resolvid|sanad|fixed\b|resolved\b)\w*/,
+  /^(?:testad|verificad|conferid|validad|cobert|tested\b|verified\b)\w*/,
+  /^(?:ja|tambem|depois|agora|ok|localmente|locally|also|now)\b/,
+  /^(?:com|with)\s+(?:testes?|tests?|cobertura|coverage)\b/,
+  new RegExp(String.raw`^(?:(?:ver|veja|see)\s+)?(?:(?:em|no|na|nos|nas|do|da|dos|das|de|pelo|pela|pelos|pelas|por|via|com|in|on|of|by|at|with)\s+)?(?:` + REFS + String.raw`)`),
+];
 
 // the start of a line labeled a note with its severity, to the severity:
 // "**Ressalva 1 (média", "### Ressalva 2 — baixa", "Observação alta";
@@ -759,15 +803,24 @@ function note_state(f: string): "fixed" | "open" | "none" {
   // after a colon, the text is the note's own ("**Ressalva baixa
   // (corrigida):** só o título mudava"); else, what qualifies the state
   // keeps it open (open_after)
-  const colon = sep !== null && sep[0] === ":";
+  const colon = sep !== null && (sep[0] === ":" || /^[*_`]*\s*:/.test(f.slice(end + sep[0].length)));
   if (fixed(label)) {
     return colon || !open_after(dashed) ? "fixed" : "open";
   }
   if (paren !== null && fixed(label + " " + paren[0])) {
-    return !open_after(text.slice(paren[0].length)) ? "fixed" : "open";
+    // after a ':' that follows it, the text is the note's own
+    const rest = text.slice(paren[0].length);
+    return /^\s*:/.test(rest) || !open_after(rest) ? "fixed" : "open";
   }
   if (named !== null && text !== "" && ALL_FIXED.test(text)) {
     return "fixed";
+  }
+  // a numbered or labeled note whose text opens with its state, with no
+  // bold ("Ressalva 2 corrigida, falta o iPhone", "Ressalva 1 corrigida
+  // exceto no Safari", GentleShrimp 2, 25/10): as with bold, fixed only if
+  // what follows only refers (refs_only), else open
+  if (named !== null && /^(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/.test(text)) {
+    return refs_only(text) ? "fixed" : "open";
   }
   return states(label) || (paren !== null && states(label + " " + paren[0])) ? "open" : "none";
 }

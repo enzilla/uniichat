@@ -422,7 +422,7 @@ test("verdict_of: a label alone of one note and its severity heads its details, 
   // a sentence in bold that says "corrigida" isn't a label: the item is a note (LongCow's own report)
   expect(of("**Ressalvas, todas baixas:**\n1. **Anula nota.** x\n2. **Mantém aberta uma nota que já estava corrigida.** y\n3. **NeatWombat.** z")).toEqual({ high: 0, medium: 0, low: 3 });
   // a label that names the note still says it fixed
-  expect(of("**Ressalvas:**\n1. **MÉDIA (corrigida)** x\n2. Baixa: y")).toEqual(one);
+  expect(of("**Ressalvas:**\n1. **MÉDIA (corrigida):** x\n2. Baixa: y")).toEqual(one);
 });
 
 test("verdict_of: 'corrigida' is a label's state only after a note's name, number and severity; a title that says more keeps the note (SweetSheep 1, 25/10)", () => {
@@ -440,8 +440,9 @@ test("verdict_of: 'corrigida' is a label's state only after a note's name, numbe
   expect(of("1. **Média: texto da nota corrigida** x")).toEqual({ high: 0, medium: 1, low: 1 });
   // the label's state: fixed
   for (const t of [
-    "1. **MÉDIA (corrigida)** x", "1. **Ressalva média (resolvida):** x", "1. **Ressalva 1 (média, corrigida):** x", "1. **A1 (ALTA, corrigida)** x",
-    "1. Média — corrigida: x", "1. **Ressalva B2 — baixa, corrigida em abc1234** x", "1. **Ressalvas 1 e 2 (baixas, corrigidas)** x",
+    "1. **MÉDIA (corrigida):** x", "1. **Ressalva média (resolvida):** x", "1. **Ressalva 1 (média, corrigida):** x", "1. **A1 (ALTA, corrigida)**: x",
+    "1. Média — corrigida: x", "1. **Ressalva B2 — baixa, corrigida em abc1234**: x", "1. **Ressalvas 1 e 2 (baixas, corrigidas)**: x",
+    "1. **MÉDIA (corrigida)**", "1. **A1 (ALTA, corrigida)** (commit abc1234)",
   ]) {
     expect([t, of(t)]).toEqual([t, one]);
   }
@@ -478,7 +479,7 @@ const juicy_list = (t: string) => Pipeline.verdict_of(`**Veredito: APROVADO com 
 const juicy_para = (t: string) => Pipeline.verdict_of(`**Veredito: APROVADO com ressalvas.**\n\n${t}\n\n**Ressalva média: outra coisa aberta.**\n`).notes;
 
 test("verdict_of: a note's number may end in '.' or ')' before its fixed severity (JuicyTuna 1, 25/10)", () => {
-  for (const t of ["**1. Média corrigida.** x", "**1. Média, corrigida.** x", "**1) Média corrigida** x", "**1 — Média corrigida** x", "**A1. Alta, resolvida.** x"]) {
+  for (const t of ["**1. Média corrigida.**: x", "**1. Média, corrigida.**", "**1) Média corrigida**: x", "**1 — Média corrigida** (abc1234)", "**A1. Alta, resolvida.**: x"]) {
     expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 1 }]);
   }
   // a title that says more still keeps it (SweetSheep 1)
@@ -499,8 +500,8 @@ test("verdict_of: what qualifies a fixed state after it keeps the note open (Jui
   // text that only describes the note, or follows a ':', doesn't
   for (const t of [
     "**Ressalva baixa (corrigida em abc1234)**", "**Ressalva baixa** (corrigida em abc1234)", "### Ressalva baixa (corrigida em abc1234)",
-    "**Ressalva baixa (corrigida em abc1234)**. O parser lia mal", "**Ressalva baixa (corrigida em abc1234):** o parser lia mal",
-    "**Ressalva 1 (média, corrigida):** só o título mudava", "**MÉDIA (corrigida)** o parser",
+    "**Ressalva baixa (corrigida em abc1234)**.", "**Ressalva baixa (corrigida em abc1234):** o parser lia mal",
+    "**Ressalva 1 (média, corrigida):** só o título mudava", "**MÉDIA (corrigida):** o parser",
     // where it was tested, in a parenthesis, is a reference, as "corrigida e
     // testada no iPhone" (LongCow; BraveTiger 1, 25/10)
     "**Ressalva baixa** (corrigida em abc1234) (testada no iPhone)",
@@ -510,7 +511,7 @@ test("verdict_of: what qualifies a fixed state after it keeps the note open (Jui
 });
 
 test("verdict_of: a label of only a severity is fixed by its parenthesis too (JuicyTuna 3, 25/10)", () => {
-  for (const t of ["**Média** (corrigida em abc1234)", "**Média** (corrigida em abc1234) x", "**Baixa** (corrigida)", "**Média, resolvida em abc1234**"]) {
+  for (const t of ["**Média** (corrigida em abc1234)", "**Média** (corrigida em abc1234) (PR #19)", "**Baixa** (corrigida)", "**Média, resolvida em abc1234**"]) {
     expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 1 }]);
   }
   for (const t of ["**Média** (corrigida em parte)", "**Média** (corrigida em abc1234), mas falta o iPhone", "**Média, não resolvida**"]) {
@@ -537,15 +538,14 @@ test("verdict_of: a title without severity under a list without one isn't a note
   expect(Pipeline.verdict_of("Veredito: aprovado.\n\n**Baixa:**\n\n**Baixas:**\n").notes).toEqual({ high: 0, medium: 0, low: 0 });
 });
 
-test("verdict_of: text that only describes the note or its fix after its fixed label doesn't keep it open (BraveTiger 1, 25/10)", () => {
+test("verdict_of: only a reference after its fixed label, or the note's text after ':', doesn't keep it open (BraveTiger 1, 25/10; GentleShrimp 1, 25/10)", () => {
   const fixed_list = { high: 0, medium: 0, low: 1 };
   const fixed_para = { high: 0, medium: 1, low: 0 };
   for (const label of ["**Ressalva baixa (corrigida em abc1234)**", "**Ressalva 1 (corrigida em abc1234)**", "**Média** (corrigida em abc1234)"]) {
     for (const after of [
-      " não renderizava o título", " sem efeito colateral", " só o título mudava", " e o botão agora aparece", ", o botão não aparecia",
-      " (item 2)", " (commit abc1234)", " (PR #19)", " [testada]", " e verificada", " e testada em def5678", " — só o título mudava",
-      " — sem o ícone o botão sumia", " — e o botão agora aparece", " — o botão não aparecia", ": o botão não aparecia", ". O botão não aparecia.",
-      " e a modal aberta fecha", " (bun 262/0)", " o parser falhava ao ler",
+      " (item 2)", " (commit abc1234)", " (PR #19)", " [testada]", " e verificada", " e testada em def5678", ": o botão não aparecia",
+      " (bun 262/0)", " #19", " no PR #19", " e testada no iPhone", " (testada no Chromium)", ", CI verde", " — ver abc1234", " e depois testada",
+      " com teste", ".", " (ok)", ": o parser falhava, mas agora lê",
     ]) {
       const t = label + after;
       expect([t, juicy_list(t)]).toEqual([t, fixed_list]);
@@ -978,4 +978,57 @@ test("the page escapes what it shows (a label, a title, a ref)", () => {
   expect(html).toContain("&lt;b&gt;x&lt;/b&gt;");
   expect(html).toContain("sem link: estado desconhecido");
   expect(Html.pipeline_html(null, NOW, "Sem conexão.")).toContain("Sem conexão.");
+});
+
+test("verdict_of: what follows a fixed label is open unless it only refers; the safe side (GentleShrimp 1, 25/10)", () => {
+  const open = [{ high: 0, medium: 0, low: 2 }, { high: 0, medium: 1, low: 1 }];
+  for (const label of ["**Ressalva baixa (corrigida em abc1234)**", "**Ressalva 1 (corrigida em abc1234)**", "**Média** (corrigida em abc1234)", "**Ressalva baixa** (corrigida)"]) {
+    for (const after of [
+      // GentleShrimp 1: qualifiers outside the old list of words
+      " e continua quebrando no Safari", " e persiste no iOS", " e o problema persiste", " (regrediu)", " e regrediu no Safari",
+      " e não funciona no Safari", " no entanto falta o teste", " embora falte teste", " e continua falhando", " e a revisar", " (em andamento)",
+      " (a verificar)", " sem verificar", " sem testar no iPhone", " sem validação", " não consegui testar", " sem CI", " (sem iPhone)", " — TODO",
+      " no entanto o Safari falha", " (testada só no Chromium)", " e testada só no Chromium",
+      // a description with no ':' is residue too: a false alarm, accepted
+      " não renderizava o título", " e o botão agora aparece", ", o botão não aparecia", ". O botão não aparecia.", " — parcialmente",
+    ]) {
+      const t = label + after;
+      // a label of a medium note counts it medium
+      const medium = label.startsWith("**Média**");
+      expect([t, juicy_list(t), juicy_para(t)]).toEqual([t, ...(medium ? [{ high: 0, medium: 1, low: 1 }, { high: 0, medium: 2, low: 0 }] : open)]);
+    }
+  }
+});
+
+test("verdict_of: a note's fixed state qualified after it counts the same with bold or not (GentleShrimp 2, 25/10)", () => {
+  const open = [{ high: 0, medium: 0, low: 2 }, { high: 0, medium: 1, low: 1 }];
+  const fixed = [{ high: 0, medium: 0, low: 1 }, { high: 0, medium: 1, low: 0 }];
+  for (const t of ["Ressalva 2 corrigida, falta o iPhone", "Ressalva 1 corrigida exceto no Safari", "Ressalva 2 corrigida e falta o iPhone", "Ressalva 1 corrigida e continua falhando"]) {
+    const bold = t.replace(/^(Ressalva \d corrigida)/, "**$1**");
+    expect([t, juicy_list(t), juicy_para(t)]).toEqual([t, ...open]);
+    expect([bold, juicy_list(bold), juicy_para(bold)]).toEqual([bold, ...open]);
+  }
+  for (const t of ["Ressalva 2 corrigida", "Ressalva 2 corrigida em abc1234", "Ressalva 2 corrigida e testada no iPhone", "Ressalva 2 resolvida (PR #19)"]) {
+    const bold = t.replace(/^(Ressalva \d (?:corrigida|resolvida))/, "**$1**");
+    expect([t, juicy_list(t), juicy_para(t)]).toEqual([t, ...fixed]);
+    expect([bold, juicy_list(bold), juicy_para(bold)]).toEqual([bold, ...fixed]);
+  }
+});
+
+test("verdict_of: the next line goes on the fixed label's sentence or says something left (GentleShrimp 1, 25/10)", () => {
+  // a continuation (lower case, a connector, a parenthesis): open unless it only refers
+  for (const next of ["e continua quebrando no Safari", "e o problema persiste", "(regrediu)", "sem testar no iPhone", "— TODO", "no entanto falta o teste"]) {
+    const t = "**Ressalva baixa (corrigida em abc1234)**\n   " + next;
+    expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 2 }]);
+  }
+  for (const next of ["e testada no iPhone", "(PR #19)"]) {
+    const t = "**Ressalva baixa (corrigida em abc1234)**\n   " + next;
+    expect([t, juicy_list(t)]).toEqual([t, { high: 0, medium: 0, low: 1 }]);
+  }
+  // a sentence of its own is the note's text: open only if it says something left
+  for (const next of ["No entanto, falta o teste.", "Embora falte teste no iPhone.", "O problema persiste no iOS.", "TODO: o iPhone.", "Regrediu no Safari."]) {
+    const t = "**Ressalva baixa (corrigida em abc1234)**\n" + next;
+    expect([t, juicy_para(t)]).toEqual([t, { high: 0, medium: 1, low: 1 }]);
+  }
+  expect(juicy_para("**Ressalva baixa (corrigida em abc1234)**\nO parser lia mal a lista.")).toEqual({ high: 0, medium: 1, low: 0 });
 });
