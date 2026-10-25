@@ -1315,16 +1315,26 @@ function notes_said(line: string): Sevs {
     // ("com ressalvas (1 média, 2 baixas)", WoodenKangaroo 2, 25/10); any
     // other ends what says them, as a sentence's end does
     const with_ = from === null ? "" : line.slice(a + from.index);
-    let stretch = bare ?? with_.replace(SAID_PAREN, "$1, $2").split(/[.;(\n]/)[0].slice(0, 160);
+    // the parenthesis is read whole, its ";" and dots as commas ("com
+    // ressalvas (nenhuma alta; 1 média, 4 baixas)"); what follows it, to
+    // its sentence's end, goes on with it ("(2 baixas corrigidas) e 1 média
+    // aberta"), and its sentence ends after it, never inside it
+    const paren = SAID_PAREN.exec(with_);
+    const after = paren === null ? with_ : with_.slice(paren[0].length);
+    const head = paren === null ? "" : paren[1] + ", " + paren[2].replace(/\.(?!\w)|;/g, ",");
+    let stretch = bare ?? (head + after.split(/[.;(\n]/)[0]).slice(0, 160);
     // no count said with them, or all said fixed: the sentences after say
     // it, as after a verdict's word (counts_of: "aprovado com ressalvas. 2
     // baixas já tratadas e 1 média aberta.": 1 medium, CleverMango 2;
     // "aprovado com ressalvas, 2 baixas corrigidas. 1 média aberta.",
     // "aprovado com ressalvas. Tudo corrigido. 1 média aberta.": 1 medium,
-    // GentleTrout 3, 25/10)
-    const end = with_.search(SENTENCE_END);
-    if (bare === null && open_counts(stretch).length === 0 && end >= 0 && !SAID_PAREN.test(with_)) {
-      const next = bare_count("x" + with_.slice(end));
+    // GentleTrout 3, 25/10); so do they after a parenthesis that says
+    // none open, on its line too ("aprovado com ressalvas (2 baixas
+    // corrigidas). 1 média aberta.": 1 medium, LivelyWaffle, 25/10): the
+    // parenthesis is not the count of all of them
+    const end = after.search(SENTENCE_END);
+    if (bare === null && open_counts(stretch).length === 0 && end >= 0) {
+      const next = bare_count("x" + after.slice(end));
       stretch = next === null ? stretch : stretch + ", " + next;
     }
     // of what it says, only the counts not said fixed ("com ressalvas (2

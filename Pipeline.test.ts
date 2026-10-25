@@ -1492,3 +1492,30 @@ test("verdict_of: counts said in a paragraph after the verdict's, a parenthesis 
   // a note's paragraph after a heading still counts as before
   expect(said("Veredito: aprovado com ressalvas.\n\n**Ressalvas:**\n- Baixa: a\n- Média: b")).toEqual(["approved_with_notes", 0, 1, 1]);
 });
+
+test("verdict_of: a parenthesis right after 'com ressalvas' that says none open is not their count: the sentences after it say it (LivelyWaffle, 25/10)", () => {
+  const said = (s: string) => {
+    const v = Pipeline.verdict_of(s);
+    return [v.verdict, v.notes.high, v.notes.medium, v.notes.low];
+  };
+  // on the same line, with no dot after "ressalvas": the medium after the parenthesis counts
+  expect(said("Veredito: aprovado com ressalvas (2 baixas corrigidas). 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas (2 baixas corrigidas); 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas (2 baixas corrigidas)\n1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas (2 baixas corrigidas) e 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas (2 baixas corrigidas). A média continua aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas (corrigidas em abc1234). 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas (nenhuma alta). 2 baixas.")).toEqual(["approved_with_notes", 0, 0, 2]);
+  // as with a dot or a line break after "ressalvas", as before
+  expect(said("Veredito: aprovado com ressalvas. (2 baixas corrigidas). 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado com ressalvas\n(2 baixas corrigidas). 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // a ";" in the parenthesis doesn't end it
+  expect(said("Veredito: aprovado com ressalvas (nenhuma alta; 1 média, 4 baixas).")).toEqual(["approved_with_notes", 0, 1, 4]);
+  // nothing open said after it: "com ressalvas" is still one low, never zero
+  expect(said("Veredito: aprovado com ressalvas (2 baixas corrigidas).")).toEqual(["approved_with_notes", 0, 0, 1]);
+  expect(said("Veredito: aprovado com ressalvas (2 baixas corrigidas). Sem commit nem push.")).toEqual(["approved_with_notes", 0, 0, 1]);
+  // a parenthesis that says counts open is their count, as before
+  expect(said("Veredito: aprovado com ressalvas (1 média, 2 baixas). Testei no Safari.")).toEqual(["approved_with_notes", 0, 1, 2]);
+  expect(said("Veredito: aprovado com 3 ressalvas (1 média e 2 baixas).")).toEqual(["approved_with_notes", 0, 1, 2]);
+  expect(said("Veredito: aprovado com ressalvas (2 baixas já tratadas, 1 média aberta).")).toEqual(["approved_with_notes", 0, 1, 0]);
+});
