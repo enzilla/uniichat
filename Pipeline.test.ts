@@ -67,12 +67,42 @@ test("verdict_of: the verdict from the first lines; notes by severity, from a li
   expect(Pipeline.verdict_of("Implementei a R6 no commit abc1234.")).toEqual({ verdict: null, notes: { high: 0, medium: 0, low: 0 }, noted: false });
 });
 
+test("verdict_of: the verdict said first, or on the line 'Veredito:'; not a rejection it cites (HappyFish, 25/10)", () => {
+  expect(Pipeline.verdict_of("Aprovado. Nenhuma ressalva; o PR anterior foi reprovado e corrigido.").verdict).toBe("approved");
+  expect(Pipeline.verdict_of("APROVADO com ressalvas: o #17 foi rejeitado antes.").verdict).toBe("approved_with_notes");
+  expect(Pipeline.verdict_of("Reprovado: aprovado só depois de corrigir A1.").verdict).toBe("rejected");
+  expect(Pipeline.verdict_of("Não aprovado: falta teste.").verdict).toBe("rejected");
+  // the line "Veredito:" wins over what comes before it
+  const happy = "## Verificação\n\n**Contexto:** o ciclo 5 foi reprovado (LemonPig).\n\n**Veredito: APROVADO com ressalvas (nenhuma alta; 1 média, 4 baixas).**\n\n### O que foi conferido\n- Baixa latência: ok.\n\n### Ressalvas\n1. **MÉDIA** verdict_of.\n2. **BAIXA** md_row.\n3. **BAIXA** md_merge.\n4. **BAIXA** heurística.\n5. **BAIXA** PR_REF.\n\n### Não testado\n- Alta carga.";
+  expect(Pipeline.verdict_of(happy)).toEqual({ verdict: "approved_with_notes", notes: { high: 0, medium: 1, low: 4 }, noted: true });
+  // the verdict's line spread: the next line that says one
+  expect(Pipeline.verdict_of("**Veredito:**\nREPROVADO, uma alta.\n- A1 (ALTA): x")).toEqual({ verdict: "rejected", notes: { high: 1, medium: 0, low: 0 }, noted: true });
+});
+
+test("verdict_of: an item under 'Não testado' never a note; '1. A: baixa' under the verdict's line one (HappyFish, 25/10)", () => {
+  // a severity that's a word of the sentence, under another heading: none
+  const untested = "**Veredito: aprovado com ressalvas.**\n\n**Ressalvas**\n1. Média: x.\n\n**Não testado:**\n- Baixa cobertura de iPhone.\n- Alta: carga real.";
+  expect(Pipeline.verdict_of(untested).notes).toEqual({ high: 0, medium: 1, low: 0 });
+  // outside any heading, "- Baixa cobertura" isn't a severity said first
+  expect(Pipeline.verdict_of("Aprovado com ressalvas.\n- Baixa cobertura de iPhone.\n- Baixa: o nome.").notes).toEqual({ high: 0, medium: 0, low: 1 });
+  // items right under the verdict's line, a letter before the severity
+  const letters = "Aprovado com ressalvas baixas.\n1. A: baixa\n2. B: baixa — o link.\n3. C (média): o merge.";
+  expect(Pipeline.verdict_of(letters)).toEqual({ verdict: "approved_with_notes", notes: { high: 0, medium: 1, low: 2 }, noted: true });
+  // an item heading its list by a severity: each of its items one (LemonPig, 23/10); a list after it, not
+  const grouped = "**REPROVADO.** Uma ALTA.\n\n- **A1 (ALTA, bloqueante).** x\n  - o auth renova;\n- **Baixas e informativas:**\n  - **A3:** aviso.\n  - **A4:** HMAC.\n  - **Info:** escopos.\n- **Conferido OK:**\n  - pedaços íntegros.\n  - build ok.";
+  expect(Pipeline.verdict_of(grouped)).toEqual({ verdict: "rejected", notes: { high: 1, medium: 0, low: 2 }, noted: true });
+});
+
 test("prs_named: links, owner/repo#n and repo#n; the head near each; not P48 nor 'PR #3'", () => {
   const got = Pipeline.prs_named("Verifique Numih/auth#307 commit 33236f0 e Numih/dp-bk-messaging#17 commit da32786, sobre 27a4065. Também https://github.com/morum/uniichat/pull/18 (head 6178ccf) e o PR #3, P48, uniichat#18.");
   expect(got.prs).toEqual(["auth#307", "dp-bk-messaging#17", "uniichat#18"]);
   expect(got.heads).toEqual({ "auth#307": "33236f0", "dp-bk-messaging#17": "da32786", "uniichat#18": "6178ccf" });
   expect(got.links["auth#307"]).toBe("https://github.com/Numih/auth/pull/307");
   expect(got.links["uniichat#18"]).toBe("https://github.com/morum/uniichat/pull/18");
+  // an owner GitHub can't have (a dot, a host): no PR, no link made up (HappyFish, 25/10)
+  const evil = Pipeline.prs_named("Veja evil.com/x#4 e foo.bar/baz#9; o certo é Numih-x/auth#5.");
+  expect(evil.prs).toEqual(["auth#5"]);
+  expect(Object.values(evil.links)).toEqual(["https://github.com/Numih-x/auth/pull/5"]);
   expect(Pipeline.pr_same("messaging#17", "dp-bk-messaging#17")).toBe(true);
   expect(Pipeline.pr_same("auth#307", "oauth#307")).toBe(false);
   expect(Pipeline.pr_same("auth#307", "auth#306")).toBe(false);
@@ -351,8 +381,15 @@ test("AGENTES.md written by hand keeps what it had: the serve's part appended, t
     expect(twice.startsWith(hand)).toBe(true);
     expect(twice.split(Pipeline.MD_START).length).toBe(2);
     expect(twice).toContain("| a-verif | TwoAgent | a | verificação | padrão | concluído: aprovado, ");
-    // a pipe in a cell is escaped, never a new column
-    expect(Pipeline.md_row({ ...Pipeline.runs_read(dir, new Set(), s.refs)[0], label: "a|b" }).split(" | ").length).toBe(6);
+    // a pipe in a cell is a "/", never a new column, as vigia.ts splits a
+    // row (by every "|"): an agent at work labeled "a|b-verif" stays read
+    const row = Pipeline.md_row({ ...Pipeline.runs_read(dir, new Set(), s.refs)[0], label: "a|b-verif", state: "working", tasks: ["P66"] });
+    const cells = row.split("|").slice(1, -1).map((x) => x.trim());
+    expect(cells.length).toBe(6);
+    expect(cells[0]).toBe("a/b-verif");
+    expect(cells[1]).toBe("OneAgent");
+    expect(cells[3]).toContain("(P66)");
+    expect(cells[5]).toMatch(/^em andamento/);
   } finally {
     if (was === undefined) {
       delete process.env.UNII_AGENTES;
@@ -360,6 +397,30 @@ test("AGENTES.md written by hand keeps what it had: the serve's part appended, t
       process.env.UNII_AGENTES = was;
     }
   }
+});
+
+test("md_merge: marks out of order or alone never leave two parts", () => {
+  const block = Pipeline.md_block([]);
+  const parts = (s: string) => s.split(Pipeline.MD_START).length - 1;
+  // an end before its start (HappyFish, 25/10): one part, the hand text kept
+  const swapped = "# Mão\n" + Pipeline.MD_END + "\nmeio\n" + Pipeline.MD_START + "\nvelho\n";
+  const once = Pipeline.md_merge(swapped, block);
+  expect(parts(once)).toBe(1);
+  expect(once.split(Pipeline.MD_END).length - 1).toBe(1);
+  expect(once).toContain("# Mão\n");
+  expect(once).toContain("meio\n");
+  expect(Pipeline.md_merge(once, block)).toBe(once);
+  // two parts (an older write): the first's place, the second out
+  const two = "a\n" + Pipeline.MD_START + "\n1\n" + Pipeline.MD_END + "\nb\n" + Pipeline.MD_START + "\n2\n" + Pipeline.MD_END + "\nc\n";
+  const merged = Pipeline.md_merge(two, block);
+  expect(merged).toBe("a\n" + block + "\nb\nc\n");
+  // a stray start before a whole part: the part is replaced, the stray out, the text between kept
+  const stray = "a\n" + Pipeline.MD_START + "\nentre\n" + Pipeline.MD_START + "\n1\n" + Pipeline.MD_END + "\nz\n";
+  expect(Pipeline.md_merge(stray, block)).toBe("a\nentre\n" + block + "\nz\n");
+  // the usual: between its marks, nothing else touched
+  const usual = "a\n" + Pipeline.MD_START + "\nx\n" + Pipeline.MD_END + "\nz\n";
+  expect(Pipeline.md_merge(usual, block)).toBe("a\n" + block + "\nz\n");
+  expect(Pipeline.md_merge("", block)).toBe(block + "\n");
 });
 
 test("totals and what the views say: medians, spans, severities", () => {

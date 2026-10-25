@@ -121,7 +121,9 @@ const SURVEY = /(^|-)(levantamento|diagnostico|diagnóstico|survey|avaliacao|ava
 
 // a pull request named in a text: its link, or "owner/repo#n", "repo#n"
 const PR_URL = /github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/gi;
-const PR_REF = /(?:^|[^\w\/.#-])(?:([A-Za-z][\w.-]*)\/)?([A-Za-z][\w.-]*)#(\d+)\b/g;
+// (an owner as GitHub's: letters, digits and "-", no "."; "evil.com/x#4"
+// names none)
+const PR_REF = /(?:^|[^\w\/.#-])(?:([A-Za-z0-9][A-Za-z0-9-]{0,38})\/)?([A-Za-z][\w.-]*)#(\d+)\b/g;
 const NOT_REPO = /^(pr|prs|pull|issue|n|no|nº|item|p)$/i;
 
 // a head given in a text: "head 6178ccf", "commit 33236f0", "em `d0ff55e`"
@@ -288,23 +290,66 @@ function fold(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/\p{M}+/gu, "");
 }
 
-// a report's verdict, from its first lines, and its notes by severity:
-// the list items after its first "ressalva", each by the first severity
-// it says ("1. MÉDIA: …", "- Baixa — …"). noted: some was found
+// what a text says of a verdict, by the first word of one it has: "Aprovado;
+// o PR anterior foi reprovado" is approved, "Reprovado; aprovado só
+// depois de…" rejected
+const REJECTED = /reprovad|rejeitad|\brejected\b|\bnao\s+aprov(?:ad|ou)/;
+const APPROVED = /aprovad|aprovou|\bapproved\b/;
+const WITH_NOTES = /^(?:aprovad[oa]s?\s*(?:com|c\/)\s*(?:\d+\s*)?(?:ressalva|observac)|aprovou\s*(?:o\s*\S+\s*)?(?:com|c\/)\s*(?:\d+\s*)?(?:ressalva|observac)|approved with)/;
+function verdict_said(s: string): Verdict | null {
+  const r = s.search(REJECTED);
+  const a = s.search(APPROVED);
+  if (r < 0 && a < 0) {
+    return null;
+  }
+  if (r >= 0 && (a < 0 || r <= a)) {
+    return "rejected";
+  }
+  return WITH_NOTES.test(s.slice(a)) ? "approved_with_notes" : "approved";
+}
+
+// a report's verdict and the line that says it, within its first 600
+// characters: its line "Veredito: …" if one says one, else its first
+// line that says one
+export function verdict_line(report: string): { verdict: Verdict; at: number } | null {
+  const top: string[] = [];
+  let n = 0;
+  for (const line of report.split("\n")) {
+    if (n >= 600) {
+      break;
+    }
+    top.push(fold(line.slice(0, 600 - n)));
+    n += line.length + 1;
+  }
+  for (let k = 0; k < top.length; k++) {
+    const v = top[k].search(/veredito|verdict/);
+    const said = v < 0 ? null : verdict_said(top[k].slice(v));
+    if (said !== null) {
+      return { verdict: said, at: k };
+    }
+  }
+  for (let k = 0; k < top.length; k++) {
+    const said = verdict_said(top[k]);
+    if (said !== null) {
+      return { verdict: said, at: k };
+    }
+  }
+  return null;
+}
+
+// a report's verdict (verdict_line) and its notes by severity: the list
+// items after its verdict's line under a heading on notes, each by the
+// first severity it says, and the items that open with their severity
+// ("1. MÉDIA: …", "- Baixa — …") outside another heading ("Não
+// testado:"). noted: some was found
 export function verdict_of(report: string): { verdict: Verdict | null; notes: Sevs; noted: boolean } {
   const top = fold(report.slice(0, 600));
   const notes = zero();
-  let verdict: Verdict | null = null;
-  if (/reprovad|rejeitad|\brejected\b/.test(top)) {
-    verdict = "rejected";
-  } else if (/aprovad[oa]s?\s*(com|c\/)\s*(\d+\s*)?(ressalva|observac)|aprovou\s*(o\s*\S+\s*)?(com|c\/)\s*(\d+\s*)?(ressalva|observac)|approved with/.test(top)) {
-    verdict = "approved_with_notes";
-  } else if (/aprovad|aprovou|\bapproved\b/.test(top)) {
-    verdict = "approved";
+  const found = verdict_line(report);
+  if (found === null) {
+    return { verdict: null, notes, noted: false };
   }
-  if (verdict === null) {
-    return { verdict, notes, noted: false };
-  }
+  const verdict = found.verdict;
   // after the verdict's line: a line on the notes ("**Ressalvas
   // baixas:**", "Ressalvas") opens their list, its severity, if said,
   // given to its items that say none; another heading closes it. An item
@@ -312,25 +357,47 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   // of notes counts only if it says it's one ("- **Ressalva média:** …")
   // or opens with its severity ("- **A1 (ALTA, bloqueante)** …")
   let noted = false;
-  let within = false;
+  // where a line is: after no heading yet, under one on notes, under
+  // another ("**Não testado:**", "**O que passou**")
+  let within: "none" | "notes" | "other" = "none";
   let given: keyof Sevs | null = null;
-  for (const line of report.split("\n").slice(1)) {
+  let group: keyof Sevs | null = null;
+  for (const line of report.split("\n").slice(found.at + 1)) {
     const item = /^(\s*)(\d+[.)]|[-*•])\s/.exec(line);
     const own = sev_in(line.slice(0, 160));
     if (item === null) {
+      if (line.trim() !== "") {
+        group = null;
+      }
       if (/ressalva|observa[cç]/i.test(line)) {
-        within = true;
+        within = "notes";
         given = own;
       } else if (/^\s*(\*\*|#|_)/.test(line) || /:\s*$/.test(line)) {
-        within = false;
+        within = "other";
         given = null;
       }
       continue;
     }
     const top_level = item[1].length < 2;
-    const says = /ressalva|observa[cç]/i.test(line) || (top_level && SEV_FIRST.test(line));
-    const sev = own ?? (within ? given : null);
-    if (sev === null || !(says || (within && top_level))) {
+    // an item that heads its own list by a severity ("- **Baixas e
+    // informativas:**"), under no heading: its items count by it, it not
+    // (under a heading on notes, an item is a note, its items its words)
+    if (top_level) {
+      group = within === "none" && SEV_HEAD.test(line) && /:[*_`\s]*$/.test(line) ? own : null;
+      if (group !== null) {
+        continue;
+      }
+    } else if (group !== null) {
+      if (/^\s*(?:\d+[.)]|[-*•])\s+[*_`]*\s*informa(?:cao|ção|tiv\w*)?\b|^\s*(?:\d+[.)]|[-*•])\s+[*_`]*\s*info\b/i.test(line)) {
+        continue;
+      }
+      notes[own ?? group] += 1;
+      noted = true;
+      continue;
+    }
+    const says = /ressalva|observa[cç]/i.test(line) || (top_level && within !== "other" && SEV_FIRST.test(line));
+    const sev = own ?? (within === "notes" ? given : null);
+    if (sev === null || !(says || (within === "notes" && top_level))) {
       continue;
     }
     notes[sev] += 1;
@@ -343,8 +410,13 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
 }
 
 // an item that opens with its severity: "1. MÉDIA: …", "- **A1 (ALTA,
-// bloqueante)** …", "- Baixa — …"
-const SEV_FIRST = /^\s*(?:\d+[.)]|[-*•])\s+[*_`(\[]*\s*(?:[A-Z]\d+\s*[(:.—-]?\s*)?(altas?|high|m[eé]dias?|medium|baixas?|low)\b/i;
+// bloqueante)** …", "1. A: baixa", "- Baixa — …"; not a word that
+// goes on ("- Baixa cobertura de iPhone")
+const SEV_FIRST = /^\s*(?:\d+[.)]|[-*•])\s+[*_`(\[]*\s*(?:[A-Z]\d*\s*[(:.—-]?\s*)?(altas?|high|m[eé]dias?|medium|baixas?|low)(?=[\s*_`)\]]*(?:[:.,;—–()-]|$))/i;
+
+// an item that opens with a severity, said as it may go on ("- **Baixas e
+// informativas:**")
+const SEV_HEAD = /^\s*(?:\d+[.)]|[-*•])\s+[*_`(\[]*\s*(altas?|high|m[eé]dias?|medium|baixas?|low)(?![\p{L}\d])/iu;
 
 // the first severity a text says ("MÉDIA", "baixas", "high")
 function sev_in(s: string): keyof Sevs | null {
@@ -682,7 +754,9 @@ export function panel(store: Store, dir: string, working: Set<string>, now: numb
 // Projeto | Papel (its tasks marked "(P48)") | Modelo | Estado ("em
 // andamento" first, while at work)
 export function md_row(r: Run): string {
-  const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\s+/g, " ").trim() || "—";
+  // a pipe in a cell is a "/": vigia.ts splits a row by every "|", an
+  // escaped one too
+  const cell = (s: string) => s.replace(/\|/g, "/").replace(/\s+/g, " ").trim() || "—";
   const notes = sevs_said(r.notes);
   const state = r.state === "working" ? "em andamento desde " + when_said(r.start)
     : r.state === "cut" ? "interrompido (sem relato), " + when_said(r.end)
@@ -705,15 +779,37 @@ export function md_block(runs: Run[]): string {
   ].join("\n");
 }
 
-// the file with the serve's part put in: between its marks, if there;
-// else after what's there (a file written by hand keeps all it had)
+// the file with the serve's part put in: in the place of its first part
+// (an end mark and the start mark nearest before it), if there; else
+// after what's there (a file written by hand keeps all it had). Other
+// parts are taken out, and a mark with no pair (an end with no start
+// before it, a start with no end after it) too: never two parts
 export function md_merge(had: string, block: string): string {
-  const a = had.indexOf(MD_START);
-  const b = had.indexOf(MD_END);
-  if (a >= 0 && b > a) {
-    return had.slice(0, a) + block + had.slice(b + MD_END.length);
+  const PLACE = "\u0000unii-agentes\u0000";
+  let rest = had;
+  let placed = false;
+  for (let from = 0; ;) {
+    const b = rest.indexOf(MD_END, from);
+    if (b < 0) {
+      break;
+    }
+    const a = rest.lastIndexOf(MD_START, b);
+    if (a < from) {
+      from = b + MD_END.length;
+      continue;
+    }
+    const after = rest.slice(b + MD_END.length);
+    rest = rest.slice(0, a) + (placed ? after.replace(/^\n/, "") : PLACE + after);
+    from = placed ? a : a + PLACE.length;
+    placed = true;
   }
-  return had === "" ? block + "\n" : had.replace(/\n*$/, "\n\n") + block + "\n";
+  for (const mark of [MD_START, MD_END]) {
+    rest = rest.split(mark + "\n").join("").split(mark).join("");
+  }
+  if (placed) {
+    return rest.replace(PLACE, () => block);
+  }
+  return rest.trim() === "" ? block + "\n" : rest.replace(/\n*$/, "\n\n") + block + "\n";
 }
 
 // where the serve writes AGENTES.md: UNII_AGENTES (the file vigia.ts
