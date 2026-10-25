@@ -434,6 +434,19 @@ function task_fields(item: Element): Record<string, unknown> {
   return out;
 }
 
+// a field marked unanswered (or not): aria-invalid on the fieldset (its
+// red border) and on each of its controls, which screen readers announce
+// more reliably than a fieldset's
+function field_invalid(set: HTMLElement, on: boolean): void {
+  for (const el of [set, ...set.querySelectorAll<HTMLElement>("input, textarea, select")]) {
+    if (on) {
+      el.setAttribute("aria-invalid", "true");
+    } else {
+      el.removeAttribute("aria-invalid");
+    }
+  }
+}
+
 // a Concluir (or a choice) with required fields unanswered: each marked
 // (aria-invalid), the first focused, which ones said; nothing sent (the
 // server refuses it too). Whether any was missing
@@ -445,7 +458,7 @@ function task_missing(el: HTMLElement): boolean {
     return Array.isArray(v) ? v.length === 0 : String(v).trim() === "";
   };
   const missing = sets.filter(empty);
-  sets.forEach((set) => (missing.includes(set) ? set.setAttribute("aria-invalid", "true") : set.removeAttribute("aria-invalid")));
+  sets.forEach((set) => field_invalid(set, missing.includes(set)));
   if (missing.length === 0) {
     return false;
   }
@@ -463,7 +476,7 @@ function task_draft(ev: Event): void {
   if (set === null || set === undefined || item === null || item === undefined) {
     return;
   }
-  set.removeAttribute("aria-invalid");
+  field_invalid(set, false);
   act({ $: "TaskDraft", task: item.dataset.task!, fields: { [set.dataset.field!]: field_value(set) } });
 }
 

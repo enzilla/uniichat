@@ -921,6 +921,7 @@ var Pick;
 function after_of(t) {
   return Array.isArray(t.after) ? t.after : [];
 }
+var LATE = 24 * 60 * 60 * 1000;
 function by_id(tasks) {
   return new Map(tasks.map((t) => [t.id, t]));
 }
@@ -1302,7 +1303,7 @@ function desk_next(tasks, sel, q = "", ref = "") {
   const now = desk_list(tasks, q, ref).find((g) => g.group === "now");
   return now?.tasks.find((t) => t.id !== sel) ?? null;
 }
-var TASK_LATE = 24 * 60 * 60 * 1000;
+var TASK_LATE = LATE;
 function task_late_said(t, blocked, now) {
   const age = now - Date.parse(t.made);
   if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > TASK_LATE)) {
@@ -2475,6 +2476,15 @@ function task_fields(item) {
   }
   return out;
 }
+function field_invalid(set, on) {
+  for (const el of [set, ...set.querySelectorAll("input, textarea, select")]) {
+    if (on) {
+      el.setAttribute("aria-invalid", "true");
+    } else {
+      el.removeAttribute("aria-invalid");
+    }
+  }
+}
 function task_missing(el) {
   const item = el.closest("[data-task]");
   const sets = item === null ? [] : [...item.querySelectorAll("fieldset.field[data-required]")];
@@ -2483,7 +2493,7 @@ function task_missing(el) {
     return Array.isArray(v) ? v.length === 0 : String(v).trim() === "";
   };
   const missing = sets.filter(empty);
-  sets.forEach((set) => missing.includes(set) ? set.setAttribute("aria-invalid", "true") : set.removeAttribute("aria-invalid"));
+  sets.forEach((set) => field_invalid(set, missing.includes(set)));
   if (missing.length === 0) {
     return false;
   }
@@ -2499,7 +2509,7 @@ function task_draft(ev) {
   if (set === null || set === undefined || item === null || item === undefined) {
     return;
   }
-  set.removeAttribute("aria-invalid");
+  field_invalid(set, false);
   act({ $: "TaskDraft", task: item.dataset.task, fields: { [set.dataset.field]: field_value(set) } });
 }
 function task_say(task, root) {

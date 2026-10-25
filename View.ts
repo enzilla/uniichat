@@ -799,9 +799,9 @@ export function desk_next(tasks: Task[], sel: string | null, q = "", ref = ""): 
   return now?.tasks.find((t) => t.id !== sel) ?? null;
 }
 
-// how long a task stays the user's before it's late (ms): TaskPush.LATE,
-// the late push's (TasksDesk.test checks they're equal)
-export const TASK_LATE = 24 * 60 * 60 * 1000;
+// how long a task stays the user's before it's late (ms): TaskDeps.LATE,
+// the same value the late push (TaskPush.LATE) reads
+export const TASK_LATE = Deps.LATE;
 
 // a task late (open, the user's move, made over TASK_LATE ago): how
 // late, "atrasada há 30 h" (under 2 days) or "atrasada há 3 d"; else ""

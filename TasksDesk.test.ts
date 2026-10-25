@@ -207,7 +207,13 @@ test("web: after one resolved, the next of Agora; none past the last; a task of 
 
 test("late: the user's move over TASK_LATE (= TaskPush.LATE) says how late, in the row and the detail; not Unii's, waiting, closed", async () => {
   const { LATE } = await import("./TaskPush.ts");
+  const Deps = await import("./TaskDeps.ts");
   expect(View.TASK_LATE).toBe(LATE);
+  expect(View.TASK_LATE).toBe(Deps.LATE);
+  // one definition: neither TaskPush nor View writes the value again
+  for (const file of ["TaskPush.ts", "View.ts"]) {
+    expect(await Bun.file(import.meta.dir + "/" + file).text()).not.toMatch(/LATE\s*=\s*\d/);
+  }
   const tasks = desk();
   const blocked = new Set(["P3"]);
   const p1 = tasks.find((t) => t.id === "P1")!;
