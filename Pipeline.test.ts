@@ -329,7 +329,7 @@ test("verdict_of: a fix with a caveat in a parenthesis or its complement stays o
   for (const open of ["corrigida e testada (mas não no iOS)", "corrigida e verificada em abc (iOS não testado)", "corrigida (falta o Safari)", "corrigida (só no Chromium)", "corrigida e testada em parte", "corrigida e testada no Chromium apenas", "corrigida em parte e testada", "corrigida em abc e testada em parte", "corrigida e testada no Chromium somente", "corrigida e testada (parcialmente)", "corrigida em abc (ainda sem teste)"]) {
     expect(of(open)).toEqual(both);
   }
-  for (const fixed of ["corrigida e testada", "resolvida e verificada em abc", "corrigida em abc e testada em def", "corrigida (commit abc)", "corrigida e testada (bun 251/0)", "corrigida em abc (Pipeline.ts) e testada em def", "corrigida e testada no Chromium"]) {
+  for (const fixed of ["corrigida e testada", "resolvida e verificada em abc", "corrigida em abc e testada em def", "corrigida (commit abc)", "corrigida e testada (bun 251/0)", "corrigida em abc (Pipeline.ts) e testada em def"]) {
     expect(of(fixed)).toEqual(low);
   }
   // as a heading's text: the same
@@ -337,6 +337,42 @@ test("verdict_of: a fix with a caveat in a parenthesis or its complement stays o
   expect(h("corrigida e testada (mas não no iOS)")).toEqual({ high: 0, medium: 1, low: 0 });
   expect(h("corrigidas e testadas em parte")).toEqual({ high: 0, medium: 1, low: 0 });
   expect(h("todas corrigidas e testadas em abc")).toEqual({ high: 0, medium: 0, low: 0 });
+});
+
+test("verdict_of: a fix is only said with references after it; any other word keeps the note open (NeatWombat, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalva 1 (média):** " + s + "\n**Ressalva 2 (baixa):** y").notes;
+  const h = (t: string) => Pipeline.verdict_of("Veredito: aprovado.\n\n### Ressalvas: " + t + "\n1. **MÉDIA** a").notes;
+  const low = { high: 0, medium: 0, low: 1 };
+  const both = { high: 0, medium: 1, low: 1 };
+  // what the report named, and what said more before: open, inline and as a heading's text
+  const open = [
+    "corrigida e testada em abc (iOS desconhecido)", "corrigida e testada (a confirmar no iOS)", "corrigida e testada (por confirmar)", "corrigida e testada (em aberto no iOS)",
+    "corrigida e testada (incompleto)", "corrigida e testada (a metade)", "corrigida e testada em metade", "corrigida e testada (limitado ao Chromium)", "corrigida e testada restando o iOS",
+    "corrigida e testada (mas não no iOS)", "corrigida e testada em parte", "corrigida e testada no Chromium apenas", "corrigida em abc (iOS não testado)",
+    "corrigida e testada no Chromium", "corrigida em abc sem regressões", "corrigida (pendente o Safari)", "corrigida e testada em 50%",
+  ];
+  for (const t of open) {
+    expect(of(t)).toEqual(both);
+    expect(h(t)).toEqual({ high: 0, medium: 1, low: 0 });
+  }
+  // a fix with only references after it: hash, PR, commit, file, a count
+  const fixed = [
+    "corrigida e testada", "corrigida e testada.", "resolvida e verificada em abc", "corrigida em abc e testada em def", "corrigida (commit abc)", "corrigida e testada (bun 251/0)",
+    "corrigida em abc (Pipeline.ts) e testada em def", "corrigida em a29e956", "corrigida no PR #19", "corrigida pelo commit 52375d7", "corrigida em `abc1234`.", "corrigida e testada no CI",
+    "corrigida, testada", "corrigida e testada com bun test 253/0", "corrigida em morum/uniichat#19",
+  ];
+  for (const t of fixed) {
+    expect(of(t)).toEqual(low);
+    expect(h(t)).toEqual({ high: 0, medium: 0, low: 0 });
+  }
+  // a label that says fixed: the same, from its fixed word to its parenthesis' end
+  const l = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n**Ressalvas:**\n1. " + s + "\n2. Baixa: y").notes;
+  for (const t of ["Média (corrigida em abc1234): x", "**Ressalva 1 (média, corrigida):** x", "**Ressalva média (resolvida):** x", "**Ressalva 1 (média, corrigida no PR #19):** x"]) {
+    expect(l(t)).toEqual(low);
+  }
+  for (const t of ["Média (corrigida só em parte): x", "Média (corrigida, iOS desconhecido): x", "**Ressalva 1 (média, corrigida em parte):** x", "**Ressalva média (corrigida; falta iOS):** x"]) {
+    expect(l(t)).toEqual(both);
+  }
 });
 
 test("verdict_of: 'aprovo' approves, 'reprovo' rejects (ProudCougar 2b: YellowHare, 25/10)", () => {

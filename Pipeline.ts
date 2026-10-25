@@ -540,29 +540,60 @@ function uncoded(line: string): string {
 
 // a note's label says it's fixed: "corrigida", "resolvida", "sanada"
 // (or "fixed", "resolved"); not "não corrigida", "ainda não resolvida",
-// "sem correção", "not fixed"; on a folded label (label_of)
+// "sem correção", "not fixed"; and what it says from that word (to its
+// parenthesis' end, if it's in one, else to its end) says only that
+// (ALL_FIXED): "ressalva 1 (média, corrigida)", "média (corrigida em
+// abc1234)", "ressalvas corrigidas" are; "média (corrigida só em parte)"
+// isn't. On a folded label (label_of)
 const FIXED_WORD = /\b(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
 const NOT_FIXED = /\b(?:nao|not|unfixed)\s+(?:\w+\s+){0,2}(?:corrigid|resolvid|sanad|fixed\b|resolved\b)/;
 function fixed(label: string): boolean {
-  return FIXED_WORD.test(label) && !NOT_FIXED.test(label);
+  const m = FIXED_WORD.exec(label);
+  if (m === null || NOT_FIXED.test(label)) {
+    return false;
+  }
+  let said = label.slice(m.index);
+  let depth = 0;
+  for (const c of label.slice(0, m.index)) {
+    depth += c === "(" ? 1 : c === ")" ? -1 : 0;
+  }
+  if (depth > 0) {
+    let d = depth;
+    for (let k = 0; k < said.length; k++) {
+      d += said[k] === "(" ? 1 : said[k] === ")" ? -1 : 0;
+      if (d < depth) {
+        said = said.slice(0, k);
+        break;
+      }
+    }
+  }
+  return ALL_FIXED.test(said.replace(/[*_`\[\]]/g, ""));
 }
 
-// a heading's text after its ":" says all its notes fixed, and nothing
-// else: "corrigidas", "todas corrigidas em abc", "ambas resolvidas";
-// "corrigida e testada" (SilverNoodle, 25/10); not "corrigida só a
-// primeira", "corrigidas, exceto a 2" (ProudCougar, 25/10). Where, by
-// what or in a parenthesis, it may say more, unless that is a caveat:
-// "corrigida e testada (mas não no iOS)", "… em abc (iOS não testado)",
-// "… testada em parte", "… no Chromium apenas" (SleepyMoose, 25/10) are
-// open. On a folded text, without its marks
-const CAVEAT = String.raw`\b(?:nao|not|mas|but|exceto|except|salvo|falta\w*|sem|so|apenas|somente|only|parte|partes|parcia\w*|pendente\w*|ainda|yet)\b`;
-const FIX_PAREN = String.raw`\s*\((?![^)]*` + CAVEAT + String.raw`)[^)]*\)`;
-const fix_where = (by: string) => String.raw`(?:` + FIX_PAREN + String.raw`|\s+(?:` + by + String.raw`)\s+(?![^,;(]*` + CAVEAT + String.raw`)[^,;(]*(?:` + FIX_PAREN + String.raw`)?)?`;
+// a text says a note fixed, and nothing else: "corrigida", "todas
+// corrigidas em abc", "ambas resolvidas", "corrigida e testada"
+// (SilverNoodle, 25/10), "resolvida e verificada em abc", "corrigida em
+// abc e testada em def". What may follow "corrigida" or "testada" is only
+// a reference: where ("em abc1234", "no PR #19", "pelo commit abc"), or
+// a parenthesis with one ("(commit abc)", "(bun 251/0)", "(Pipeline.ts)").
+// A reference is a hash, or a token with a digit, "#", ".", "/" or ":"
+// (REF); any other word says more, and the note stays open, so no list of
+// caveats is needed: "corrigida só a primeira", "corrigidas, exceto a 2"
+// (ProudCougar), "… (mas não no iOS)", "… em parte", "… no Chromium
+// apenas" (SleepyMoose), "… (iOS desconhecido)", "… (a confirmar)", "…
+// em metade", "… (limitado ao Chromium)" (NeatWombat, 25/10), and also
+// "… testada no Chromium" (where tested isn't a reference). On a folded
+// text, without its marks
+const REF = String.raw`(?:[0-9a-f]{3,40}\b|ci\b|(?=[\w#./:-]*[\d#./:])[\w#./:-]*[\w#/])`;
+const REF_NOUN = String.raw`(?:commit|commits|head|hash|pr|prs|pull|branch|issue|teste|testes|test|tests|bun|arquivo|arquivos|file|files|build|run|job)`;
+const REFS = String.raw`(?:(?:o|a|os|as|the)\s+)?(?:` + REF_NOUN + String.raw`\s+){0,2}` + REF + String.raw`(?:\s*(?:,\s*|\s+(?:e|and)\s+)` + REF + String.raw`)*`;
+const FIX_PAREN = String.raw`\s*\(\s*` + REFS + String.raw`\s*\)`;
+const fix_where = (by: string) => String.raw`(?:\s+(?:` + by + String.raw`)\s+` + REFS + String.raw`)?(?:` + FIX_PAREN + String.raw`)?`;
 const ALL_FIXED = new RegExp(
   String.raw`^\s*(?:(?:todas?|tudo|ambas|as\s+(?:\d+|duas|tres|quatro|cinco))\s+(?:(?:as\s+)?ressalvas\s+)?)?(?:(?:ja\s+)?(?:foram|estao)\s+)?(?:corrigid|resolvid|sanad|fixed|resolved)\w*` +
-    fix_where("em|no|na|pelo|pela|por|in") +
-    String.raw`(?:\s*,?\s+(?:e|and)\s+(?:testad|verificad|conferid|validad|cobert|tested|verified)\w*` +
-    fix_where("em|no|na|pelo|pela|por|com|in|by") +
+    fix_where("em|no|na|nos|nas|pelo|pela|por|in|on|by|at") +
+    String.raw`(?:(?:\s*,\s*|\s*,?\s+(?:e|and)\s+)(?:testad|verificad|conferid|validad|cobert|tested|verified)\w*` +
+    fix_where("em|no|na|nos|nas|pelo|pela|por|com|in|on|by|at|with") +
     String.raw`)?\s*\.?\s*$`,
 );
 
