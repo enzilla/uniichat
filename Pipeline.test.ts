@@ -278,6 +278,33 @@ test("verdict_of: a note whose text says it fixed isn't open, with ':' or not (L
   }
 });
 
+test("verdict_of: code is cited, never said, even in a top-level item under no heading (SilverNoodle 1, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n" + s).notes;
+  const low = { high: 0, medium: 0, low: 1 };
+  // a note's label in code, cited by an item under no heading: not a note
+  expect(of("- `Ressalva 1 (média)` e `Ressalva 2` somam\n- **Ressalva baixa:** real")).toEqual(low);
+  expect(of("1. `Ressalva alta` vira `alta` no painel\n2. **Ressalva baixa:** real")).toEqual(low);
+  // nor a severity in code: the item's is the one it says outside it
+  expect(of("- **Ressalva baixa:** o `MÉDIA` do título conta\n- texto `alta` solto")).toEqual(low);
+  expect(of("- `MÉDIA`: a\n- Baixa: b")).toEqual(low);
+  // under a list of notes given a severity, an item citing code is still the list's
+  expect(of("**Ressalvas baixas:**\n- `Ressalva 1 (média)` e `Ressalva 2` somam")).toEqual(low);
+  // said outside code, it counts
+  expect(of("- Ressalva 1 (média) e `Ressalva 2` somam\n- **Ressalva baixa:** real")).toEqual({ high: 0, medium: 1, low: 1 });
+});
+
+test("verdict_of: 'corrigida e testada' is fixed; what says more stays open (SilverNoodle 2, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado com ressalvas.\n\n" + s + "\n**Ressalva 2 (baixa):** y").notes;
+  const low = { high: 0, medium: 0, low: 1 };
+  for (const fixed of ["**Ressalva 1 (média):** corrigida e testada", "**Ressalva 1 (média):** corrigida e testada.", "**Ressalva 1 (média)** — corrigida e testada", "- **Ressalva 1 (média):** corrigida e testada", "**Ressalva 1 (média):** resolvida e verificada em abc", "**Ressalva 1 (média):** corrigida em abc e testada em def"]) {
+    expect(of(fixed)).toEqual(low);
+  }
+  const both = { high: 0, medium: 1, low: 1 };
+  for (const open of ["**Ressalva 1 (média):** corrigida só em parte", "**Ressalva 1 (média):** não corrigida", "**Ressalva 1 (média):** ainda não corrigida", "**Ressalva 1 (média):** parcialmente corrigida", "**Ressalva 1 (média)** — o teste corrigido não cobre x", "**Ressalva 1 (média):** corrigida em abc, mas ainda falha em y", "**Ressalva 1 (média):** corrigida e testada, mas falha em y", "**Ressalva 1 (média):** corrigida e testada; falta o iPhone", "**Ressalva 1 (média):** corrigida e testada só no Chromium", "**Ressalva 1 (média):** não corrigida e testada"]) {
+    expect(of(open)).toEqual(both);
+  }
+});
+
 test("verdict_of: 'aprovo' approves, 'reprovo' rejects (ProudCougar 2b: YellowHare, 25/10)", () => {
   expect(Pipeline.verdict_of("Veredito: aprovo o PR #18.")).toEqual({ verdict: "approved", notes: { high: 0, medium: 0, low: 0 }, noted: false });
   expect(Pipeline.verdict_of("Veredito: aprovo o PR morum/uniichat#18 com ressalvas.\n- Baixa: x").verdict).toBe("approved_with_notes");

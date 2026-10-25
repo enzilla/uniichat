@@ -391,7 +391,11 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   let counted = false;
   for (const line of report.split("\n").slice(found.at + 1)) {
     const item = /^(\s*)(\d+[.)]|[-*•])\s/.exec(line);
-    const own = sev_in(line.slice(0, 160));
+    // code is cited, never said: a severity or a note's label in it
+    // ("- `Ressalva 1 (média)` e `Ressalva 2` somam", SilverNoodle) is
+    // neither the line's severity nor makes it cite a note
+    const bare = uncoded(line);
+    const own = sev_in(bare.slice(0, 160));
     if (item === null) {
       if (line.trim() !== "") {
         group = null;
@@ -474,7 +478,7 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     if (!top_level && within === "notes" && counted) {
       continue;
     }
-    const cites = /ressalva|observa[cç]/i.test(line);
+    const cites = /ressalva|observa[cç]/i.test(bare);
     const says = (within === "other" ? cites && NOTE_ITEM.test(fold(line)) : cites) || (top_level && within !== "other" && SEV_FIRST.test(line));
     // under a list given a severity ("**Ressalvas baixas**"), an item
     // has its own only if it opens with it ("1. MÉDIA: …", "- **Ressalva
@@ -511,6 +515,11 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   return { verdict, notes, noted };
 }
 
+// a line without its code spans: what's in them is cited
+function uncoded(line: string): string {
+  return line.replace(/`[^`\n]*`/g, " ");
+}
+
 // a note's label says it's fixed: "corrigida", "resolvida", "sanada"
 // (or "fixed", "resolved"); not "não corrigida", "ainda não resolvida",
 // "sem correção", "not fixed"; on a folded label (label_of)
@@ -522,9 +531,10 @@ function fixed(label: string): boolean {
 
 // a heading's text after its ":" says all its notes fixed, and nothing
 // else: "corrigidas", "todas corrigidas em abc", "ambas resolvidas";
-// not "corrigida só a primeira", "corrigidas, exceto a 2" (ProudCougar,
-// 25/10). On a folded text, without its marks
-const ALL_FIXED = /^\s*(?:(?:todas?|tudo|ambas|as\s+(?:\d+|duas|tres|quatro|cinco))\s+(?:(?:as\s+)?ressalvas\s+)?)?(?:(?:ja\s+)?(?:foram|estao)\s+)?(?:corrigid|resolvid|sanad|fixed|resolved)\w*(?:\s*\([^)]*\)|\s+(?:em|no|na|pelo|pela|por|in)\s+[^,;]*)?\s*\.?\s*$/;
+// "corrigida e testada" (SilverNoodle, 25/10); not "corrigida só a
+// primeira", "corrigidas, exceto a 2" (ProudCougar, 25/10). On a
+// folded text, without its marks
+const ALL_FIXED = /^\s*(?:(?:todas?|tudo|ambas|as\s+(?:\d+|duas|tres|quatro|cinco))\s+(?:(?:as\s+)?ressalvas\s+)?)?(?:(?:ja\s+)?(?:foram|estao)\s+)?(?:corrigid|resolvid|sanad|fixed|resolved)\w*(?:\s*\([^)]*\)|\s+(?:em|no|na|pelo|pela|por|in)\s+[^,;]*)?(?:\s*,?\s+(?:e|and)\s+(?:testad|verificad|conferid|validad|cobert|tested|verified)\w*(?:\s*\([^)]*\)|\s+(?:em|no|na|pelo|pela|por|com|in|by)\s+[^,;]*)?)?\s*\.?\s*$/;
 
 // the start of a line labeled a note with its severity, to the severity:
 // "**Ressalva 1 (média", "### Ressalva 2 — baixa", "Observação alta";
