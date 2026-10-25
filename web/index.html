@@ -36,6 +36,7 @@
     <div class="find"><input class="q" type="search" placeholder="Buscar pendências" aria-label="Buscar pendências" autocomplete="off"><select class="ref" aria-label="Projeto"></select></div>
     <div class="rows" role="listbox" aria-label="Pendências"></div>
     <button class="tell" type="button" data-act='{"$":"TasksTell"}' title="Suas respostas já estão salvas; o Unii as vê quando voltar a trabalhar. Este botão o chama agora." hidden>Avisar o Unii agora (<span></span>)</button>
+    <p class="pipe-go"><button type="button" class="link" data-go="/pipeline">Ver o painel da pipeline</button></p>
     <p class="keys"><kbd>j</kbd> <kbd>k</kbd> ou setas navegam · <kbd>Enter</kbd> abre · <kbd>/</kbd> busca · <kbd>m</kbd> alterna Mesa e Conversa · <kbd>Esc</kbd> volta</p>
   </nav>
   <section class="pane" aria-label="Pendência"></section>
@@ -71,6 +72,7 @@
 </aside>
 <div id="menu" popover>
   <button data-go="/settings">Settings</button>
+  <button data-go="/pipeline">Pipeline</button>
   <a href="/tree">Memory</a>
   <button class="imp">Import History</button>
   <div class="mcp"></div>

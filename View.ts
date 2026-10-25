@@ -17,6 +17,7 @@ import { GLYPH, WHO } from "./Theme.ts";
 import type { Timer } from "./Timer.ts";
 import type { Field, PrCheck, Task, Values } from "./Tasks.ts";
 import * as Deps from "./TaskDeps.ts";
+import type { Ci, Front, FrontPr, Live, Role, Sevs, Stage } from "./Pipeline.ts";
 
 // Types
 // =====
@@ -1732,4 +1733,93 @@ function entry_body(kind: Kind, text: string): Md.Block[] {
       return Md.md_parse(text);
     }
   }
+}
+
+// The pipeline's panel (R6)
+// -------------------------
+// Pipeline.ts reads where each front is; these say it, for the panel's
+// page (Html.pipeline_html)
+
+// a front's stage, as the panel says it
+export const STAGE_SAID: Record<Stage, string> = { impl: "implementando", verif: "verificando", user: "com você", others: "com terceiros", stalled: "parada com o Unii", closed: "encerrada" };
+
+// a PR's state and checks read live, as the panel says them
+export const PR_STATE_SAID: Record<Live["state"], string> = { OPEN: "aberto", MERGED: "mesclado", CLOSED: "fechado" };
+export const CI_SAID: Record<Ci, string> = { ok: "CI ok", failed: "CI falhou", running: "CI rodando", none: "sem CI" };
+
+// a role, as the panel says it
+export const ROLE_SAID: Record<Role, string> = { impl: "implementação", verif: "verificação", survey: "levantamento" };
+
+// how long, said short: "agora" under a minute, "12 min", "5 h" under 2
+// days, else "3 d"
+export function span_said(ms: number): string {
+  if (!(ms >= 60e3)) {
+    return "agora";
+  }
+  if (ms < 3600e3) {
+    return Math.floor(ms / 60e3) + " min";
+  }
+  return hours_said(ms);
+}
+
+// how long something took: span_said, but "menos de 1 min" under a
+// minute
+export function took_said(ms: number): string {
+  return ms >= 0 && ms < 60e3 ? "menos de 1 min" : span_said(ms);
+}
+
+// when, said short, in the page's time: "24/10 14:26"
+export function when_said(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return "";
+  }
+  const p = (n: number) => String(n).padStart(2, "0");
+  return p(d.getDate()) + "/" + p(d.getMonth() + 1) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+// notes counted by severity: "1 alta e 2 baixas"; "nenhuma" for none
+export function sevs_said(s: Sevs): string {
+  const by = (["high", "medium", "low"] as const).filter((v) => s[v] > 0);
+  return by.length === 0 ? "nenhuma" : and_said(by.map((v) => s[v] + " " + SEV_SAID[v][s[v] === 1 ? 0 : 1]));
+}
+
+// a PR's head live against the one verified: the same ("head igual ao
+// verificado"), or not ("head mudou: verificado X, agora Y"); "" when
+// either isn't known
+export function pr_head_said(p: FrontPr): { text: string; same: boolean } | null {
+  if (p.head === null || p.live === null || p.live.head === "") {
+    return null;
+  }
+  const same = p.live.head.startsWith(p.head) || p.head.startsWith(p.live.head);
+  return same ? { text: "head igual ao verificado (" + p.head.slice(0, 7) + ")", same } : { text: "head mudou: verificado " + p.head.slice(0, 7) + ", agora " + p.live.head.slice(0, 7), same };
+}
+
+// the panel's totals: the fronts active (not closed), with the user,
+// stalled with Unii; the median of cycles per PR (of the PRs verified)
+// and of the user's time to decide, over every front; and how long the
+// active fronts sat with no one at work (idle, summed)
+export type Totals = { active: number; user: number; stalled: number; cycles: number | null; decide: number | null; decided: number; idle: number };
+export function pipeline_totals(fronts: Front[]): Totals {
+  const active = fronts.filter((f) => f.stage !== "closed");
+  const cycles = fronts.flatMap((f) => f.prs.filter((p) => p.cycles > 0).map((p) => p.cycles));
+  const decide = fronts.flatMap((f) => f.decide);
+  return {
+    active: active.length,
+    user: active.filter((f) => f.stage === "user").length,
+    stalled: active.filter((f) => f.stage === "stalled").length,
+    cycles: median_of(cycles),
+    decide: median_of(decide),
+    decided: decide.length,
+    idle: active.reduce((n, f) => n + f.idle, 0),
+  };
+}
+
+export function median_of(xs: number[]): number | null {
+  if (xs.length === 0) {
+    return null;
+  }
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
