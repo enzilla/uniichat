@@ -403,3 +403,44 @@ test("a task of Unii's: dropping refused; Pode fechar closes it, said so; Cobrar
   clearTimeout(chat.tell);
   chat.tell = undefined;
 });
+
+// R5: an option that's an order to Unii (acts) tells it at once, with no
+// "Avisar" and no wait for the minute's batch
+test("acts: picking an option of Unii's starts its turn at once, said as an order; a report option waits for the batch", async () => {
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
+  const r = Tasks.task_new(s, { title: "Reiniciar com agentes rodando?", kind: "restart" }, "main", Date.now()) as Tasks.Task;
+  expect(r.choices).toEqual([Tasks.RESTART_YES, Tasks.RESTART_LATER]);
+  const before = ASKED.length;
+  expect(await act({ $: "task", task: r.id, state: "done", answer: Tasks.RESTART_YES })).toEqual({});
+  await idle();
+  expect(ASKED.length).toBe(before + 1);
+  expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain("[Pendências] Pendência " + r.id + " concluída pelo usuário: “Reiniciar com agentes rodando?”. Resposta: Sim, reinicie. Essa opção é uma ordem: cabe ao Unii executá-la.");
+  expect(chat.tell).toBeUndefined();
+  const l = Tasks.task_new(s, { title: "Reiniciar depois?", kind: "restart" }, "main", Date.now()) as Tasks.Task;
+  const mid = ASKED.length;
+  expect(await act({ $: "task", task: l.id, state: "done", answer: Tasks.RESTART_LATER })).toEqual({});
+  await idle();
+  expect(ASKED.length).toBe(mid);
+  expect(chat.tell).not.toBeUndefined();
+  clearTimeout(chat.tell);
+  chat.tell = undefined;
+});
+
+// R5 (P8): a restart Unii asked, taken as the server starts: said in the
+// chat and its resume a message that starts Unii's turn, once
+test("restart: the mark taken at start says it's back and starts a turn with what to resume, once", async () => {
+  const Restart = await import("./Restart.ts");
+  // asked by another process (pid), before this one started: its restart
+  Restart.mark_write(dir, { why: "aplicar a R5", resume: "Conferir o serve e seguir com a R6.", at: new Date(Date.now() - process.uptime() * 1000 - 2000).toISOString(), agents: [], task: null, done: false, used: [], pid: process.pid + 1 });
+  const before = ASKED.length;
+  Chat.back(chat);
+  await idle();
+  expect(ASKED.length).toBe(before + 1);
+  expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain("[Restart] The serve restarted as you asked");
+  expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain("Resume now: Conferir o serve e seguir com a R6.");
+  Chat.back(chat);
+  await idle();
+  expect(ASKED.length).toBe(before + 1);
+  expect(Restart.mark_read(dir)!.done).toBe(true);
+});

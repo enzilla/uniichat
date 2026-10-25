@@ -35,6 +35,7 @@ import PROMPT from "./prompt.txt" with { type: "text" };
 import COMPACT_PROMPT from "./compact.txt" with { type: "text" };
 import { EFFORTS, Pick } from "./Pick.ts";
 import * as Tasks from "./Tasks.ts";
+import * as Restart from "./Restart.ts";
 import * as Timer from "./Timer.ts";
 import type { Live } from "./View.ts";
 
@@ -86,6 +87,7 @@ type Hooks = {
   timed  : () => void;
   pick   : () => Pick;
   halt   : () => AbortSignal;
+  restart? : (how: Restart.How) => void; // the process restarted, as `how` says, once the tool answered (Server.ts)
 };
 
 // the tools: the chat's MCP servers
@@ -228,8 +230,20 @@ const FIELDS_SPEC = {
 const RECOMMEND_SPEC = { type: "string", description: "The choice you recommend (one of choices): the user sees it marked and takes it, with the fields' recommendations, in one click (\"Aceitar as recomendadas\"). Give it rather than writing \"(recomendado)\" in the choice. With choices and none recommended, the click only fills the fields' recommendations and the user still picks the choice." };
 
 // where a task came from, and its source's link (Tasks.ts)
-const ORIGIN_SPEC = { type: "string", description: "Where it came from: chat, timer, agent:<name>, slack or github. By default, where this turn came from: a schedule's message (timer), a subagent's report (agent:<name>), else chat." };
+const ORIGIN_SPEC = { type: "string", description: "Where it came from, always given (never taken from the turn): chat (the user asked for it), timer (a schedule's turn), agent:<name> (a subagent's report asked for it), slack or github. A task you add after an agent's report, of your own accord, is chat or timer, not that agent's." };
 const ORIGIN_URL_SPEC = { type: "string", description: "A link (http/https) to its source, such as the Slack message or the GitHub issue." };
+// the task's contract (R5, Tasks.ts): its pull requests as verified, who
+// acts on each choice, what outside the list it waits for, a new front
+const PRS_SPEC = {
+  type: "array",
+  description: "The pull requests it's about, each as verified: url (the GitHub pull link), head (the commit verified, 7 to 40 hex), verdict (approved, approved_with_notes, rejected, pending), verifier (the verifier agent's name), notes ([{sev: high, medium or low, text}]: its notes by severity), untested (what wasn't tested). Required for kind pr: a PR's approval without its link and head is refused. The views show each as a verification card.",
+  items: { type: "object", properties: { url: STR, head: STR, verdict: { type: "string", enum: ["approved", "approved_with_notes", "rejected", "pending"] }, verifier: STR, notes: { type: "array", items: { type: "object", properties: { sev: { type: "string", enum: ["high", "medium", "low"] }, text: STR }, required: ["sev", "text"] } }, untested: { type: "array", items: STR } }, required: ["url", "head"] },
+};
+const ACTS_SPEC = { type: "object", additionalProperties: { type: "string", enum: ["user", "unii"] }, description: "By choice, who acts once the user picks it: user (it reports what they did, \"Mesclado\") or unii (an order to you, \"Sim, reinicie\": you're told at once, not in the minute's batch). Choices not named: none said." };
+const WAITS_FOR_SPEC = { type: "string", description: "What outside the list it waits for (\"CI do #42\", \"merge no GitHub\"), beside after (tasks); \"\" for none." };
+const REF_SPEC = { type: "string", description: "Its front: one of the list's (an unknown one is refused, with the nearest and the list), as uniichat-ux or num-2337. \"\" for none." };
+const REF_NEW_SPEC = { type: "boolean", description: "true: ref starts a new front, added to the list. Only for a front truly new, never a variant of one listed." };
+const KIND_SPEC = "What it is, as when it's late counts, from when it became the user's to act on: pr (a PR's approval: needs prs) 24 h, decision 72 h, test 2 h, action (a step only the user can do) 24 h, restart (the serve's restart, only while agents are at work: with no choices it gets its template, \"Sim, reinicie\" (yours) or \"Eu reinicio depois\"; with none at work, use the restart tool) 24 h, info (only to read) never, priority low unless given, and listed after every task to act on; none: 24 h (a GitHub pull link in its title makes it pr, a title opening with \"Teste\" makes it test). Whatever its kind, a task of the user's that cites a GitHub pull in its title or detail needs prs. A late one only says so: it never expires.";
 const AGENT_SPEC = { type: "string", description: "The agent at work on it now, by name (its generated name or its label): for a task of yours, who follows it up, so the views show it and a task with no agent at work is seen as stalled. \"\" for none." };
 const BOSS: Spec[] = [
   spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees the view and the user's instructions, but knows what you want only from its task.", { tasks: { type: "array", items: STR }, labels: { type: "array", items: STR, description: "A short label per task, in the tasks' order, that the user reads as that subagent's name instead of its generated one: <project>-<role>, as num-3182-verifier or uniichat-links-impl. Give one for every task. You still name it by its generated name in tell, stop and zoom." }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." }, model: { type: "string", enum: MODELS, description: "Their model; by default, the one they'd run on. Set it ONLY when the user asks for that model or vendor in this chat, since another vendor may come with additional costs." } }, ["tasks"]),
@@ -245,7 +259,7 @@ const BOSS: Spec[] = [
   spec("stop", "Stop a subagent at once, by name, whatever it is doing (mid-call, waiting on a usage limit, running a tool on a device: that job is cancelled). Others keep running. Its report says it was stopped; its chat and work dir stay, so a later tell resumes it.", { name: STR, why: { type: "string", description: "Why, for its report." } }, ["name"]),
   spec("resume", "Wake every call on this server waiting for an AI service's usage limit (your turn, summaries), when the user says a limit was reset early. Each asks again once; one still limited waits again. A subagent at a usage limit ends and reports it instead: tell it to go on.", {}, []),
   // the pending list (Tasks.ts)
-  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with assignee \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. When one can only be resolved after another (a token before a test, a merge before a deploy), give it after: the user then sees only what they can do now, sorted by priority, then the tasks that free others, then the one theirs to act on longest. Give each its kind (pr, decision, test), which says when it is late. Several questions or decisions on one subject go in one task as fields (each answered apart, kept as a draft, all sent when the user concludes, in your next turn's block). The user may also talk with you in a task's thread without resolving it: their message reaches you marked \"[Pendência P7: …]\"; reply with task_reply. What the user resolves reaches you on its own, within a minute, in a \"[Pendências]\" message (several at once if they came together). On a task of yours (assignee \"unii\") the user can only ask after it (\"Cobrar agora\", a message in its thread) or tell you to close it (\"Pode fechar\", done by them): keep its agent set. Title: short, the action or question, in the user's language.", {
+  spec("task_add", "Add a task to the chat's pending list, which the user sees beside the chat and resolves there, whenever they can (done, with one of its choices and a comment, or dropped). Add one for each thing you need of the user (an approval, a product decision, a step only they can do, such as restarting a server) instead of leaving the question at the end of a reply, where it gets lost; and, with assignee \"unii\", for what you must follow up yourself. Each turn's message lists the open tasks and what the user changed since your last turn: check it first and never add one already open. When one can only be resolved after another (a token before a test, a merge before a deploy), give it after: the user then sees only what they can do now, sorted by priority, then the tasks that free others, then the one theirs to act on longest. Give each its origin (where it truly came from) and its kind (pr, decision, test, action, restart, info), which says when it is late; a PR's approval (kind pr) goes with its prs as verified (link, head, verdict, notes by severity, what wasn't tested), and an option that's an order to you (\"Sim, reinicie\") with acts. Several questions or decisions on one subject go in one task as fields (each answered apart, kept as a draft, all sent when the user concludes, in your next turn's block). The user may also talk with you in a task's thread without resolving it: their message reaches you marked \"[Pendência P7: …]\"; reply with task_reply. What the user resolves reaches you on its own, within a minute, in a \"[Pendências]\" message (several at once if they came together). On a task of yours (assignee \"unii\") the user can only ask after it (\"Cobrar agora\", a message in its thread) or tell you to close it (\"Pode fechar\", done by them): keep its agent set. Title: short, the action or question, in the user's language.", {
     title   : STR,
     detail  : { type: "string", description: "Markdown: the context needed to decide, with links." },
     assignee   : { type: "string", enum: ["user", "unii"], description: "Who is responsible, who must act; by default the user. (who: its older name, still read.)" },
@@ -254,13 +268,17 @@ const BOSS: Spec[] = [
     agent      : AGENT_SPEC,
     choices : { type: "array", items: STR, description: "Answers the user picks with one click (\"sim\", \"não\"), at most 9." },
     recommend : RECOMMEND_SPEC,
-    kind    : { type: "string", enum: ["pr", "decision", "test"], description: "What it is, as when it's late counts, from when it became the user's to act on: pr (a PR's approval) 24 h, decision 72 h, test 2 h; none: 24 h (a GitHub pull link in its title makes it pr, a title opening with \"Teste\" makes it test; a link only in its detail says nothing: give the kind). A late one only says so: it never expires." },
+    acts    : ACTS_SPEC,
+    kind    : { type: "string", enum: ["pr", "decision", "test", "action", "restart", "info"], description: KIND_SPEC },
+    prs     : PRS_SPEC,
+    waits_for : WAITS_FOR_SPEC,
     priority : { type: "string", enum: ["high", "normal", "low"], description: "Sorts \"Agora\": the higher first, then the one that frees more tasks, then the one the user could act on longest (since it became actionable, or since it was created). Normal by default; high only for what truly comes first." },
-    ref     : { type: "string", description: "What it belongs to: a project, an agent, a PR." },
+    ref     : REF_SPEC,
+    ref_new : REF_NEW_SPEC,
     after   : { type: "array", items: STR, description: "Ids of the tasks this one waits for (\"P3\"), the user's or yours: while any is open it's hidden from the user and can't be resolved; once all are closed it shows, and your next turn is told it was freed." },
     fields  : FIELDS_SPEC,
-  }, ["title"]),
-  spec("task_edit", "Change a task of the pending list, by its id (P7): its texts, choices, ref or the tasks it waits for (after), or its state: close (done, dropped) one that you resolved or that no longer applies, or open one again. Done is refused while it waits for open tasks (drop it, or change its after). A change by the user you haven't been told of yet stays to tell, even if you change the state meanwhile.", {
+  }, ["title", "origin"]),
+  spec("task_edit", "Change a task of the pending list, by its id (P7): its texts, choices, ref or the tasks it waits for (after), or its state: close (done, dropped) one that you resolved or that no longer applies, or open one again. Done is refused while it waits for open tasks (drop it, or change its after). A closed task keeps its kind, choices and acts (what the user picked from): open it again to change them. A change by the user you haven't been told of yet stays to tell, even if you change the state meanwhile.", {
     id      : STR,
     title   : STR,
     detail  : STR,
@@ -270,9 +288,13 @@ const BOSS: Spec[] = [
     agent      : AGENT_SPEC,
     choices : { type: "array", items: STR },
     recommend : { ...RECOMMEND_SPEC, description: RECOMMEND_SPEC.description + " \"\" for none." },
-    kind    : { type: "string", enum: ["pr", "decision", "test", ""], description: "pr, decision or test (when it's late); \"\" for none." },
+    acts    : { ...ACTS_SPEC, description: ACTS_SPEC.description + " Replaces them; changing the choices keeps those of the choices kept." },
+    kind    : { type: "string", enum: ["pr", "decision", "test", "action", "restart", "info", ""], description: "As task_add's; \"\" for none. Making it pr needs prs." },
+    prs     : { ...PRS_SPEC, description: "Its pull requests as verified, replacing the list (as task_add's): after a new verification, give the new head, verdict and notes." },
+    waits_for : WAITS_FOR_SPEC,
     priority : { type: "string", enum: ["high", "normal", "low"] },
-    ref     : STR,
+    ref     : REF_SPEC,
+    ref_new : REF_NEW_SPEC,
     state   : { type: "string", enum: ["open", "done", "dropped"] },
     answer  : STR,
     note    : { type: "string", description: "How it was resolved." },
@@ -280,6 +302,7 @@ const BOSS: Spec[] = [
     fields  : { ...FIELDS_SPEC, description: "Its fields, replacing the list (add or remove questions); [] for none. The user's draft answers to fields kept (same id) stay." },
   }, ["id"]),
   spec("task_reply", "Reply in a task's thread, where the user talks with you about it without resolving it (their messages reach you marked \"[Pendência P7: …]\"). It's then the user's turn there. Use it for every reply to such a message; a turn that ends without one puts its last reply there. You may also write first, to ask about a task. Reply in the user's language; Markdown.", { id: STR, text: STR }, ["id", "text"]),
+  spec("restart", "Restart the serve (this server), the user's standing leave (P8): only with no subagent at work, said in the chat before and after; never restart it by a shell command. Your turn ends with it: give resume, the task to go on with, which comes back to you as a \"[Restart]\" message that starts your turn once the serve is back. With agents at work it's refused: wait for their reports, or add a task of kind restart for the user (its template offers \"Sim, reinicie\", an order to you) and, once they pick it, call restart with that task's id.", { why: { type: "string", description: "What it's for, in the user's language (said in the chat)." }, resume: { type: "string", description: "What to do once it's back, whole: by then this turn is far back in the view." }, task: { type: "string", description: "The id of a task of kind restart the user resolved with an option of yours, to restart while agents are at work (each task lets one; one you closed yourself with task_edit lets none)." } }, ["why", "resume"]),
   spec("tasks", "List the pending list: the open tasks with their details; all: those closed in the last 7 days too; ref: only those whose ref contains it; id: that one whole.", { all: { type: "boolean" }, ref: STR, id: STR }, []),
 ];
 const DEVICE = { device: { type: "string", description: "The name of the device to run on, one listed under Devices." } };
@@ -538,6 +561,9 @@ export namespace Tools {
       case "skill": {
         return Tools.job(tools, String(args.device), { name, input: { name: String(args.name) }, cwd: "main" }, signal, id);
       }
+      case "restart": {
+        return Tools.restart(tools, args, Restart.how(process.env));
+      }
       case "task_add":
       case "task_edit":
       case "task_reply":
@@ -592,15 +618,51 @@ export namespace Tools {
     if (name === "tasks") {
       return { text: Tasks.tasks_list(s, args, now), fail: false };
     }
-    const t = name === "task_add" ? Tasks.task_new(s, args, who, now, tools.origin ?? "chat") : name === "task_reply" ? Tasks.task_reply(s, args.id, args.text, now) : Tasks.task_edit(s, args, now);
+    // the contract (R5): an origin given, a ref of the list's fronts
+    const held = name === "task_reply" ? { args, added: null } : Tasks.tool_args(s, name, args, Tasks.origin_read(tools.origin));
+    if (typeof held === "string") {
+      return { text: held, fail: true };
+    }
+    const t = name === "task_add" ? Tasks.task_new(s, held.args, who, now, null) : name === "task_reply" ? Tasks.task_reply(s, args.id, args.text, now) : Tasks.task_edit(s, held.args, now);
     if (typeof t === "string") {
       return { text: t, fail: true };
+    }
+    if (held.added !== null) {
+      Tasks.refs_add(s, held.added);
     }
     tools.hooks.change();
     if (name === "task_reply") {
       return { text: "Replied in " + t.id + "'s thread" + (t.state === "open" ? "; the user's turn there." : " (it's closed)."), fail: false };
     }
     return { text: (name === "task_add" ? "Added " : "Changed ") + Tasks.task_line(t, now, false, s.tasks).slice(2), fail: false };
+  }
+
+  // the restart tool (Restart.ts, P8): refused while agents are at work
+  // (unless a task of kind restart lets it), else the mark kept, said in
+  // the chat, and the process restarted by the server's hook
+  export function restart(tools: Tools, args: any, how: Restart.How): Out {
+    const why = Tasks.text_line(args.why, Restart.WHY);
+    if (why === "") {
+      return { text: "Give why: what the restart is for (it's said in the chat).", fail: true };
+    }
+    const dir = tools.mem.dir;
+    const given = args.task === undefined || args.task === null || String(args.task).trim() === "" ? null : String(args.task);
+    const task = given === null ? null : Tasks.task_find(Tasks.tasks_load(dir), given);
+    const had = Restart.mark_read(dir);
+    const used = had?.used ?? [];
+    const working = Tools.working(tools).map((a) => a.label === null || a.label === "" ? a.name : a.name + " (" + a.label + ")");
+    const no = Restart.check(how, working, task, given, used);
+    if (no !== null) {
+      return { text: no, fail: true };
+    }
+    if (tools.hooks.restart === undefined) {
+      return { text: "This server can't restart itself.", fail: true };
+    }
+    const mark: Restart.Mark = { why, resume: Tasks.text_body(args.resume, Restart.RESUME), at: new Date().toISOString(), agents: working, task: task?.id ?? null, done: false, used: [...used, ...(task === null ? [] : [task.id])].slice(-Restart.USED), pid: process.pid };
+    Restart.mark_write(dir, mark);
+    tools.hooks.note(Restart.said_before(mark));
+    tools.hooks.restart(how);
+    return { text: "Restarting in " + Restart.DELAY / 1000 + " s: this turn ends there. Once the serve is back, the chat is told it restarted and you get a \"[Restart]\" message, with what you gave as resume, that starts your turn.", fail: false };
   }
 
   // Devices

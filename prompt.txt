@@ -64,6 +64,10 @@ yesno): the user answers each apart and concludes once, and you get every
 answer in the block. The user may talk with you about a task without resolving
 it: their message comes marked "[Pendência P7: “title”]"; reply with
 task_reply (it shows in that task's thread), then go on as usual.
+To restart this server (the serve), use the restart tool, never a shell
+command: with no agent at work it restarts at once, said in the chat before and
+after, and what you give as resume comes back to you as a "[Restart]" message
+that starts your next turn, so you go on without the user.
 
 The user's computers that run unii's device now are listed at the start of each
 message. Your shell, read, write, edit and view_video tools run on the one

@@ -39,10 +39,13 @@ export const LATE = 24 * 60 * 60 * 1000;
 // then the one the user's to act on longest (ready_at: since it waits no
 // more, or was handed to them; else made) (P3).
 
-export type TaskKind = "pr" | "decision" | "test";
-export const KINDS: TaskKind[] = ["pr", "decision", "test"];
+// (R5, the task's contract: action, a step only the user can do, 24 h as
+// any; restart, the serve's restart (Restart.ts), 24 h; info, only to
+// read, never late)
+export type TaskKind = "pr" | "decision" | "test" | "action" | "restart" | "info";
+export const KINDS: TaskKind[] = ["pr", "decision", "test", "action", "restart", "info"];
 const H = 60 * 60 * 1000;
-export const LATE_BY: Record<TaskKind, number> = { pr: 24 * H, decision: 72 * H, test: 2 * H };
+export const LATE_BY: Record<TaskKind, number> = { pr: 24 * H, decision: 72 * H, test: 2 * H, action: 24 * H, restart: 24 * H, info: Infinity };
 
 export type Priority = "high" | "normal" | "low";
 export const PRIORITIES: Priority[] = ["high", "normal", "low"];
@@ -51,7 +54,18 @@ export const PRIORITIES: Priority[] = ["high", "normal", "low"];
 // priority nor ready)
 export type Timed = Dep & { title?: string; detail?: string; origin_url?: string | null; made: string; kind?: TaskKind | null; priority?: Priority | null; ready?: string | null };
 
-const PR_LINK = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
+// as people write it: https or http or no scheme, www. or not, any case
+// (not part of another host or path: evil.com/github.com/... isn't one).
+// The char before it is matched, not looked behind (Safari before 16.4
+// can't parse a lookbehind, and web/app.js holds this): the link is m[1]
+// (pr_link)
+export const PR_LINK = /(?:^|[^\w.\/@-])((?:https?:\/\/)?(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)/i;
+
+// the first PR link in s, as written; null: none
+export function pr_link(s: string): string | null {
+  const m = PR_LINK.exec(s);
+  return m === null ? null : m[1];
+}
 
 // a task's kind: the one given, else as its title says (a PR link in
 // it, or opening with "Teste"); null: none
@@ -81,7 +95,8 @@ export function priority_of(t: Timed): Priority {
   return t.priority != null && PRIORITIES.includes(t.priority) ? t.priority : "normal";
 }
 
-// the order of the open tasks free to resolve (P3): the higher priority
+// the order of the open tasks free to resolve (P3): those to act on
+// before those only to read (kind info, R5), then the higher priority
 // first, then the one that frees more, then the user's (a task of Unii's
 // is in "Agora" only when its thread is the user's turn), then the one
 // to act on longest (ready_at: since it waits no more or was handed to
@@ -97,7 +112,11 @@ export function now_order<T extends Timed & { assignee?: string }>(tasks: T[]): 
   const p = (t: T) => PRIORITIES.indexOf(priority_of(t));
   const age = (t: T) => Date.parse(ready_at(t)) || 0;
   const whose = (t: T) => (t.assignee === undefined || t.assignee === "user" ? 0 : 1);
-  return (a, b) => p(a) - p(b) || n(b) - n(a) || whose(a) - whose(b) || age(a) - age(b) || Number(a.id.slice(1)) - Number(b.id.slice(1));
+  // only to read (info): after every task to act on, whatever its
+  // priority, so an old one never stands first in "Agora" nor is the
+  // "Próxima" while another waits for the user
+  const read = (t: T) => (kind_of(t) === "info" ? 1 : 0);
+  return (a, b) => read(a) - read(b) || p(a) - p(b) || n(b) - n(a) || whose(a) - whose(b) || age(a) - age(b) || Number(a.id.slice(1)) - Number(b.id.slice(1));
 }
 
 // a list's tasks by id

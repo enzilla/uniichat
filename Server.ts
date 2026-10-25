@@ -37,6 +37,7 @@ import { write_whole } from "./Write.ts";
 import * as Timer from "./Timer.ts";
 import * as TaskPush from "./TaskPush.ts";
 import * as Tasks from "./Tasks.ts";
+import * as Restart from "./Restart.ts";
 import { PROMPTS, SEARCHES, Tools, type Agent, type Live } from "./Tools.ts";
 import { FRAME, IMAGES, live_push, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
@@ -239,6 +240,7 @@ export namespace Chat {
       timed  : () => Chat.timed(chat),
       pick   : () => chat.pick,
       halt   : () => chat.halt.signal,
+      restart : (how) => Chat.restart(how),
     });
     const pick = Pick.load(mem.pick, config.OFFER, config.PICK);
     const chat: Chat = {
@@ -270,7 +272,37 @@ export namespace Chat {
     Memory.pump(mem);
     Chat.progress(chat);
     Chat.resume(chat, mem.work).finally(() => Chat.change(chat)).catch((err) => console.error("unii: resuming the chat: " + (err?.message ?? err)));
+    Chat.back(chat);
     return chat;
+  }
+
+  // a restart Unii asked (the restart tool, Restart.ts) taken as the
+  // server starts: said in the chat (after, as it was before), and what
+  // Unii gave to resume, a message that starts its turn, as a timer's
+  // does, so work goes on with no prompt of the user's
+  export function back(chat: Chat): void {
+    const mark = Restart.mark_take(chat.mem.dir);
+    if (mark === null) {
+      return;
+    }
+    Chat.note(chat, Restart.said_after(mark));
+    Chat.hold(chat, () => Chat.take(chat, { ...Chat.push(chat, null, "work", Restart.resume_said(mark)), origin: "timer" }));
+  }
+
+  // the process restarted, as the restart tool asked (Restart.DELAY on,
+  // so its answer and the chat's note reach the views): a command run
+  // apart from it (UNII_RESTART), or its exit, systemd starting it again
+  export function restart(how: Restart.How): void {
+    setTimeout(() => {
+      if (how === "exit") {
+        console.log("unii: restarting, as Unii asked (the restart tool): exiting for systemd to start it again");
+        process.exit(0);
+      }
+      if (how !== null) {
+        console.log("unii: restarting, as Unii asked (the restart tool): " + how.cmd);
+        Bun.spawn(["setsid", "-f", "sh", "-c", how.cmd], { stdio: ["ignore", "ignore", "ignore"] });
+      }
+    }, Restart.DELAY);
   }
 
   // what a call of the chat starts with: its system prompt, the user
@@ -1271,8 +1303,9 @@ export namespace Chat {
         if (typeof t === "string") {
           return { error: t };
         }
-        const go = msg.go === true || msg.go === "true";
         const was = t ?? Tasks.task_find(s, msg.task);
+        // a choice that's an order to Unii (acts, R5) tells it at once
+        const go = msg.go === true || msg.go === "true" || (t !== null && t.state === "done" && Tasks.task_act(t) === "unii");
         if (t !== null || (go && was !== null && !was.told)) {
           Chat.resolved(chat, [was!], go);
         }

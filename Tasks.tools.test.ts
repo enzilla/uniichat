@@ -26,10 +26,10 @@ test("only the master has the tools", () => {
 });
 
 test("add, edit, list; each change told to the views; tasks.json kept", async () => {
-  const add = await call("task_add", { title: "Abrir PR no fork?", choices: ["sim", "não"], ref: "uniichat", detail: "[PR](https://github.com/morum/uniichat/pull/2)" });
-  expect(add).toEqual({ text: "Added P1 [user] Abrir PR no fork? options: sim | não (ref uniichat, from chat, 0m)", fail: false });
+  const add = await call("task_add", { title: "Abrir PR no fork?", origin: "chat", choices: ["sim", "não"], ref: "uniichat", ref_new: true, detail: "[PR](https://github.com/morum/uniichat/pull/2)", prs: [{ url: "https://github.com/morum/uniichat/pull/2", head: "739a8be" }] });
+  expect(add).toEqual({ text: "Added P1 [user] Abrir PR no fork? options: sim | não (ref uniichat, from chat, pr https://github.com/morum/uniichat/pull/2 @739a8be pending, 0m)", fail: false });
   expect(changes).toBe(1);
-  const twin = await call("task_add", { title: "abrir pr no fork?" });
+  const twin = await call("task_add", { title: "abrir pr no fork?", origin: "chat" });
   expect(twin.fail).toBe(true);
   expect(changes).toBe(1);
   const edit = await call("task_edit", { id: "P1", state: "done", answer: "sim", note: "mesclado" });
@@ -45,9 +45,9 @@ test("add, edit, list; each change told to the views; tasks.json kept", async ()
 });
 
 test("after through the tools: waits and frees said; a cycle refused, nothing changed", async () => {
-  const a = await call("task_add", { title: "Salvar o token xoxp" });
+  const a = await call("task_add", { title: "Salvar o token xoxp", origin: "chat" });
   const id = a.text.split(" ")[1];
-  const b = await call("task_add", { title: "Ligar o MCP", who: "unii", after: [id] });
+  const b = await call("task_add", { title: "Ligar o MCP", origin: "chat", who: "unii", after: [id] });
   expect(b.text).toContain(" waits for " + id);
   const bid = b.text.split(" ")[1];
   const n = changes;
@@ -61,11 +61,11 @@ test("after through the tools: waits and frees said; a cycle refused, nothing ch
 
 test("fields and the thread by the tools: added, refused when wrong, replied to, listed whole", async () => {
   const fields = [{ id: "amb", label: "Ambiente", kind: "choice", choices: ["hom", "prod"] }, { id: "obs", label: "Obs", kind: "text", required: false }];
-  const add = await call("task_add", { title: "Aplicar onde?", fields });
+  const add = await call("task_add", { title: "Aplicar onde?", origin: "chat", fields });
   expect(add.fail).toBe(false);
   expect(add.text).toContain("fields: amb* \"Ambiente\" (choice: hom | prod); obs \"Obs\" (text)");
   const id = add.text.split(" ")[1];
-  expect((await call("task_add", { title: "Outra", fields: [{ id: "x", label: "X", kind: "choice", choices: ["só"] }] })).text).toBe("Field x (choice) needs at least 2 choices.");
+  expect((await call("task_add", { title: "Outra", origin: "chat", fields: [{ id: "x", label: "X", kind: "choice", choices: ["só"] }] })).text).toBe("Field x (choice) needs at least 2 choices.");
   expect((await call("task_edit", { id, fields: "nope" })).fail).toBe(true);
   const s = Tasks.tasks_load(DIR);
   Tasks.task_draft(s, id, { amb: "prod" });

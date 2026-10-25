@@ -67,7 +67,7 @@ test("P3: Agora by priority, then how many it frees, then the oldest; the server
 
 test("kind and priority: given, checked, changed, cleared; kept on disk; an older list's read as none and normal", () => {
   const s = T.tasks_load(dir);
-  expect(T.task_new(s, { title: "x", kind: "bug" }, "main", NOW)).toBe('kind is one of pr, decision, test ("" for none).');
+  expect(T.task_new(s, { title: "x", kind: "bug" }, "main", NOW)).toBe('kind is one of pr, decision, test, action, restart, info ("" for none).');
   expect(T.task_new(s, { title: "x", priority: "urgente" }, "main", NOW)).toBe("priority is one of high, normal, low.");
   expect(s.tasks.length).toBe(0);
   const t = add(s, { title: "Decidir", kind: "Decision", priority: " HIGH " });
@@ -99,7 +99,7 @@ test("P4: the kind, given or as its title says, sets when it's late: PR 24 h, de
   const s = T.tasks_load(dir);
   add(s, { title: "Decidir a frente", kind: "decision" });                                  // P1
   add(s, { title: "Teste do push" });                                                       // P2
-  add(s, { title: "Mesclar https://github.com/morum/uniichat/pull/16" });                    // P3
+  add(s, { title: "Mesclar https://github.com/morum/uniichat/pull/16", prs: [{ url: "https://github.com/morum/uniichat/pull/16", head: "a9e8586" }] }); // P3
   add(s, { title: "Outra coisa" });                                                         // P4
   const tasks = T.tasks_view(s, NOW);
   const late = (id: string, h: number) => View.task_late_said(tasks.find((t) => t.id === id)!, new Set(), NOW + h * H + 1);
@@ -187,9 +187,9 @@ test("P4: a PR link only in the detail or origin doesn't make it a PR; in the ti
   expect(Deps.kind_of({ ...base, title: "Aprovar " + pr, kind: "decision" })).toBe("decision");
   expect(Deps.kind_of({ ...base, title: "Aprovar o PR", detail: pr, kind: "pr" })).toBe("pr");
   const s = T.tasks_load(dir);
-  add(s, { title: "Decidir o rumo", detail: "contexto: " + pr, kind: "decision" });   // P1
-  add(s, { title: "Teste depois do merge", detail: pr });                             // P2
-  add(s, { title: "Escolher a frente", detail: pr });                                 // P3
+  add(s, { title: "Decidir o rumo", detail: "contexto: " + pr, kind: "decision", prs: [{ url: pr, head: "88f1899" }] });   // P1
+  add(s, { title: "Teste depois do merge", detail: pr, prs: [{ url: pr, head: "88f1899" }] });                             // P2
+  add(s, { title: "Escolher a frente", detail: pr, prs: [{ url: pr, head: "88f1899" }] });                                 // P3
   const tasks = T.tasks_view(s, NOW);
   const late = (id: string, h: number) => View.task_late_said(tasks.find((t) => t.id === id)!, new Set(), NOW + h * H + 1);
   // the decision citing a PR: 72 h, not 24 h; the test: 2 h; none: 24 h (the default, not the PR's)

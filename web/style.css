@@ -534,6 +534,31 @@ body.desk footer > :not(#toast) { display: none; }
 #desk article .prs { margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
 #desk article .prs a.pr { color: var(--ink); text-decoration: none; border: 1px solid var(--frame); padding: 2px 8px; }
 #desk article .prs a.pr:hover { background: var(--hover); }
+/* the task's contract (R5): each PR verified a card (its link, the head
+   verified, the verdict, the notes by severity, what wasn't tested); a
+   rejected one framed red, notes high red, medium framed; an option
+   that's an order to Unii tagged; what it waits for outside, quiet */
+#desk article .checks { margin: 0 0 10px; display: grid; gap: 8px; }
+#desk article .check { padding: 8px 10px; border: 1px solid var(--frame); border-radius: 10px; font-size: 14px; }
+#desk article .check.rejected { border-color: var(--red); }
+#desk article .check-head { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+#desk article .check-head a.pr { color: var(--ink); text-decoration: none; border: 1px solid var(--frame); padding: 2px 8px; }
+#desk article .check-head a.pr:hover { background: var(--hover); }
+#desk article .check-head code.head { font: 12.5px var(--mono); }
+#desk article .check-head .verdict { font-weight: 600; }
+#desk article .check.rejected .verdict { color: var(--red); }
+#desk article .check-head .count { color: var(--mid); font-size: 12.5px; }
+#desk article .check .notes { margin: 6px 0 0; padding-left: 18px; }
+#desk article .check .notes li { margin: 2px 0; overflow-wrap: anywhere; }
+#desk article .check .sev-tag { display: inline-block; padding: 0 5px; border-radius: 5px; border: 1px solid var(--frame); font-size: 11px; font-weight: 600; line-height: 1.5; }
+#desk article .check .sev.high .sev-tag { color: var(--red); border-color: currentColor; }
+#desk article .check .sev.medium .sev-tag { border-color: var(--ink); }
+#desk article .check .untested { margin: 6px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+:is(#tasks, #desk) .act-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 5px; border: 1px dashed currentColor; font-size: 11px; font-weight: 600; line-height: 1.5; vertical-align: 1px; }
+:is(#tasks, #desk) .waits-for { color: var(--mid); }
+@media (pointer: coarse) {
+  #desk article .check-head a.pr { padding: 10px 10px; }
+}
 :is(#tasks, #desk) .lead { font-size: 12.5px; color: var(--mid); }
 :is(#tasks, #desk) .field[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
 :is(#tasks, #desk) .field[aria-invalid="true"] legend::after { content: " — obrigatório"; color: var(--red); font-weight: 400; }
