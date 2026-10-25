@@ -88,6 +88,7 @@ type Hooks = {
   pick   : () => Pick;
   halt   : () => AbortSignal;
   restart? : (how: Restart.How) => void; // the process restarted, as `how` says, once the tool answered (Server.ts)
+  agents?  : () => void; // an agent started: AGENTES.md written again (Pipeline.agents_md; as it ends, its report does it, Server.ts Chat.report)
 };
 
 // the tools: the chat's MCP servers
@@ -901,6 +902,7 @@ export namespace Tools {
       for (let more = true; more; ) {
         agent.call = AskAI.ask(Tools.ask(tools, agent), (ev) => tools.hooks.on(agent, ev));
         tools.hooks.change();
+        tools.hooks.agents?.();
         const end = await agent.call.done;
         agent.call = null;
         agent.replies.push(end.ok ? end.text : agent.why ?? "failed: " + end.text);

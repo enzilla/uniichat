@@ -11,6 +11,7 @@ import * as Md from "../../Md.ts";
 import { EFFORTS, LABELS, Pick, VENDORS } from "../../Pick.ts";
 import type { Key, Page, Row } from "../../Settings.ts";
 import type { Field, Task } from "../../Tasks.ts";
+import type * as Pipeline from "../../Pipeline.ts";
 import * as Deps from "../../TaskDeps.ts";
 import * as Theme from "../../Theme.ts";
 import * as Timer from "../../Timer.ts";
@@ -820,4 +821,89 @@ function span_html(s: Md.Span): string {
       return `<button class="name" title="${esc(s.x)}"${act_html({ $: "Goto", name: s.x })}>[${shown}]</button>`;
     }
   }
+}
+
+// The pipeline's panel (R6)
+// =========================
+// The page /pipeline (main.ts pipeline): each front (a task's ref) where
+// it is and since when, its cycles of verification, the notes still
+// open, its PRs live, and its metrics (Pipeline.ts reads them; View.ts
+// says them). panel null: not read (why says so); refreshing: PRs are
+// being read, the page asks again; opened: the fronts shown open (null:
+// those with the user or stalled, as the page opens)
+
+export function pipeline_html(panel: Pipeline.Panel | null, now = Date.now(), why = "", opened: Set<string> | null = null): string {
+  const head = `<a class="back" href="/" data-go="/">← Voltar</a><h1>Pipeline</h1>`;
+  if (panel === null) {
+    return head + `<p class="pipe-none">${esc(why || "Não foi possível ler o painel.")}</p><button type="button" class="chip pipe-reload">Tentar de novo</button>`;
+  }
+  const t = View.pipeline_totals(panel.fronts);
+  const card = (n: string, what: string, note = "") => `<div class="pipe-total"><b>${esc(n)}</b><span>${esc(what)}</span>${note === "" ? "" : `<small>${esc(note)}</small>`}</div>`;
+  const totals = `<section class="pipe-totals" aria-label="Resumo">`
+    + card(String(t.active), t.active === 1 ? "frente ativa" : "frentes ativas")
+    + card(String(t.user), "com você")
+    + card(String(t.stalled), t.stalled === 1 ? "parada com o Unii" : "paradas com o Unii")
+    + card(t.cycles === null ? "—" : num_said(t.cycles), "ciclos por PR", "mediana")
+    + card(t.decide === null ? "—" : View.took_said(t.decide), "até a sua decisão", t.decided === 0 ? "nenhuma decisão registrada" : "mediana de " + t.decided + (t.decided === 1 ? " decisão" : " decisões"))
+    + card(View.span_said(t.idle), "tempo parado", "frentes ativas, sem agente e sem você")
+    + `</section>`;
+  const read = `<p class="pipe-read">Lido às ${esc(View.when_said(panel.at).slice(6))}${panel.refreshing ? " · lendo o estado dos PRs no GitHub…" : ""} · <button type="button" class="link pipe-reload">Atualizar</button></p>`;
+  const active = panel.fronts.filter((f) => f.stage !== "closed");
+  const closed = panel.fronts.filter((f) => f.stage === "closed");
+  const list = active.length === 0 ? `<p class="pipe-none">Nenhuma frente ativa.</p>` : `<ol class="pipe-fronts">${active.map((f) => `<li>${front_html(f, now, opened === null ? f.stage === "user" || f.stage === "stalled" : opened.has(f.ref))}</li>`).join("")}</ol>`;
+  const old = closed.length === 0 ? "" : `<details class="pipe-closed"><summary>Encerradas (${closed.length})</summary><ol class="pipe-fronts">${closed.map((f) => `<li>${front_html(f, now, opened !== null && opened.has(f.ref))}</li>`).join("")}</ol></details>`;
+  return head + read + totals + list + old;
+}
+
+// a number said in pt-BR: "2", "2,5"
+function num_said(n: number): string {
+  return (Math.round(n * 10) / 10).toString().replace(".", ",");
+}
+
+// a front: its summary (ref, stage and since when, cycles, notes open),
+// then its tasks open, PRs, cycles and metrics
+function front_html(f: Pipeline.Front, now: number, open: boolean): string {
+  const since = View.span_said(now - Date.parse(f.since));
+  const notes = f.stage === "closed" ? "" : f.fixing ? " · ressalvas em correção" : " · ressalvas abertas: " + View.sevs_said(f.open);
+  const sum = `<summary><b class="pipe-ref">${esc(f.ref)}</b> <span class="pipe-stage ${f.stage}">${esc(View.STAGE_SAID[f.stage])}</span> <span class="pipe-meta">${f.stage === "closed" ? "desde " + esc(View.when_said(f.since)) : "há " + esc(since)} · ${f.cycles.length} ${f.cycles.length === 1 ? "ciclo" : "ciclos"}${esc(notes)}</span></summary>`;
+  const tasks = f.tasks.length === 0 ? "" : `<h3>Pendências abertas</h3><ul class="pipe-tasks">${f.tasks.map((t) => `<li><button type="button" class="link" data-desk="${esc(t.id)}">${esc(t.id)}</button> <span class="pipe-who">${t.assignee === "user" ? "sua" : "do Unii"}</span> ${esc(t.title)}</li>`).join("")}</ul>`;
+  const working = f.runs.filter((r) => r.state === "working");
+  const now_ = working.length === 0 ? "" : `<h3>Agentes trabalhando</h3><ul class="pipe-runs">${working.map((r) => `<li>${run_html(r)} · desde ${esc(View.when_said(r.start))}</li>`).join("")}</ul>`;
+  const prs = f.prs.length === 0 ? "" : `<h3>PRs</h3><ul class="pipe-prs">${f.prs.map(pr_html).join("")}</ul>`;
+  const cycles = f.cycles.length === 0 ? `<p class="pipe-none">Nenhuma verificação registrada.</p>` : `<h3>Ciclos de verificação</h3><ol class="pipe-cycles">${f.cycles.map((c) => cycle_html(c)).join("")}</ol>`;
+  const decide = f.decide.length === 0 ? "nenhuma decisão sua registrada" : "mediana " + View.took_said(View.median_of(f.decide)!) + ", máximo " + View.took_said(Math.max(...f.decide)) + " (" + f.decide.length + (f.decide.length === 1 ? " decisão" : " decisões") + ")";
+  const verified = f.prs.filter((p) => p.cycles > 0);
+  const per = verified.length === 0 ? "nenhum PR verificado" : verified.map((p) => p.key + ": " + p.cycles).join(" · ");
+  const metrics = `<h3>Métricas</h3><dl class="pipe-metrics"><dt>Tempo parado</dt><dd>${esc(View.span_said(f.idle))} <small>sem agente trabalhando e sem pendência sua, desde ${esc(View.when_said(f.first))}</small></dd><dt>Até a sua decisão</dt><dd>${esc(decide)}</dd><dt>Ciclos por PR</dt><dd>${esc(per)}</dd></dl>`;
+  return `<details class="pipe-front" data-ref="${esc(f.ref)}"${open ? " open" : ""}>${sum}<div class="pipe-body">${tasks}${now_}${prs}${cycles}${metrics}</div></details>`;
+}
+
+// an agent's run: its name, and its label after it
+function run_html(r: Pipeline.Run): string {
+  return `<span class="pipe-agent">${esc(r.name)}</span>${r.label === null ? "" : ` <small class="pipe-label">${esc(r.label)}</small>`}`;
+}
+
+// a PR: its link (or key), state and checks live, the head verified
+// against the head now, cycles and last verdict
+function pr_html(p: Pipeline.FrontPr): string {
+  const name = p.url === null ? `<span class="pipe-pr">${esc(p.key)}</span>` : `<a class="pipe-pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.key)}</a>`;
+  const live = p.live === null ? `<span class="pipe-tag">${p.url === null ? "sem link: estado desconhecido" : "estado não lido"}</span>`
+    : `<span class="pipe-tag ${p.live.state.toLowerCase()}">${esc(View.PR_STATE_SAID[p.live.state])}</span>` + (p.live.state === "OPEN" ? ` <span class="pipe-tag ci-${p.live.ci}">${esc(View.CI_SAID[p.live.ci])}</span>` : "");
+  const head = View.pr_head_said(p);
+  const said = head === null ? (p.head === null ? "" : ` · verificado em ${esc(p.head.slice(0, 7))}`) : ` · <span class="${head.same ? "" : "pipe-warn"}">${esc(head.text)}</span>`;
+  const verdict = p.verdict === null ? "" : ` · ${esc(View.VERDICT_SAID[p.verdict])}`;
+  return `<li>${name} ${live}${said} · ${p.cycles} ${p.cycles === 1 ? "ciclo" : "ciclos"}${verdict}</li>`;
+}
+
+// a cycle: its number, when, the verifier, verdict and notes, the PRs
+// it checked at their heads, the work it checked
+function cycle_html(c: Pipeline.Cycle): string {
+  const r = c.run;
+  const verdict = r.state === "working" ? "verificando" : r.state === "cut" ? "interrompida sem veredito" : r.verdict === null ? "veredito não lido do relato" : View.VERDICT_SAID[r.verdict];
+  const notes = r.verdict === null || r.verdict === "approved" ? "" : r.noted ? " · ressalvas: " + View.sevs_said(r.notes) : " · ressalvas sem gravidade no relato";
+  const prs = r.prs.length === 0 ? "" : ` · ${esc(r.prs.map((k) => k + (r.heads[k] === undefined ? "" : " em " + r.heads[k].slice(0, 7))).join(", "))}`;
+  const work = c.after.length === 0 ? "" : `<small class="pipe-work">verificou o trabalho de ${c.after.map((w) => esc(w.name) + (w.label === null ? "" : " (" + esc(w.label) + ")")).join(", ")}</small>`;
+  const dur = r.state === "working" ? "" : " · " + View.took_said(Date.parse(r.end) - Date.parse(r.start));
+  const cls = r.verdict === "rejected" ? "rejected" : r.verdict === "approved_with_notes" ? "notes" : r.verdict === "approved" ? "approved" : "";
+  return `<li class="${cls}"><span class="pipe-n">Ciclo ${c.n}</span> ${esc(View.when_said(r.start))}${esc(dur)} · ${run_html(r)} · <b class="pipe-verdict">${esc(verdict)}</b>${esc(notes)}${prs}${work}</li>`;
 }

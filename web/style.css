@@ -731,3 +731,55 @@ body.desk footer > :not(#toast) { display: none; }
 .profiles :is(.grip, .out):is(:hover, :focus-visible) { background: var(--hover); color: var(--ink); }
 .profiles .pnew { margin-top: 6px; }
 @media (pointer: coarse) { .profiles :is(.grip, .out) { width: 44px; height: 44px; } }
+/* the pipeline's panel (R6; Html.pipeline_html), a page in #account:
+   the totals, then each front a <details>: its stage, tasks, PRs live,
+   cycles of verification and metrics */
+#account.pipe { width: min(1080px, 100% - 40px); }
+#desk .pipe-go { margin: 0; padding: 8px 14px 0; border-top: 1px solid var(--hair); font-size: 13px; }
+:is(#account, #desk) button.link { padding: 0; border: 0; background: none; font: inherit; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+#account .pipe-read { margin: -12px 0 18px; font-size: 13.5px; color: var(--mid); }
+#account .pipe-none { color: var(--mid); }
+#account .pipe-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 0 0 22px; border-top: 0; }
+#account .pipe-total { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border: 1px solid var(--hair); border-radius: 10px; }
+#account .pipe-total b { font: 600 24px/1.1 var(--sans); font-variant-numeric: tabular-nums; }
+#account .pipe-total span { font-size: 13.5px; }
+#account .pipe-total small { font-size: 12px; color: var(--mid); }
+#account .pipe-fronts { margin: 0; padding: 0; list-style: none; }
+#account .pipe-fronts > li { border-top: 1px solid var(--hair); }
+#account .pipe-front > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 12px 0; cursor: pointer; list-style: none; }
+#account .pipe-front > summary::-webkit-details-marker { display: none; }
+#account .pipe-front > summary::before { content: "▸"; width: 1em; color: var(--mid); }
+#account .pipe-front[open] > summary::before { content: "▾"; }
+#account .pipe-front > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 6px; }
+#account .pipe-ref { font-size: 16px; overflow-wrap: anywhere; }
+#account .pipe-meta { font-size: 13.5px; color: var(--mid); }
+#account .pipe-stage { padding: 1px 8px; border: 1px solid var(--frame); border-radius: 99px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+#account .pipe-stage.user { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+#account .pipe-stage.stalled { color: var(--red); border-color: currentColor; }
+#account .pipe-stage.closed { color: var(--mid); font-weight: 500; }
+#account .pipe-body { padding: 0 0 18px 1.4em; font-size: 14px; }
+#account .pipe-body h3 { margin: 14px 0 6px; font: 600 12px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--mid); }
+#account .pipe-body :is(ul, ol) { margin: 0; padding: 0; list-style: none; }
+#account .pipe-body li { padding: 5px 0; overflow-wrap: anywhere; }
+#account .pipe-body li + li { border-top: 1px solid var(--hair); }
+#account .pipe-who, #account .pipe-tag { display: inline-block; padding: 0 6px; border: 1px solid var(--frame); border-radius: 5px; font-size: 12px; line-height: 1.6; white-space: nowrap; }
+#account .pipe-tag.merged { border-color: var(--add); color: var(--add); }
+#account .pipe-tag.ci-failed, #account .pipe-warn { color: var(--red); border-color: currentColor; }
+#account .pipe-warn { font-weight: 600; }
+#account .pipe-pr { font-weight: 600; color: var(--ink); }
+#account .pipe-n { font-weight: 600; font-variant-numeric: tabular-nums; }
+#account .pipe-work, #account .pipe-metrics small { display: block; color: var(--mid); font-size: 12.5px; }
+#account .pipe-label { color: var(--mid); font-size: 12.5px; }
+#account .pipe-cycles li.rejected .pipe-verdict { color: var(--red); }
+#account .pipe-cycles li.approved .pipe-verdict { color: var(--add); }
+#account .pipe-metrics { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
+#account .pipe-metrics dt { color: var(--mid); }
+#account .pipe-metrics dd { margin: 0; }
+#account .pipe-closed > summary { padding: 14px 0; border-top: 1px solid var(--hair); cursor: pointer; font-weight: 600; }
+@media (max-width: 600px) {
+  #account.pipe { width: calc(100% - 28px); }
+  #account .pipe-totals { grid-template-columns: 1fr 1fr; }
+  #account .pipe-body { padding-left: 0; }
+  #account .pipe-metrics { grid-template-columns: 1fr; gap: 2px; }
+  #account .pipe-metrics dd { margin-bottom: 8px; }
+}

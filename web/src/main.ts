@@ -119,7 +119,7 @@ async function boot(): Promise<void> {
   if (new URLSearchParams(location.search).has("mesa")) {
     sessionStorage.setItem(kept("mode"), "desk");
   }
-  history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : "/");
+  history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : location.pathname === PIPE ? PIPE : "/");
   if (await boot_me() === null) {
     solo("Sign in", "This UniiChat server is private. On the computer it runs on, run <code>unii serve link</code> and open the link it prints here.");
     return;
@@ -152,6 +152,9 @@ async function boot_me(): Promise<any> {
 
 // the settings page's paths, drawn in #account (/account: an older link)
 const PAGES = ["/settings", "/account"];
+
+// the pipeline's panel (R6), a page drawn in #account too
+const PIPE = "/pipeline";
 
 // a page of one note: how to sign in
 function solo(title: string, sub: string): void {
@@ -326,6 +329,10 @@ function click(ev: MouseEvent): void {
     return;
   }
   if (el.dataset.desk !== undefined) {
+    // from the pipeline's panel: the Mesa, a step of the history
+    if (location.pathname === PIPE) {
+      history.pushState(null, "", "/");
+    }
     desk_open(el.dataset.desk, true);
     return;
   }
@@ -752,7 +759,7 @@ function desk_choose(): void {
   P.chose = true;
   const was = sessionStorage.getItem(kept("mode"));
   const mode = was === "desk" || was === "chat" ? was : View.desk_turn(v.tasks) ? "desk" : "chat";
-  if (mode !== P.mode && PAGES.includes(location.pathname) === false) {
+  if (mode !== P.mode && PAGES.includes(location.pathname) === false && location.pathname !== PIPE) {
     desk_mode(mode, false);
   }
 }
@@ -1485,7 +1492,8 @@ function go(path: string): void {
 
 // the settings page keeps of the footer only its toasts (style.css)
 function route(): void {
-  const page = PAGES.includes(location.pathname);
+  const pipe = location.pathname === PIPE;
+  const page = PAGES.includes(location.pathname) || pipe;
   const st = history.state ?? {};
   if (st.mode === "desk" || st.mode === "chat") {
     P.mode = st.mode;
@@ -1504,10 +1512,43 @@ function route(): void {
   // the chat shown again: its rows drawn anew, at its bottom
   P.rows = true;
   P.shown = location.pathname + (desk ? "/mesa" : "");
-  if (page) {
+  $("#account").classList.toggle("pipe", pipe);
+  if (pipe) {
+    pipeline();
+  } else if (page) {
     account();
   }
   draw(false);
+}
+
+// The pipeline's panel
+// --------------------
+// /api/pipeline read and drawn (Html.pipeline_html); while the server
+// reads PRs live (refreshing), read again in PIPE_AGAIN, PIPE_TRIES times
+// at most; the fronts open stay open
+const PIPE_AGAIN = 4000;
+const PIPE_TRIES = 5;
+let PIPED = 0;
+async function pipeline(tries = 0): Promise<void> {
+  const el = $("#account");
+  const run = ++PIPED;
+  if (tries === 0 && el.querySelector(".pipe-totals") === null) {
+    el.innerHTML = `<a class="back" href="/" data-go="/">← Voltar</a><h1>Pipeline</h1><p class="pipe-read">Lendo…</p>`;
+  }
+  const got = await fetch("/api/pipeline").catch(() => null);
+  const panel = got !== null && got.ok ? await got.json().catch(() => null) : null;
+  if (run !== PIPED || location.pathname !== PIPE) {
+    return;
+  }
+  const shown = el.querySelectorAll<HTMLDetailsElement>("details.pipe-front");
+  const opened = shown.length === 0 ? null : new Set([...shown].filter((d) => d.open).map((d) => d.dataset.ref ?? ""));
+  const y = scrollY;
+  el.innerHTML = Html.pipeline_html(panel, Date.now(), got === null ? "Sem conexão com o UniiChat." : "Não foi possível ler o painel (" + (got.status || "erro") + ").", opened);
+  scrollTo(0, y);
+  el.querySelectorAll<HTMLButtonElement>(".pipe-reload").forEach((b) => (b.onclick = () => pipeline()));
+  if (panel?.refreshing === true && tries < PIPE_TRIES) {
+    setTimeout(() => run === PIPED && location.pathname === PIPE && pipeline(tries + 1), PIPE_AGAIN);
+  }
 }
 
 async function account(): Promise<void> {

@@ -1906,6 +1906,62 @@ function entry_body(kind, text) {
     }
   }
 }
+var STAGE_SAID = { impl: "implementando", verif: "verificando", user: "com você", others: "com terceiros", stalled: "parada com o Unii", closed: "encerrada" };
+var PR_STATE_SAID = { OPEN: "aberto", MERGED: "mesclado", CLOSED: "fechado" };
+var CI_SAID = { ok: "CI ok", failed: "CI falhou", running: "CI rodando", none: "sem CI" };
+function span_said(ms) {
+  if (!(ms >= 60000)) {
+    return "agora";
+  }
+  if (ms < 3600000) {
+    return Math.floor(ms / 60000) + " min";
+  }
+  return hours_said(ms);
+}
+function took_said(ms) {
+  return ms >= 0 && ms < 60000 ? "menos de 1 min" : span_said(ms);
+}
+function when_said(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return "";
+  }
+  const p = (n) => String(n).padStart(2, "0");
+  return p(d.getDate()) + "/" + p(d.getMonth() + 1) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+function sevs_said(s) {
+  const by = ["high", "medium", "low"].filter((v) => s[v] > 0);
+  return by.length === 0 ? "nenhuma" : and_said(by.map((v) => s[v] + " " + SEV_SAID[v][s[v] === 1 ? 0 : 1]));
+}
+function pr_head_said(p) {
+  if (p.head === null || p.live === null || p.live.head === "") {
+    return null;
+  }
+  const same = p.live.head.startsWith(p.head) || p.head.startsWith(p.live.head);
+  return same ? { text: "head igual ao verificado (" + p.head.slice(0, 7) + ")", same } : { text: "head mudou: verificado " + p.head.slice(0, 7) + ", agora " + p.live.head.slice(0, 7), same };
+}
+function pipeline_totals(fronts) {
+  const active = fronts.filter((f) => f.stage !== "closed");
+  const cycles = fronts.flatMap((f) => f.prs.filter((p) => p.cycles > 0).map((p) => p.cycles));
+  const decide = fronts.flatMap((f) => f.decide);
+  return {
+    active: active.length,
+    user: active.filter((f) => f.stage === "user").length,
+    stalled: active.filter((f) => f.stage === "stalled").length,
+    cycles: median_of(cycles),
+    decide: median_of(decide),
+    decided: decide.length,
+    idle: active.reduce((n, f) => n + f.idle, 0)
+  };
+}
+function median_of(xs) {
+  if (xs.length === 0) {
+    return null;
+  }
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
 
 // Timer.ts
 var AHEAD = 8 * 366;
@@ -2519,6 +2575,60 @@ function span_html(s) {
     }
   }
 }
+function pipeline_html(panel, now = Date.now(), why = "", opened = null) {
+  const head = `<a class="back" href="/" data-go="/">← Voltar</a><h1>Pipeline</h1>`;
+  if (panel === null) {
+    return head + `<p class="pipe-none">${esc(why || "Não foi possível ler o painel.")}</p><button type="button" class="chip pipe-reload">Tentar de novo</button>`;
+  }
+  const t = pipeline_totals(panel.fronts);
+  const card = (n, what, note = "") => `<div class="pipe-total"><b>${esc(n)}</b><span>${esc(what)}</span>${note === "" ? "" : `<small>${esc(note)}</small>`}</div>`;
+  const totals = `<section class="pipe-totals" aria-label="Resumo">` + card(String(t.active), t.active === 1 ? "frente ativa" : "frentes ativas") + card(String(t.user), "com você") + card(String(t.stalled), t.stalled === 1 ? "parada com o Unii" : "paradas com o Unii") + card(t.cycles === null ? "—" : num_said(t.cycles), "ciclos por PR", "mediana") + card(t.decide === null ? "—" : took_said(t.decide), "até a sua decisão", t.decided === 0 ? "nenhuma decisão registrada" : "mediana de " + t.decided + (t.decided === 1 ? " decisão" : " decisões")) + card(span_said(t.idle), "tempo parado", "frentes ativas, sem agente e sem você") + `</section>`;
+  const read = `<p class="pipe-read">Lido às ${esc(when_said(panel.at).slice(6))}${panel.refreshing ? " · lendo o estado dos PRs no GitHub…" : ""} · <button type="button" class="link pipe-reload">Atualizar</button></p>`;
+  const active = panel.fronts.filter((f) => f.stage !== "closed");
+  const closed = panel.fronts.filter((f) => f.stage === "closed");
+  const list = active.length === 0 ? `<p class="pipe-none">Nenhuma frente ativa.</p>` : `<ol class="pipe-fronts">${active.map((f) => `<li>${front_html(f, now, opened === null ? f.stage === "user" || f.stage === "stalled" : opened.has(f.ref))}</li>`).join("")}</ol>`;
+  const old = closed.length === 0 ? "" : `<details class="pipe-closed"><summary>Encerradas (${closed.length})</summary><ol class="pipe-fronts">${closed.map((f) => `<li>${front_html(f, now, opened !== null && opened.has(f.ref))}</li>`).join("")}</ol></details>`;
+  return head + read + totals + list + old;
+}
+function num_said(n) {
+  return (Math.round(n * 10) / 10).toString().replace(".", ",");
+}
+function front_html(f, now, open) {
+  const since = span_said(now - Date.parse(f.since));
+  const notes = f.stage === "closed" ? "" : f.fixing ? " · ressalvas em correção" : " · ressalvas abertas: " + sevs_said(f.open);
+  const sum = `<summary><b class="pipe-ref">${esc(f.ref)}</b> <span class="pipe-stage ${f.stage}">${esc(STAGE_SAID[f.stage])}</span> <span class="pipe-meta">${f.stage === "closed" ? "desde " + esc(when_said(f.since)) : "há " + esc(since)} · ${f.cycles.length} ${f.cycles.length === 1 ? "ciclo" : "ciclos"}${esc(notes)}</span></summary>`;
+  const tasks = f.tasks.length === 0 ? "" : `<h3>Pendências abertas</h3><ul class="pipe-tasks">${f.tasks.map((t) => `<li><button type="button" class="link" data-desk="${esc(t.id)}">${esc(t.id)}</button> <span class="pipe-who">${t.assignee === "user" ? "sua" : "do Unii"}</span> ${esc(t.title)}</li>`).join("")}</ul>`;
+  const working = f.runs.filter((r) => r.state === "working");
+  const now_ = working.length === 0 ? "" : `<h3>Agentes trabalhando</h3><ul class="pipe-runs">${working.map((r) => `<li>${run_html(r)} · desde ${esc(when_said(r.start))}</li>`).join("")}</ul>`;
+  const prs = f.prs.length === 0 ? "" : `<h3>PRs</h3><ul class="pipe-prs">${f.prs.map(pr_html).join("")}</ul>`;
+  const cycles = f.cycles.length === 0 ? `<p class="pipe-none">Nenhuma verificação registrada.</p>` : `<h3>Ciclos de verificação</h3><ol class="pipe-cycles">${f.cycles.map((c) => cycle_html(c)).join("")}</ol>`;
+  const decide = f.decide.length === 0 ? "nenhuma decisão sua registrada" : "mediana " + took_said(median_of(f.decide)) + ", máximo " + took_said(Math.max(...f.decide)) + " (" + f.decide.length + (f.decide.length === 1 ? " decisão" : " decisões") + ")";
+  const verified = f.prs.filter((p) => p.cycles > 0);
+  const per = verified.length === 0 ? "nenhum PR verificado" : verified.map((p) => p.key + ": " + p.cycles).join(" · ");
+  const metrics = `<h3>Métricas</h3><dl class="pipe-metrics"><dt>Tempo parado</dt><dd>${esc(span_said(f.idle))} <small>sem agente trabalhando e sem pendência sua, desde ${esc(when_said(f.first))}</small></dd><dt>Até a sua decisão</dt><dd>${esc(decide)}</dd><dt>Ciclos por PR</dt><dd>${esc(per)}</dd></dl>`;
+  return `<details class="pipe-front" data-ref="${esc(f.ref)}"${open ? " open" : ""}>${sum}<div class="pipe-body">${tasks}${now_}${prs}${cycles}${metrics}</div></details>`;
+}
+function run_html(r) {
+  return `<span class="pipe-agent">${esc(r.name)}</span>${r.label === null ? "" : ` <small class="pipe-label">${esc(r.label)}</small>`}`;
+}
+function pr_html(p) {
+  const name = p.url === null ? `<span class="pipe-pr">${esc(p.key)}</span>` : `<a class="pipe-pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.key)}</a>`;
+  const live = p.live === null ? `<span class="pipe-tag">${p.url === null ? "sem link: estado desconhecido" : "estado não lido"}</span>` : `<span class="pipe-tag ${p.live.state.toLowerCase()}">${esc(PR_STATE_SAID[p.live.state])}</span>` + (p.live.state === "OPEN" ? ` <span class="pipe-tag ci-${p.live.ci}">${esc(CI_SAID[p.live.ci])}</span>` : "");
+  const head = pr_head_said(p);
+  const said = head === null ? p.head === null ? "" : ` · verificado em ${esc(p.head.slice(0, 7))}` : ` · <span class="${head.same ? "" : "pipe-warn"}">${esc(head.text)}</span>`;
+  const verdict = p.verdict === null ? "" : ` · ${esc(VERDICT_SAID[p.verdict])}`;
+  return `<li>${name} ${live}${said} · ${p.cycles} ${p.cycles === 1 ? "ciclo" : "ciclos"}${verdict}</li>`;
+}
+function cycle_html(c) {
+  const r = c.run;
+  const verdict = r.state === "working" ? "verificando" : r.state === "cut" ? "interrompida sem veredito" : r.verdict === null ? "veredito não lido do relato" : VERDICT_SAID[r.verdict];
+  const notes = r.verdict === null || r.verdict === "approved" ? "" : r.noted ? " · ressalvas: " + sevs_said(r.notes) : " · ressalvas sem gravidade no relato";
+  const prs = r.prs.length === 0 ? "" : ` · ${esc(r.prs.map((k) => k + (r.heads[k] === undefined ? "" : " em " + r.heads[k].slice(0, 7))).join(", "))}`;
+  const work = c.after.length === 0 ? "" : `<small class="pipe-work">verificou o trabalho de ${c.after.map((w) => esc(w.name) + (w.label === null ? "" : " (" + esc(w.label) + ")")).join(", ")}</small>`;
+  const dur = r.state === "working" ? "" : " · " + took_said(Date.parse(r.end) - Date.parse(r.start));
+  const cls = r.verdict === "rejected" ? "rejected" : r.verdict === "approved_with_notes" ? "notes" : r.verdict === "approved" ? "approved" : "";
+  return `<li class="${cls}"><span class="pipe-n">Ciclo ${c.n}</span> ${esc(when_said(r.start))}${esc(dur)} · ${run_html(r)} · <b class="pipe-verdict">${esc(verdict)}</b>${esc(notes)}${prs}${work}</li>`;
+}
 
 // web/src/main.ts
 var APP = window.webkit?.messageHandlers?.unii ?? null;
@@ -2571,7 +2681,7 @@ async function boot() {
   if (new URLSearchParams(location.search).has("mesa")) {
     sessionStorage.setItem(kept("mode"), "desk");
   }
-  history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : "/");
+  history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : location.pathname === PIPE ? PIPE : "/");
   if (await boot_me() === null) {
     solo("Sign in", "This UniiChat server is private. On the computer it runs on, run <code>unii serve link</code> and open the link it prints here.");
     return;
@@ -2597,6 +2707,7 @@ async function boot_me() {
   }
 }
 var PAGES = ["/settings", "/account"];
+var PIPE = "/pipeline";
 function solo(title, sub) {
   document.body.className = "solo";
   document.body.innerHTML = `<main><h1>${title}</h1><p class="sub">${sub}</p></main>`;
@@ -2741,6 +2852,9 @@ function click(ev) {
     return;
   }
   if (el.dataset.desk !== undefined) {
+    if (location.pathname === PIPE) {
+      history.pushState(null, "", "/");
+    }
     desk_open(el.dataset.desk, true);
     return;
   }
@@ -3077,7 +3191,7 @@ function desk_choose() {
   P.chose = true;
   const was = sessionStorage.getItem(kept("mode"));
   const mode = was === "desk" || was === "chat" ? was : desk_turn(v.tasks) ? "desk" : "chat";
-  if (mode !== P.mode && PAGES.includes(location.pathname) === false) {
+  if (mode !== P.mode && PAGES.includes(location.pathname) === false && location.pathname !== PIPE) {
     desk_mode(mode, false);
   }
 }
@@ -3674,7 +3788,8 @@ function go(path) {
   route();
 }
 function route() {
-  const page = PAGES.includes(location.pathname);
+  const pipe = location.pathname === PIPE;
+  const page = PAGES.includes(location.pathname) || pipe;
   const st = history.state ?? {};
   if (st.mode === "desk" || st.mode === "chat") {
     P.mode = st.mode;
@@ -3692,10 +3807,37 @@ function route() {
   $("#account").hidden = !page;
   P.rows = true;
   P.shown = location.pathname + (desk ? "/mesa" : "");
-  if (page) {
+  $("#account").classList.toggle("pipe", pipe);
+  if (pipe) {
+    pipeline();
+  } else if (page) {
     account();
   }
   draw(false);
+}
+var PIPE_AGAIN = 4000;
+var PIPE_TRIES = 5;
+var PIPED = 0;
+async function pipeline(tries = 0) {
+  const el = $("#account");
+  const run = ++PIPED;
+  if (tries === 0 && el.querySelector(".pipe-totals") === null) {
+    el.innerHTML = `<a class="back" href="/" data-go="/">← Voltar</a><h1>Pipeline</h1><p class="pipe-read">Lendo…</p>`;
+  }
+  const got = await fetch("/api/pipeline").catch(() => null);
+  const panel = got !== null && got.ok ? await got.json().catch(() => null) : null;
+  if (run !== PIPED || location.pathname !== PIPE) {
+    return;
+  }
+  const shown = el.querySelectorAll("details.pipe-front");
+  const opened = shown.length === 0 ? null : new Set([...shown].filter((d) => d.open).map((d) => d.dataset.ref ?? ""));
+  const y = scrollY;
+  el.innerHTML = pipeline_html(panel, Date.now(), got === null ? "Sem conexão com o UniiChat." : "Não foi possível ler o painel (" + (got.status || "erro") + ").", opened);
+  scrollTo(0, y);
+  el.querySelectorAll(".pipe-reload").forEach((b) => b.onclick = () => pipeline());
+  if (panel?.refreshing === true && tries < PIPE_TRIES) {
+    setTimeout(() => run === PIPED && location.pathname === PIPE && pipeline(tries + 1), PIPE_AGAIN);
+  }
 }
 async function account() {
   const el = $("#account");

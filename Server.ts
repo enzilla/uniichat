@@ -38,6 +38,7 @@ import * as Timer from "./Timer.ts";
 import * as TaskPush from "./TaskPush.ts";
 import * as Tasks from "./Tasks.ts";
 import * as Restart from "./Restart.ts";
+import * as Pipeline from "./Pipeline.ts";
 import { PROMPTS, SEARCHES, Tools, type Agent, type Live } from "./Tools.ts";
 import { FRAME, IMAGES, live_push, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
@@ -197,8 +198,9 @@ const WEB: Record<string, string> = {
   "/sw.js"          : sw_js,
 };
 
-// the settings page, drawn by the site's page
+// the settings page and the pipeline's panel, drawn by the site's page
 WEB["/settings"] = WEB["/"];
+WEB["/pipeline"] = WEB["/"];
 
 // the site's build, in each state: a page opened on another one (the
 // server restarted with a new site) reloads (main.ts), as it would
@@ -241,6 +243,7 @@ export namespace Chat {
       pick   : () => chat.pick,
       halt   : () => chat.halt.signal,
       restart : (how) => Chat.restart(how),
+      agents  : () => Chat.agents_md(chat),
     });
     const pick = Pick.load(mem.pick, config.OFFER, config.PICK);
     const chat: Chat = {
@@ -273,7 +276,16 @@ export namespace Chat {
     Chat.progress(chat);
     Chat.resume(chat, mem.work).finally(() => Chat.change(chat)).catch((err) => console.error("unii: resuming the chat: " + (err?.message ?? err)));
     Chat.back(chat);
+    // AGENTES.md as the server starts: an agent the server before left at
+    // work, and not resumed, is said cut (after the boot, not in its way)
+    setTimeout(() => Chat.agents_md(chat), 0);
     return chat;
+  }
+
+  // AGENTES.md written again (Pipeline.agents_md): as an agent starts
+  // (Tools.run) or ends (Chat.report), and as the server starts
+  export function agents_md(chat: Chat): void {
+    Pipeline.agents_md(Tasks.tasks_load(chat.mem.dir), chat.mem.dir, new Set(Tools.working(chat.tools).map((a) => a.name)));
   }
 
   // a restart Unii asked (the restart tool, Restart.ts) taken as the
@@ -704,6 +716,9 @@ export namespace Chat {
         Chat.take(chat, msg);
       }
       Chat.change(chat);
+      // its last words logged (held as they came, before this): AGENTES.md
+      // says how it ended
+      Chat.agents_md(chat);
     });
   }
 
@@ -1575,6 +1590,12 @@ export namespace Main {
         const msg = { ...Object.fromEntries(new URL(req.url).searchParams), req };
         const out = await Chat.apply(chat, msg, "");
         return Response.json(out, { status: out.status ?? (out.error === undefined ? 200 : 400) });
+      }
+      case "/api/pipeline": {
+        // the pipeline's panel (Pipeline.ts): its fronts, the PRs read live
+        // so far (refreshing: some are being read; the page asks again)
+        const working = new Set(Tools.working(chat.tools).map((a) => a.name));
+        return Response.json(Pipeline.panel(Tasks.tasks_load(mem.dir), mem.dir, working, Date.now()));
       }
       case "/api/imported": {
         return Response.json(Chat.done(chat));
