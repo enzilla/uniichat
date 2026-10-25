@@ -320,14 +320,55 @@ function verdict_said(s: string): Verdict | null {
 // The severities it says none of may come first ("aprovado. Nenhuma média,
 // 2 baixas", "0 médias e 2 baixas", "sem alta nem média, 1 baixa",
 // PeachEagle 2, 25/10): the count after them is said all the same
-const BARE_COUNT = /^[\s*_`.,:;—–()\[\]-]*(?:(?:nenhum[a]?|zero|0|sem|no|none)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b(?:\s*(?:,|\be\b|\bnem\b|\bou\b|\bor\b)\s*(?:altas?|medias?|baixas?|high|medium|low)\b)*[\s,;]*(?:(?:e|and)\s+)?)?(?=(?:[1-9]\d*|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b)/;
+// So may they in sentences of their own ("aprovado. Nenhuma média. 2
+// baixas", "Sem altas. Nenhuma média. 1 baixa", CleverTaco 2, 25/10)
+const BARE_COUNT = /^[\s*_`.,:;—–()\[\]-]*(?:(?:nenhum[a]?|zero|0|sem|no|none)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b(?:\s*(?:,|\be\b|\bnem\b|\bou\b|\bor\b)\s*(?:altas?|medias?|baixas?|high|medium|low)\b)*[\s,;.]*(?:(?:e|and)\s+)?)*(?=(?:[1-9]\d*|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b)/;
 function bare_count(said: string): string | null {
   const m = BARE_COUNT.exec(said.replace(/^\w+/, ""));
   if (m === null) {
     return null;
   }
   const sentence = said.replace(/^\w+/, "").slice(m[0].length).split(/[.;\n]/)[0].slice(0, 160);
-  return FIXED_WORD.test(sentence) ? null : sentence;
+  // each count is its own: a fix said of one is said of it only, not of
+  // the others ("2 baixas já tratadas e 1 média aberta", "2 baixas foram
+  // tratadas, mas 1 média não": 1 medium, CleverTaco 1, 25/10). A count's
+  // stretch goes to the next count; it is fixed if it says a fix, not
+  // denied, followed only by references (refs_only), else it counts (the
+  // safe side: "2 baixas tratadas, mas falha no Safari" counts)
+  const starts = [...sentence.matchAll(COUNT_START)].map((p) => p.index! + p[0].length - p[1].length);
+  const open = starts
+    .map((s, k) => sentence.slice(s, starts[k + 1] ?? sentence.length))
+    .filter((piece) => !count_fixed(piece));
+  return open.length === 0 ? null : open.map((piece) => piece.replace(TAIL, "")).join(", ");
+}
+// where a count starts, as SAID_PAIR reads it (notes_said)
+const COUNT_START = /(?:^|[\s,:;(]|\be\b)((?:\d+|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b)/g;
+// what joins a count's stretch to the next: ", e", ", mas", " and "
+const TAIL = /[\s,;:—–-]*(?:\b(?:e|mas|porem|and|but)\b[\s,;:—–-]*)?$/;
+function count_fixed(piece: string): boolean {
+  const m = FIXED_WORD.exec(piece);
+  if (m === null || NOT_FIXED.test(piece)) {
+    return false;
+  }
+  // a parenthesis opened before the fix closes after it ("1 baixa
+  // (corrigida)"): its close is not what follows the fix
+  let open = 0;
+  for (const c of piece.slice(0, m.index)) {
+    open += c === "(" ? 1 : c === ")" ? -1 : 0;
+  }
+  let rest = "";
+  let depth = 0;
+  for (const c of piece.slice(m.index)) {
+    depth += c === "(" ? 1 : c === ")" ? -1 : 0;
+    if (depth < 0 && open > 0) {
+      depth = 0;
+      open -= 1;
+      rest += " ";
+      continue;
+    }
+    rest += c;
+  }
+  return refs_only(rest.replace(TAIL, ""));
 }
 
 // a line that labels the verdict: "**Veredito: …", "Veredito (NUM-2337):
@@ -442,6 +483,16 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   // under a severity in the singular ("**Média**"): one note, and once it
   // counted, what follows under it is its text, no other note's
   let single = false;
+  // a singular severity's note not yet counted, its list's first item
+  // labeled by another ("**Média**\n- Baixa: x"): counted at the list's end
+  let owed: keyof Sevs | null = null;
+  const pay = () => {
+    if (owed !== null) {
+      notes[owed] += 1;
+      noted = true;
+      owed = null;
+    }
+  };
   const one_done = () => {
     if (single) {
       single = false;
@@ -477,6 +528,7 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     if (item === null) {
       if (line.trim() !== "") {
         group = null;
+        pay();
       }
       // a line not indented ends the items: a new list's are no one's details
       if (/^\S/.test(line)) {
@@ -666,11 +718,17 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
     // labels its own, another ("- Baixa: x"), is a note of its own: the
     // heading's note counts too, not lost ("**Média**\n- Baixa: x\n- Baixa:
     // y" 1 medium and 2 low, PeachEagle 4, 25/10), the safe side
+    // An item of its list labeled by the heading's severity ("**Média**\n-
+    // Baixa: x\n- Média: y") is that note: it counts, the heading's not
+    // again (1 medium and 1 low, CleverTaco 2, 25/10); so the heading's
+    // counts when its list ends without one (owed)
     if (single && top_level && given !== null) {
       const label = sev_first(line);
       if (label !== null && label !== given) {
-        notes[given] += 1;
+        owed = given;
       }
+    } else if (owed !== null && top_level && sev_first(line) === owed) {
+      owed = null;
     }
     notes[sev] += 1;
     noted = true;
@@ -679,6 +737,7 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
       one_done();
     }
   }
+  pay();
   // approved without notes: none, and none listed (noted only for notes);
   // not "sem ressalvas bloqueantes" or "sem ressalvas novas", that
   // qualify which ones it hasn't: its list counts (GoldenJay, LunarWhale)

@@ -1314,3 +1314,39 @@ test("verdict_of: a count said treated is none; zeros before a count, or the cou
   expect(of("**Média**\n- a\n- Baixa: b\n")).toEqual({ high: 0, medium: 1, low: 1 });
   expect(of("**Médias**\n- a\n- Baixa: b\n")).toEqual({ high: 0, medium: 1, low: 1 });
 });
+
+test("verdict_of: a fix said of one count is said of it only; severities said none of in sentences of their own; under '**Média**', its item of the same severity is its note (CleverTaco 1-2, 25/10)", () => {
+  const of = (s: string) => Pipeline.verdict_of("Veredito: aprovado\n\n" + s).notes;
+  const said = (s: string) => {
+    const v = Pipeline.verdict_of(s);
+    return [v.verdict, v.notes.high, v.notes.medium, v.notes.low];
+  };
+  // 1: the count left open counts, the one said fixed doesn't
+  expect(said("Veredito: aprovado. 2 baixas já tratadas e 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas foram tratadas, mas 1 média não.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 1 média corrigida em abc1234 e 2 baixas")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(said("Veredito: aprovado. 2 baixas corrigidas (abc1234) e 1 média pendente.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado (2 baixas corrigidas em abc1234, 1 média aberta).")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado.\n2 baixas já tratadas e 1 média aberta.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // denied or qualified, it counts (the safe side)
+  expect(said("Veredito: aprovado. 2 baixas não tratadas")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(said("Veredito: aprovado. 1 média não corrigida e 2 baixas corrigidas.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  expect(said("Veredito: aprovado. 2 baixas tratadas, mas falha no Safari.")).toEqual(["approved_with_notes", 0, 0, 2]);
+  // all said fixed: none
+  expect(said("Veredito: aprovado. 2 baixas já tratadas.")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. 1 baixa (corrigida)")).toEqual(["approved", 0, 0, 0]);
+  expect(said("Veredito: aprovado. 3 baixas da V19 corrigidas.")).toEqual(["approved", 0, 0, 0]);
+  // limit: a fix after two counts is read as said of the last only
+  expect(said("Veredito: aprovado. 1 média e 2 baixas corrigidas.")).toEqual(["approved_with_notes", 0, 1, 0]);
+  // 2: none said in a sentence of its own, then the count
+  expect(said("Veredito: aprovado. Nenhuma média. 2 baixas")).toEqual(["approved_with_notes", 0, 0, 2]);
+  expect(said("Veredito: aprovado. Sem altas. Nenhuma média. 1 baixa")).toEqual(["approved_with_notes", 0, 0, 1]);
+  expect(said("Veredito: aprovado. 0 altas, 0 médias e 1 baixa")).toEqual(["approved_with_notes", 0, 0, 1]);
+  expect(said("Veredito: aprovado. Nenhuma média.")).toEqual(["approved", 0, 0, 0]);
+  // 2: "**Média**", an item of another severity, then one of its own: that one is its note
+  expect(of("**Média**\n- Baixa: x\n- Média: y\n")).toEqual({ high: 0, medium: 1, low: 1 });
+  expect(of("**Média**\n- Baixa: x\n- Média: y\n- Média: z\n")).toEqual({ high: 0, medium: 2, low: 1 });
+  // none of its own: the heading's note still counts, at the list's end
+  expect(of("**Média**\n- Baixa: x\n- Baixa: y\n")).toEqual({ high: 0, medium: 1, low: 2 });
+  expect(of("**Média**\n\n- Baixa: x\n- Baixa: y\n\n**Alta**\n- z\n")).toEqual({ high: 1, medium: 1, low: 2 });
+});
