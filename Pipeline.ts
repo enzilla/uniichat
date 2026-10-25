@@ -408,16 +408,36 @@ function open_counts(sentence: string): string[] {
   const starts = [...sentence.matchAll(COUNT_START)].map((p) => p.index! + p[0].length - p[1].length);
   const before = starts.length === 0 ? "" : sentence.slice(0, starts[0]).replace(/[*_`]/g, "");
   const fixed_before = FIX_BEFORE.test(before) && !NOT_FIXED_BEFORE.test(before);
-  return starts
-    .map((s, k) => sentence.slice(s, starts[k + 1] ?? sentence.length))
+  // a severity named after a count, in its stretch ("2 baixas corrigidas e
+  // a média segue aberta", StoneGiraffe 1, 25/10), ends the count's: its
+  // clause says its own state (sev_open), the count's fix not of it
+  const named: string[] = [];
+  const pieces = starts.map((s, k) => {
+    const piece = k + 1 < starts.length ? sentence.slice(s, starts[k + 1]).replace(NEXT_LEAD, "") : sentence.slice(s);
+    const head = COUNT_HEAD.exec(piece.replace(/[*_`]/g, ""))?.[0].length ?? 0;
+    const at = [...piece.matchAll(SEV_NAMED)].find((p) => p.index! >= head);
+    if (at === undefined) {
+      return piece;
+    }
+    named.push(...sev_open(piece.slice(at.index!).replace(/[*_`]/g, "")));
+    return piece.slice(0, at.index!);
+  });
+  return pieces
     .filter((piece, k) => !(k === 0 && fixed_before && refs_only(piece.replace(COUNT_HEAD, "").replace(TAIL, ""))))
     .filter((piece) => !/^0+\s/.test(piece))
     .map(part_fixed)
     .filter((piece) => !count_fixed(piece))
-    .map((piece) => piece.replace(TAIL, ""));
+    .map((piece) => piece.replace(TAIL, ""))
+    .concat(named);
 }
 // a count and its severity at a text's start: "2 baixas", "1 ressalva média"
 const COUNT_HEAD = /^(?:\d+|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b/;
+// a line that opens with one, after marks or a parenthesis (verdict_of)
+const SUMMARY_COUNT = /^[\s*_`(\[]*(?:\d+|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(?:altas?|medias?|baixas?|high|medium|low)\b/;
+// what, at a count's stretch's end, says the next count open, not this
+// one: "Corrigi as 2 baixas e falta 1 média", "2 baixas corrigidas, mas
+// ainda resta 1 média" (StoneGiraffe 3, 25/10); only before another count
+const NEXT_LEAD = /[\s,;:—–-]*(?:\b(?:e|mas|porem|and|but)\b[\s,;:—–-]*)?(?:\b(?:ainda|so)\s+)?(?:\b(?:falta|faltam|resta|restam|sobra|sobram|segue|seguem|fica|ficam|ha|tem)\b[\s,;:—–-]*)?(?:\b(?:ainda|so)\s*)?$/;
 // a severity said without a count, by its article or a note's name, and
 // said open in its clause ("A média continua aberta.", "a alta segue
 // pendente", "a ressalva média não foi corrigida", RoughHeron 1, 25/10):
@@ -599,6 +619,8 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
   // a", RoyalToucan 2, 25/10): its marks off, its indentation kept, so a
   // list or a heading in it counts as outside it (the safe side)
   const lines = report.split("\n").slice(found.at + 1).map((l) => l.replace(/^(\s*)(?:>[ \t]?)+/, "$1"));
+  // how many of them go on with the verdict's line (summary_of)
+  const summary_after = found.summary === undefined ? 0 : found.summary.split("\n").length - 1;
   // under a heading on notes: whether a list item came under it yet (then
   // a paragraph after the list is the report's, not a note), and whether
   // the line before was blank or the heading (a paragraph starts)
@@ -657,6 +679,16 @@ export function verdict_of(report: string): { verdict: Verdict | null; notes: Se
       // a line not indented ends the items: a new list's are no one's details
       if (/^\S/.test(line)) {
         counted = false;
+      }
+      // a line that goes on with the verdict's (summary_of) and opens with
+      // a count ("Veredito: aprovado.\n\n2 baixas corrigidas e 1 média
+      // aberta.", "(2 baixas corrigidas). 1 média aberta.", StoneGiraffe
+      // 1-2, 25/10) says the verdict's counts, as on its own line: read
+      // there (notes_said), each count by its state, not here as a note
+      // labeled "2 baixas" (its count read as a note's number)
+      if (at < summary_after && SUMMARY_COUNT.test(fold(line))) {
+        fresh = false;
+        continue;
       }
       // a paragraph labeled by a note and its severity, its text on the
       // same line ("**Ressalva baixa (…):** em verdict_of…", LunarWhale,
@@ -1264,7 +1296,9 @@ const COUNT_WORD: Record<string, number> = { um: 1, uma: 1, dois: 2, duas: 2, tr
 // same (RoyalToucan 1, 25/10); a total said above what its pairs add up
 // to gives the rest as low ("com 3 ressalvas, 1 média": 1 medium, 2 low)
 const SAID_PAIR = /(?:^|[\s,:;(]|\be\b)(\d+|uma?|dois|duas|tres|quatro|cinco)\s+(?:(?:ressalvas?|observac(?:ao|oes))\s+)?(altas?|medias?|baixas?|high|medium|low)\b/g;
-const SAID_PAREN = /^((?:com|c\/|with)\s*(?:(?:\d+|uma?|dois|duas|tres|quatro|cinco)\s+)?(?:ressalvas?|observac(?:ao|oes)|notes?)[\s*_`,]*)\(([^()\n]*)\)/;
+// (on its line: a parenthesis on the next one opens a sentence of its own,
+// "com ressalvas\n(2 baixas corrigidas). 1 média aberta.", StoneGiraffe 2)
+const SAID_PAREN = /^((?:com|c\/|with)\s*(?:(?:\d+|uma?|dois|duas|tres|quatro|cinco)\s+)?(?:ressalvas?|observac(?:ao|oes)|notes?)[ \t*_`,]*)\(([^()\n]*)\)/;
 function notes_said(line: string): Sevs {
   const out = zero();
   const a = Math.max(0, line.search(APPROVED));
