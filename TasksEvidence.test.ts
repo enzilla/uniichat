@@ -733,3 +733,22 @@ test("a restart with a doubt denied, or a later act after a restart asked now (S
     expect([later, T.restart_now(later)]).toEqual([later, false]);
   }
 });
+
+test("a doubt denied under a condition, or a wait in the act after \"depois\" (LunarMelon)", () => {
+  // M1: "se", "if", "caso" before the doubt denied, in the same clause: a condition
+  for (const later of ["Reinicie, se isso não depende de nada", "Reinicie agora, se isso não depende de nada", "Reinicie se o serve não depende de mais ninguém", "Restart now if it doesn't depend on anything", "Restart if it does not depend on anyone", "Reinicie agora caso isso não depende de nada", "Se isso não depende de nada, reinicie"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // a condition in another clause, or none: the doubt denied is still now
+  for (const now of ["Reinicie agora, não depende de mais nada", "Reinicie agora, isso não depende de nada", "Restart now, it doesn't depend on anything", "Reinicie já; o serve não depende de ninguém"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // B2: an event, a condition or a word of when after "depois" keeps it open
+  for (const later of ["Reinicie agora e depois aguarde os agentes", "Reinicie agora e depois só quando acabar", "Reinicie agora e depois, se der, avise", "Reinicie agora e depois espere o PR", "Reinicie agora, depois assim que puder avise", "Reinicie já e em seguida aguarde", "Restart now and afterwards wait for the agents", "Restart now and afterwards, if you can, tell me", "Restart now and after that only when it ends"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // any other act after "depois" is cut off: now
+  for (const now of ["Reinicie agora e depois decide", "Reinicie agora, não depende de mais nada", "Reinicie agora e depois avise", "Reinicie já. Depois revise o log", "Restart now and afterwards tell me"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+});
