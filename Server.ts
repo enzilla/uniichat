@@ -305,9 +305,14 @@ export namespace Chat {
     Chat.note(chat, Restart.said_after(mark));
     // the order it executed (a task of kind restart the user picked "Sim,
     // reinicie" in): closed, the serve back its evidence (Tasks.ts)
-    if (mark.task !== null) {
-      const s = Tasks.tasks_load(chat.mem.dir);
-      const t = Tasks.task_find(s, mark.task);
+    // A restart with no agents at work needs no task (P8): Unii may call
+    // it without one, and the order of a restart the user gave before it
+    // was executed all the same: each such order (kind restart, received
+    // before the restart was asked) closed too
+    const s = Tasks.tasks_load(chat.mem.dir);
+    const asked = Date.parse(mark.at);
+    const orders = mark.task !== null ? [Tasks.task_find(s, mark.task)] : s.tasks.filter((t) => t.kind === "restart" && Tasks.task_ordered(t) && Date.parse(t.order!.at) <= asked);
+    for (const t of orders) {
       if (t !== null && Tasks.task_ordered(t)) {
         Tasks.task_close_system(s, t.id, [{ type: "restart", at: new Date().toISOString(), summary: "pedido às " + mark.at + "; o serve voltou (pid " + process.pid + ")" }], Date.now());
       }
@@ -762,7 +767,7 @@ export namespace Chat {
       return;
     }
     const said = Tasks.promises_in(last.text);
-    if (said.length === 0 || Tasks.tasks_moved_since(Tasks.tasks_load(chat.mem.dir), began)) {
+    if (said.length === 0 || Tasks.tasks_moved_since(Tasks.tasks_load(chat.mem.dir), began, said)) {
       return;
     }
     Chat.note(chat, Tasks.promises_said(said));

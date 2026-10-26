@@ -26,7 +26,8 @@
 // the user's move as well: told as one of theirs. One of Unii's past its
 // next step's due (TaskDeps.overdue_ids: the evidence round) is told
 // once for that due ("Pendência P48 do Unii está parada além do prazo"):
-// a new due (a new next step) may be told again; the first look takes
+// a new due (a new next step) may be told again; the first look (and the
+// first since the evidence round: a state with no alerted) takes
 // those overdue then as told.
 
 import * as fs from "node:fs";
@@ -152,9 +153,12 @@ export function step(state: State | null, tasks: Task[], now: number): { state: 
   if (state === null) {
     return { state: { seen: Object.fromEntries(ids.map((id) => [id, made_at(by_id.get(id), now)])), queue: [], since: null, reminded: [], day: day(now), ...alerted_kept(Object.fromEntries(over.map((id) => [id, due(id)]))) }, send };
   }
-  // Unii's overdue: each told once for its due
-  const was_alerted = state.alerted ?? {};
-  const stalled = over.filter((id) => was_alerted[id] !== due(id));
+  // Unii's overdue: each told once for its due. A state of before the
+  // evidence round (no alerted: the first look since it) takes those
+  // overdue now as told, as the first look does: no batch of pushes for
+  // all of Unii's moved long ago
+  const was_alerted = state.alerted;
+  const stalled = was_alerted === undefined ? [] : over.filter((id) => was_alerted[id] !== due(id));
   // (each overdue now told for its due: before, or just now)
   const alerted: Record<string, string> = Object.fromEntries(over.map((id) => [id, due(id)]));
   if (stalled.length > 0) {
@@ -196,10 +200,10 @@ export function step(state: State | null, tasks: Task[], now: number): { state: 
   return { state: { seen, queue, since: queue.length === 0 ? null : since, reminded, day: looked, ...alerted_kept(alerted) }, send };
 }
 
-// alerted as kept: none, left out (a state of before the evidence round
-// reads the same)
-function alerted_kept(alerted: Record<string, string>): { alerted?: Record<string, string> } {
-  return Object.keys(alerted).length === 0 ? {} : { alerted };
+// alerted as kept: always, even none ({}), so a state of the evidence
+// round is told from one of before it (no alerted: step seeds it)
+function alerted_kept(alerted: Record<string, string>): { alerted: Record<string, string> } {
+  return { alerted };
 }
 
 // what's told, as kept in a chat's dir (null: none yet, or not one: the
@@ -216,8 +220,12 @@ export function load(dir: string): State | null {
     const list = (x: unknown) => (Array.isArray(x) ? x.filter((id): id is string => typeof id === "string" && ID.test(id)) : []);
     const since = typeof o?.since === "number" && Number.isFinite(o.since) ? o.since : null;
     const day = typeof o?.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(o.day) ? o.day : null;
+    // none in the file: a state of before the evidence round (step seeds it)
+    if (o?.alerted === undefined || o.alerted === null || typeof o.alerted !== "object") {
+      return { seen, queue: list(o?.queue), since, reminded: list(o?.reminded), day };
+    }
     const alerted: Record<string, string> = {};
-    for (const [id, at] of Object.entries(o?.alerted ?? {})) {
+    for (const [id, at] of Object.entries(o.alerted)) {
       if (ID.test(id) && typeof at === "string" && !Number.isNaN(Date.parse(at))) {
         alerted[id] = at;
       }

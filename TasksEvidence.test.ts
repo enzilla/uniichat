@@ -242,6 +242,28 @@ test("an order: the user's pick of a choice of Unii's leaves it open, Unii's, sa
   expect([back.state, back.order?.answer, T.task_ordered(back)]).toEqual(["done", "Enviar rascunho", false]);
 });
 
+test("an order: Unii can't hand it to the user (assignee) while it's an order received; nothing changed", async () => {
+  const s = T.tasks_load(dir);
+  const t = theirs(s, "Responder o Enzo?", { choices: ["Enviar rascunho", "Eu respondo"], acts: { "Enviar rascunho": "unii", "Eu respondo": "user" } });
+  T.task_resolve(s, t.id, "done", "Enviar rascunho", null, NOW);
+  for (const assignee of ["user", "User "]) {
+    const no = T.task_edit(s, { id: t.id, assignee }, NOW + 1);
+    expect(no).toBe(t.id + " is the user's order received (Enviar rascunho): it stays yours (assignee unii) till you close it with evidence of the execution. If something of the user's is needed, set status waiting_user (why) or add a task of theirs for it. Nothing was changed.");
+  }
+  // with other changes in the same edit: refused whole
+  expect(T.task_edit(s, { id: t.id, assignee: "user", detail: "outro" }, NOW + 1)).toContain("it stays yours (assignee unii)");
+  expect(T.task_find(s, t.id)).toMatchObject({ assignee: "unii", detail: "" });
+  // through the tool too
+  const tool = await call("task_edit", { id: t.id, assignee: "user" });
+  expect(tool.fail).toBe(true);
+  // the same assignee, and waiting_user: no hand-over, taken
+  expect(typeof T.task_edit(s, { id: t.id, assignee: "unii", detail: "andou" }, NOW + 2)).toBe("object");
+  expect(T.task_edit(s, { id: t.id, status: "waiting_user", status_why: "o texto final" }, NOW + 3)).toMatchObject({ assignee: "unii", status: "waiting_user" });
+  // closed with evidence, it's no order: the assignee may change again
+  T.task_edit(s, { id: t.id, state: "done", evidence: { type: "slack", channel: "D0C361HU1R9", ts: "1793020666.223629" } }, NOW + 4);
+  expect(T.task_edit(s, { id: t.id, assignee: "user" }, NOW + 5)).toMatchObject({ assignee: "user", state: "done" });
+});
+
 test("an order: the user may cancel it (dropped), their resolution its evidence; reopened, it's no order", () => {
   const s = T.tasks_load(dir);
   const t = theirs(s, "Reenviar?", { choices: ["Reenvie", "Deixe"], acts: { Reenvie: "unii", Deixe: "user" } });
@@ -374,6 +396,46 @@ test("push: Unii's overdue told once per due, as a stalled push; a new due told 
   expect(TaskPush.step(got.state, s.tasks, NOW + 5 * H).state.alerted).toEqual({ [b.id]: new Date(NOW + 3 * H + 10 * 60e3).toISOString() });
 });
 
+test("push: a state of before the round (no alerted) takes Unii's overdue as told, no batch; kept as {}; a later one told", () => {
+  const s = T.tasks_load(dir);
+  const a = mine(s, "Velha", {}, NOW - 30 * H);
+  const b = mine(s, "Antiga", {}, NOW - 10 * H);
+  expect(Deps.overdue_ids(s.tasks, NOW)).toEqual([a.id, b.id]);
+  // as kept before the evidence round: no alerted
+  const old: TaskPush.State = { seen: {}, queue: [], since: null, reminded: [], day: "2026-10-26" };
+  TaskPush.save(dir, old);
+  const read = TaskPush.load(dir)!;
+  expect("alerted" in read).toBe(false);
+  const first = TaskPush.step(read, s.tasks, NOW);
+  expect(first.send).toEqual([]);
+  expect(first.state.alerted).toEqual({ [a.id]: Deps.due_at(T.task_find(s, a.id)!)!, [b.id]: Deps.due_at(T.task_find(s, b.id)!)! });
+  expect(TaskPush.step(first.state, s.tasks, NOW + H).send).toEqual([]);
+  // none overdue: kept as {} (not taken for a state of before again)
+  const none = TaskPush.step(old, [], NOW);
+  expect(none.state.alerted).toEqual({});
+  TaskPush.save(dir, none.state);
+  expect(TaskPush.load(dir)!.alerted).toEqual({});
+  // one overdue later: told
+  const c = mine(s, "Nova", { next_due: "10m" }, NOW);
+  const later = TaskPush.step(first.state, s.tasks, NOW + H);
+  expect(later.send.map((n) => [n.kind, n.ids])).toEqual([["stalled", [c.id]]]);
+});
+
+test("a promise and the tasks moved in its turn: only one related (its id, a word) counts; none given, any", () => {
+  const s = T.tasks_load(dir);
+  const t = mine(s, "Revisar o ritsu.lock", { ref: "fractal-ritsu", next_step: "ler o diff" }, NOW);
+  expect(T.tasks_moved_since(s, NOW)).toBe(true);
+  expect(T.tasks_moved_since(s, NOW, ["Vou revisar o … em seguida"])).toBe(true);
+  expect(T.tasks_moved_since(s, NOW, ["vou conferir o diff"])).toBe(true);
+  expect(T.tasks_moved_since(s, NOW, ["Vou responder o Enzo depois"])).toBe(false);
+  expect(T.tasks_moved_since(s, NOW, ["vou fechar a " + t.id + " agora"])).toBe(true);
+  // fillers and short words relate nothing
+  expect(T.tasks_moved_since(s, NOW, ["vou fazer isso agora"])).toBe(false);
+  // not moved in the turn: nothing
+  expect(T.tasks_moved_since(s, NOW + 1, ["Vou revisar o ritsu.lock"])).toBe(false);
+  expect(T.promises_said(["vou A", "vou B"])).toBe("Compromisso sem pendência: o Unii disse “vou A”, “vou B” e não registrou nem atualizou, neste turno, nenhuma pendência sua ligada a eles. Unii: registre-os com task_add (assignee unii, next_step e next_due) ou diga que não vai fazê-los.");
+});
+
 // The closed ones of before
 // =========================
 
@@ -449,7 +511,7 @@ test("a promise for later is found ('vou revisar', 'em seguida', 'I'll'); not a 
   expect(T.promises_in("Rodei `vou fazer` no código.\n```\nvou fazer\n```")).toEqual([]);
   expect(T.promises_in("Vamos lá.")).toEqual([]);
   expect(T.promises_in("Vou A. Vou fazer B. Vou revisar C. Vou testar D. Vou mesclar E.")).toHaveLength(3);
-  expect(T.promises_said(["vou revisar"])).toBe("Compromisso sem pendência: o Unii disse “vou revisar” e não registrou nem atualizou nenhuma pendência sua neste turno. Unii: registre-o com task_add (assignee unii, next_step e next_due) ou diga que não vai fazê-lo.");
+  expect(T.promises_said(["vou revisar"])).toBe("Compromisso sem pendência: o Unii disse “vou revisar” e não registrou nem atualizou, neste turno, nenhuma pendência sua ligada a ele. Unii: registre-o com task_add (assignee unii, next_step e next_due) ou diga que não vai fazê-lo.");
   const s = T.tasks_load(dir);
   expect(T.tasks_moved_since(s, NOW)).toBe(false);
   theirs(s, "Do usuário", {}, NOW + 1);

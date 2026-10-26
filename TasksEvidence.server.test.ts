@@ -84,6 +84,17 @@ test("a turn ending in a promise with no task of Unii's made or moved gets a not
   expect(chat.mem.count).toBe(was);
 });
 
+test("a promise with a task of Unii's moved in the turn but unrelated to it still gets a note", async () => {
+  const now = Date.now();
+  const s = Tasks.tasks_load(dir);
+  Tasks.task_new(s, { title: "Conferir DLQ de hom", assignee: "unii", done_when: "DLQs lidas", next_step: "ler as filas" }, "main", now);
+  Chat.push(chat, null, "unii", "Vou responder o Enzo em seguida.");
+  Chat.promised(chat, now);
+  await settle();
+  expect(last().kind).toBe("note");
+  expect(last().text).toContain("nenhuma pendência sua ligada a ele");
+});
+
 test("a restart the user ordered: once the serve is back, its order is closed, the restart its evidence", async () => {
   const s = Tasks.tasks_load(dir);
   const t = Tasks.task_new(s, { title: "Reiniciar com agentes rodando?", kind: "restart", done_when: "serve reiniciado" }, "main", Date.now()) as Tasks.Task;
@@ -113,4 +124,27 @@ test("a task of Unii's past its due is pushed once as stalled, to the phones and
   expect(GOT[0].more).toMatchObject({ kind: "tasks", ids: [t.id] });
   await Chat.task_push(chat, t0 + 20 * 60e3);
   expect(GOT.length).toBe(1);
+});
+
+test("a restart with no task given (no agents): the orders of a restart received before it are closed, a later one not", async () => {
+  const s = Tasks.tasks_load(dir);
+  const a = Tasks.task_new(s, { title: "Reiniciar o serve?", kind: "restart", done_when: "serve reiniciado" }, "main", Date.now()) as Tasks.Task;
+  expect(await Chat.apply(chat, { id: "act-order-a", $: "task", task: a.id, state: "done", answer: Tasks.RESTART_YES }, "")).toEqual({});
+  expect(Tasks.task_ordered(Tasks.task_find(s, a.id)!)).toBe(true);
+  await settle();
+  // the restart asked by the process before (before this one started),
+  // a's order received before it (as kept on disk), b's after it
+  const start = Date.now() - process.uptime() * 1000;
+  const at = new Date(start - 2000).toISOString();
+  Tasks.task_find(s, a.id)!.order!.at = new Date(start - 5000).toISOString();
+  Tasks.tasks_save(s);
+  const b = Tasks.task_new(s, { title: "Reiniciar de novo?", kind: "restart", done_when: "serve reiniciado" }, "main", Date.now()) as Tasks.Task;
+  expect(await Chat.apply(chat, { id: "act-order-b", $: "task", task: b.id, state: "done", answer: Tasks.RESTART_YES }, "")).toEqual({});
+  await settle();
+  Restart.mark_write(dir, { why: "sem agentes", resume: "Seguir.", at, agents: [], task: null, done: false, used: [], pid: process.pid + 1 });
+  Chat.back(chat);
+  await settle();
+  const after = Tasks.tasks_load(dir);
+  expect(Tasks.task_find(after, a.id)).toMatchObject({ state: "done", closed_by: "unii", evidence: [{ type: "restart" }] });
+  expect(Tasks.task_ordered(Tasks.task_find(after, b.id)!)).toBe(true);
 });

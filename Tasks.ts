@@ -1622,6 +1622,13 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
   if (task_ordered(task) && next.answer !== task.answer) {
     touched.unshift("answer");
   }
+  // an order received is Unii's to execute: handing it to the user
+  // (assignee user) would leave it in limbo as theirs, neither executed
+  // nor closed with evidence (what isn't Unii's to do goes in a task of
+  // its own, for the user)
+  if (task_ordered(task) && next.assignee !== task.assignee) {
+    return task.id + " is the user's order received (" + (task.order?.answer ?? "their pick") + "): it stays yours (assignee " + task.assignee + ") till you close it with evidence of the execution. If something of the user's is needed, set status waiting_user (why) or add a task of theirs for it. Nothing was changed.";
+  }
   if (touched.length > 0) {
     return task.id + (task_ordered(task) ? " is the user's order received" : " is closed (" + task.state + ")") + ": its " + touched.join(", ") + " can't change, the user picked from them as they were." + (task_ordered(task) ? " Execute it and close it with evidence; for another decision, add a new task." : " Open it again (state open) to change them; the user picks again.");
   }
@@ -2138,12 +2145,34 @@ export function promises_in(text: string): string[] {
   return out;
 }
 
-// whether any task of Unii's was made or moved since `since` (ms)
-export function tasks_moved_since(s: Store, since: number): boolean {
-  return s.tasks.some((t) => t.assignee !== "user" && (Date.parse(t.made) >= since || Date.parse(t.moved ?? t.changed) >= since));
+// whether any task of Unii's was made or moved since `since` (ms); with
+// the promises said, only one related to them: its id said in one, or a
+// word of one (4 letters or more, not a filler, by its first 5: "revisar"
+// and "revisão" alike) in its title, detail, next step, done when or ref.
+// A heuristic: a task registered for the promise in other words isn't
+// seen (the note asks for it, harmless), and one sharing a word by
+// chance hides a promise (rare: the words must be in the same turn)
+export function tasks_moved_since(s: Store, since: number, said: string[] | null = null): boolean {
+  const moved = s.tasks.filter((t) => t.assignee !== "user" && (Date.parse(t.made) >= since || Date.parse(t.moved ?? t.changed) >= since));
+  if (said === null) {
+    return moved.length > 0;
+  }
+  const keys = new Set(said.flatMap(promise_words));
+  const ids = new Set(said.flatMap((x) => (x.match(/\bP\d{1,15}\b/g) ?? [])));
+  return moved.some((t) => ids.has(t.id) || [t.title, t.detail, t.next_step, t.done_when, t.ref].some((x) => typeof x === "string" && promise_words(x).some((w) => keys.has(w))));
+}
+
+// what reads as no subject of a promise: its fillers, in Portuguese and
+// English (already without accents)
+const PROMISE_FILLER = new Set(["agora", "ainda", "depois", "seguida", "tambem", "logo", "isso", "isto", "esse", "essa", "este", "esta", "aquilo", "para", "pelo", "pela", "sobre", "como", "voce", "vamos", "iremos", "irei", "fazer", "fazendo", "feito", "quando", "mais", "will", "then", "that", "this", "with", "later", "after", "soon"]);
+
+// a text's words as compared (no accents, lower, 4 letters or more, not
+// a filler, cut to their first 5)
+function promise_words(text: string): string[] {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !PROMISE_FILLER.has(w)).map((w) => w.slice(0, 5));
 }
 
 // the note a promise without a task gets (the user's language)
 export function promises_said(said: string[]): string {
-  return "Compromisso sem pendência: o Unii disse " + said.map((x) => "“" + x + "”").join(", ") + " e não registrou nem atualizou nenhuma pendência sua neste turno. Unii: registre-o com task_add (assignee unii, next_step e next_due) ou diga que não vai fazê-lo.";
+  return "Compromisso sem pendência: o Unii disse " + said.map((x) => "“" + x + "”").join(", ") + " e não registrou nem atualizou, neste turno, nenhuma pendência sua ligada " + (said.length === 1 ? "a ele" : "a eles") + ". Unii: registre-" + (said.length === 1 ? "o" : "os") + " com task_add (assignee unii, next_step e next_due) ou diga que não vai " + (said.length === 1 ? "fazê-lo" : "fazê-los") + ".";
 }
