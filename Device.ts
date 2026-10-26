@@ -2,8 +2,8 @@
 // ======
 // `unii device [url]`: this computer as a device of a unii server, on
 // its own, with no terminal open (`unii device -d` runs it as a
-// background service: Service.ts). The agent's tools (Machine.ts) and the MCP programs a
-// server runs on a device (Mcp.here) run here as jobs, each in its
+// background service: Service.ts). The agent's tools (Machine.ts) and its
+// own MCP servers (Mcp.here) run here as jobs, each in its
 // agent's dir under the work dir, till done or halted; all they left
 // running dies as the device stops. Its file is device.json (Client.ts):
 // the server, its sign-in, its name as the agent sees it (default: on
@@ -12,13 +12,18 @@
 // a browser), then holds one socket to the server, opened again as one
 // is lost. A job's output is an act ({ $: "out" }), kept till answered
 // and sent again on the next socket, which the server does once.
+// Its own MCP servers are the `mcp` of its ~/.unii/config.json ($UNII_DIR,
+// README), told the server on each socket and again as they change
+// (Tools.servers): programs run here, URLs reached from here (Mcp.here).
 
 import * as child from "node:child_process";
+import * as fs from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
 import * as Client from "./Client.ts";
 import { Machine, WIN, type Job } from "./Machine.ts";
 import { Mcp } from "./Mcp.ts";
-import { FRAME, PING, QUIT, RETRY, TICK, WIRE } from "./View.ts";
+import { FRAME, media_kind, PING, QUIT, RETRY, TICK, WIRE } from "./View.ts";
 
 // Constants
 // =========
@@ -26,6 +31,10 @@ import { FRAME, PING, QUIT, RETRY, TICK, WIRE } from "./View.ts";
 const LOCAL = process.platform === "darwin" ? child.spawnSync("scutil", ["--get", "LocalHostName"]).stdout?.toString().trim() : "";
 const HOST  = LOCAL || os.hostname();
 const WORK  = "~/.unii/work";
+const FILE  = (process.env.UNII_DIR ?? "~/.unii").replace(/^~(?=[\\/]|$)/, os.homedir()) + "/config.json";
+
+// how often config.json is read for a change to its MCP servers, in ms
+const LOOK = 2000;
 
 // Device
 // ======
@@ -54,6 +63,16 @@ export async function run(given: string | undefined): Promise<void> {
   const outs = new Map<string, object>();
   let ws: WebSocket | null = null;
   const send = (msg: object) => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
+  // the MCP servers as last told ("": not yet on this socket)
+  let told = "";
+  const tell = () => {
+    const mcp = servers();
+    if (mcp !== null && mcp !== told && ws?.readyState === WebSocket.OPEN) {
+      told = mcp;
+      send({ $: "servers", id: crypto.randomUUID(), mcp: JSON.parse(mcp) });
+    }
+  };
+  setInterval(tell, LOOK);
   const open = () => {
     const sock = (ws = new WebSocket(url.replace(/^http/, "ws") + "/ws" + query, { headers: Client.auth(token) } as any));
     let heard = Date.now();
@@ -64,6 +83,8 @@ export async function run(given: string | undefined): Promise<void> {
     sock.onopen = () => {
       up = true;
       outs.forEach((msg) => sock.send(JSON.stringify(msg)));
+      told = "";
+      tell();
     };
     sock.onmessage = (ev) => {
       heard = Date.now();
@@ -103,7 +124,7 @@ export async function run(given: string | undefined): Promise<void> {
   const job = async (id: string, job: Job) => {
     const abort = new AbortController();
     jobs.set(id, abort);
-    const out  = await Machine.run(job, work, abort.signal);
+    const out  = job.name === "show" ? await show(job, work, url, token, abort.signal) : await Machine.run(job, work, abort.signal);
     const size = Buffer.byteLength(JSON.stringify(out));
     const most = FRAME - 1024;
     const big  = { text: "The output, " + size + " bytes, is over the " + most + " a tool may send.", fail: true };
@@ -120,4 +141,66 @@ export async function run(given: string | undefined): Promise<void> {
     });
   }
   open();
+}
+
+// show: each file streamed to the server's media store (Memory.media_add),
+// its markdown line answered (one that isn't media, a link: downloaded);
+// one it refuses, why
+async function show(job: Job, work: string, url: string, token: string, signal: AbortSignal): Promise<{ text: string; fail: boolean }> {
+  const root = work.startsWith("~/") ? os.homedir() + work.slice(1) : work;
+  const cwd = path.join(root, path.basename(job.cwd));
+  const lines: string[] = [];
+  let fail = false;
+  for (const p of [job.input.paths ?? []].flat().map(String)) {
+    const out = await show_one(path.resolve(cwd, p), p, url, token, signal);
+    fail ||= "error" in out;
+    const stored = "error" in out ? "" : "/media/" + out.name;
+    lines.push("error" in out ? out.error : (media_kind(stored) === null ? "" : "!") + "[" + path.basename(p).replace(/[[\]\\\n]/g, "") + "](" + stored + ")");
+  }
+  return { text: lines.join("\n"), fail };
+}
+
+// a file posted to the media store: its name there, or why not (a stop
+// cancels it: the server drops what it got)
+async function show_one(file: string, shown: string, url: string, token: string, signal: AbortSignal): Promise<{ name: string } | { error: string }> {
+  if (signal.aborted) {
+    return { error: "Stopped." };
+  }
+  const stat = fs.statSync(file, { throwIfNoEntry: false });
+  if (stat === undefined || !stat.isFile()) {
+    return { error: stat === undefined ? "No file " + shown + "." : shown + " is not a file." };
+  }
+  try {
+    const res = await fetch(url + "/api/media?name=" + encodeURIComponent(path.basename(file)), { method: "POST", headers: Client.auth(token), body: Bun.file(file), signal });
+    const out: unknown = await res.json().catch(() => null);
+    if (typeof out === "object" && out !== null && "name" in out && typeof out.name === "string") {
+      return { name: out.name };
+    }
+    return { error: typeof out === "object" && out !== null && "error" in out && typeof out.error === "string" ? out.error : "HTTP " + res.status };
+  } catch (err) {
+    return { error: signal.aborted ? "Stopped." : "Can't reach the server: " + (err instanceof Error ? err.message : String(err)) };
+  }
+}
+
+// the `mcp` of config.json (the object, or the file it names), as JSON:
+// {} if none; null if it can't be read, why said once
+let said = "";
+function servers(): string | null {
+  try {
+    const file = fs.existsSync(FILE) ? JSON.parse(fs.readFileSync(FILE, "utf8")) : {};
+    let mcp = file?.mcp || {};
+    if (typeof mcp === "string") {
+      mcp = JSON.parse(mcp.trim().startsWith("{") ? mcp : fs.readFileSync(mcp.trim().replace(/^~(?=[\\/]|$)/, os.homedir()), "utf8"));
+    }
+    said = "";
+    return JSON.stringify(mcp);
+  } catch (err: any) {
+    // not the parser's why: it may quote a secret
+    const why = err instanceof SyntaxError ? "isn't JSON" : "can't be read (" + (err?.code ?? err) + ")";
+    if (why !== said) {
+      said = why;
+      console.error("unii: " + FILE + " or its mcp " + why + ": the MCP servers told stay as they were");
+    }
+    return null;
+  }
 }

@@ -16,6 +16,13 @@
 // unless alone. A call still streaming reads as its input so far: its open
 // string and brackets closed, else up to its last whole field.
 //
+// A user's MCP server's tool (`<device>_<server>__<tool>`: Mcp.ts) shows as
+// `<server>: <tool>` on its device, its input as any other call's; its
+// device is up to the first `_` (as Config.config_mcp_prefix writes it:
+// other characters a -), and one from before release 24,
+// `<server>__<tool>`, names none (one of those whose server has a `_`,
+// `my_server__x`, can't be told from one of device my's, so shows so).
+//
 // An agent's report is logged as `[Name]` on its own line, its replies,
 // and a line naming its whole chat (the model reads who sent it); it
 // shows as its replies alone, framed and named by its agent.
@@ -42,6 +49,9 @@ const CALL = /^(\S+) (\{[\s\S]*)$/;
 
 const MCP = /^mcp__.+?__/;
 
+// a user's MCP server's tool: its device, its server, its tool
+const THEIRS = /^(?:([A-Za-z0-9-]+)_)?([A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*)__(.+)$/;
+
 const READS = new Map<string, (x: Input) => Shown>([
   ["shell",    (x) => ({ head: String(x.command ?? ""), blocks: [] })],
   ["read",     (x) => ({ head: String(x.path ?? "") + lines_show(x.offset, x.limit), blocks: [] })],
@@ -50,7 +60,7 @@ const READS = new Map<string, (x: Input) => Shown>([
   ["edit",     (x) => (Array.isArray(x.edits) ? { head: edits_files(x.edits), blocks: [] } : input_shown(x))],
   ["zoom",     (x) => ({ head: msg_show(x.id, x.n) + (x.at === undefined ? "" : " from char " + x.at), blocks: [] })],
   ["date",     (x) => ({ head: msg_show(x.id, 1), blocks: [] })],
-  ["spawn",    (x) => ({ head: tasks_show(x.tasks, x.model, x.effort, x.labels), blocks: (Array.isArray(x.tasks) ? x.tasks : []).flatMap(text_block) })],
+  ["spawn",    (x) => ({ head: tasks_show(x.tasks, x.model, x.effort, x.labels), blocks: (Array.isArray(x.tasks) ? x.tasks : []).flatMap(task_block) })],
   ["tell",     (x) => ({ head: String(x.name ?? ""), blocks: text_block(x.message) })],
   ["computer", (x) => ({ head: "", blocks: text_block(x.task) })],
   ["schedule", (x) => ({ head: (x.cron === undefined ? String(x.at ?? "") : "cron " + x.cron) + " " + String(x.zone ?? ""), blocks: text_block(x.message) })],
@@ -80,9 +90,21 @@ export function call_parse(text: string): Call {
     return { name: "", head: text, device: "", blocks: [] };
   }
   const name = m[1].replace(MCP, "");
+  const theirs = THEIRS.exec(name);
+  if (theirs !== null) {
+    return { name: tool_name(name), device: theirs[1] ?? "", ...input_shown(input) };
+  }
   const { device, ...rest } = input;
   const shown = (READS.get(name) ?? input_shown)(rest);
   return { name, device: typeof device === "string" ? device : "", ...shown };
+}
+
+// a tool's name as logged (`shell`, `mcp__unii__show`,
+// `ceres_cua-driver__click`) as a call shows it (`show`, `cua-driver: click`)
+export function tool_name(logged: string): string {
+  const name = logged.replace(MCP, "");
+  const theirs = THEIRS.exec(name);
+  return theirs === null ? name : theirs[2] + ": " + theirs[3];
 }
 
 // the call on one line, after its name: its head, then each block,
@@ -93,9 +115,12 @@ export function call_line(c: Call): string {
   return [c.head, ...blocks, ...where].join(" ").replace(/\s+/g, " ").trim();
 }
 
-// the call as it shows, for Copy: its name and head, then each block
+// the call as it shows, for Copy: its name and head, then each block; an
+// MCP call's device after its head (its name no longer says it), not a
+// shell's (its command copies as is)
 export function call_text(c: Call): string {
-  return [(c.name + " " + c.head).trim(), ...c.blocks.map((b) => b.x)].join("\n");
+  const where = c.name.includes(": ") && c.device !== "" ? " · " + c.device : "";
+  return [(c.name + " " + c.head).trim() + where, ...c.blocks.map((b) => b.x)].join("\n");
 }
 
 // any tool's input: its short values as arguments, the rest in blocks
@@ -129,13 +154,24 @@ function msg_show(id: unknown, n: unknown): string {
   return typeof id === "number" ? "#" + id + many : String(id ?? "");
 }
 
-// a spawn's count of tasks, their labels and its model and effort if
-// named
+// a spawn's count of tasks, their labels, then each task's model and
+// effort if named (a log from before release 26: the call's, its tasks
+// plain strings)
 function tasks_show(tasks: unknown, model: unknown, effort: unknown, labels: unknown): string {
-  const n = Array.isArray(tasks) ? tasks.length : 0;
+  const list = Array.isArray(tasks) ? tasks : [];
   const named = Array.isArray(labels) ? labels.filter((l) => typeof l === "string" && l.trim() !== "") : [];
-  const knobs = [model, effort].filter((k) => typeof k === "string").map((k) => " · " + k).join("");
-  return n + (n === 1 ? " agent" : " agents") + (named.length === 0 ? "" : ": " + named.join(", ")) + knobs;
+  const knobs = [...new Set([knobs_show(model, effort), ...list.map((t) => knobs_show(t?.model, t?.effort))])].filter((k) => k !== "").map((k) => " · " + k).join("");
+  return list.length + (list.length === 1 ? " agent" : " agents") + (named.length === 0 ? "" : ": " + named.join(", ")) + knobs;
+}
+
+// a model and effort named, as "opus-5.5 high" ("": none)
+function knobs_show(model: unknown, effort: unknown): string {
+  return [model, effort].filter((k) => typeof k === "string").join(" ");
+}
+
+// a spawn's task as a block, keyed by its model and effort if named
+function task_block(t: any): Md.Code[] {
+  return typeof t === "string" ? text_block(t) : text_block(t?.task).map((b) => ({ ...b, k: knobs_show(t.model, t.effort) }));
 }
 
 // a read's lines, as path:4-7 shows them ("": the whole file)

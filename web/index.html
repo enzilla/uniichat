@@ -41,17 +41,21 @@
   </nav>
   <section class="pane" aria-label="Pendência"></section>
   <p class="sr live" aria-live="polite" aria-atomic="true"></p>
+<!-- the memory tree (/tree, web/src/Tree.ts) -->
+<main id="tree" hidden>
+  <nav class="top"><a class="back" href="/" data-go="/">← Chat</a><a class="tab" href="/tree#view" data-go="/tree#view" data-tab="VIEW">VIEW</a><a class="tab" href="/tree" data-go="/tree" data-tab="TREE">TREE</a><small class="legend"></small><button class="prev" aria-label="Level below">‹</button><button class="next" aria-label="Level above">›</button></nav>
+  <section class="view" tabindex="-1"></section>
+  <section class="bracket" tabindex="-1"></section>
 </main>
 <footer>
   <button class="mine" type="button" title="Up to your message" hidden><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
   <button class="down" type="button" title="Down to the end" hidden><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
   <div id="toast" hidden></div>
   <nav id="pick"></nav>
-  <div id="pics" class="pics"></div>
   <form class="composer">
-    <button class="attach" type="button" aria-label="attach images"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
-    <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
-    <textarea rows="1"></textarea><div class="voice"><canvas></canvas><span>0:00</span></div><button class="mic" type="button" aria-label="dictate"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button><button class="send" type="submit" aria-label="send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
+    <button class="attach" type="button" aria-label="attach files"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    <input type="file" multiple hidden>
+    <div class="field" role="textbox" aria-multiline="true" aria-label="Message" spellcheck="true"></div><div class="voice"><canvas></canvas><span>0:00</span></div><button class="mic" type="button" aria-label="dictate"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button><button class="send" type="submit" aria-label="send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
   </form>
   <nav id="tabs"></nav>
 </footer>
@@ -70,12 +74,16 @@
   <button class="tell" type="button" data-act='{"$":"TasksTell"}' title="Suas respostas já estão salvas; o Unii as vê quando voltar a trabalhar. Este botão o chama agora." hidden>Avisar o Unii agora (<span></span>)</button>
   <details class="closed" hidden><summary>Resolvidas recentemente</summary><ul></ul></details>
 </aside>
+<!-- a picture seen whole, over the chat (web/src/Viewer.ts) -->
+<dialog id="viewer" aria-label="Picture">
+  <div class="bar"><p class="name"></p><span class="zoom"></span><a class="get" title="Download" aria-label="Download"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg></a><button class="shut" type="button" title="Close" aria-label="Close" autofocus><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+  <div class="stage"><img alt="" draggable="false"><p class="why" hidden>Could not load this picture.</p><button class="prev" type="button" aria-label="Previous picture" hidden><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><button class="next" type="button" aria-label="Next picture" hidden><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button></div>
+</dialog>
 <div id="menu" popover>
   <button data-go="/settings">Settings</button>
   <button data-go="/pipeline">Pipeline</button>
-  <a href="/tree">Memory</a>
+  <button data-go="/tree">Memory</button>
   <button class="imp">Import History</button>
-  <div class="mcp"></div>
   <button class="out">Sign out</button>
 </div>
 <div id="import" popover>

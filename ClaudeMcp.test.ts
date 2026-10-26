@@ -59,14 +59,14 @@ test("Claude Code's stdio servers and its enabled plugins', a URL one left out; 
   expect(found[1].conf.env).toEqual({ SEGREDO: "padrao" });
 });
 
-test("named <device>-<name> in a server's letters; off till the chat turns one on", () => {
-  expect(Tools.claude_conf("enzo", "pony:mcp-search").name).toBe("enzo-pony-mcp-search");
-  expect(Tools.claude_conf("my.mac", "a__b").name).toBe("my-mac-a_b");
-  const servers = Mcp.servers(() => {}, [], async () => ({ text: "", fail: true }), () => true);
-  Mcp.add(servers, { ...Tools.claude_conf("enzo", "eco"), claude: "eco" });
+test("named <device>_<name> as a device's config servers are (Config.ts config_mcp_prefix); off till the chat turns one on", () => {
+  expect(Tools.claude_conf("enzo", "pony:mcp-search").name).toBe("enzo_pony-mcp-search");
+  expect(Tools.claude_conf("my.mac", "a__b").name).toBe("my-mac_a--b");
+  const servers = Mcp.servers(() => {}, async () => ({ text: "", fail: true }), () => true);
+  Mcp.sync(servers, [Tools.claude_conf("enzo", "eco")]);
   const tools = { mcp: servers, mem: { off: [], on: [] } } as unknown as Tools;
-  expect(Tools.off(tools)).toEqual(["enzo-eco"]);
-  (tools.mem as any).on = ["enzo-eco"];
+  expect(Tools.off(tools)).toEqual(["enzo_eco"]);
+  (tools.mem as any).on = ["enzo_eco"];
   expect(Tools.off(tools)).toEqual([]);
 });
 

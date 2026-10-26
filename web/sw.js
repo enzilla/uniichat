@@ -12,10 +12,11 @@
 // browser has one: an installed app). A tap opens the chat; a task's, the
 // Mesa (main.ts: ?mesa, or a message to a tab open).
 
-// (a new name, for files a client should not be shown old: the shell's
-// before it is dropped as this one starts)
-const CACHE = "unii-shell-2";
+// (named by the web app's build, which the server writes in: a new
+// build's drops the old one's as it starts)
+const CACHE = "unii-shell-{build}";
 const SHELL = ["/", "/app.js", "/style.css", "/favicon.svg", "/mark.svg", "/manifest.webmanifest", "/icon-192.png"];
+const PAGES = ["/", "/settings", "/account", "/tree"];
 
 // Safari takes a subscription back from a site whose pushes show nothing,
 // so there every push shows
@@ -29,24 +30,25 @@ self.addEventListener("activate", (ev) => {
   ev.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
 });
 
-// the shell's files, and a page of the app ("/", "/account": both
-// index.html, kept as "/")
+// the shell's files, and a page of the app (PAGES: all index.html, kept
+// as "/")
 self.addEventListener("fetch", (ev) => {
   const req = ev.request;
   const url = new URL(req.url);
-  const page = req.mode === "navigate" && (url.pathname === "/" || url.pathname === "/account");
+  const page = req.mode === "navigate" && PAGES.includes(url.pathname);
   if (req.method !== "GET" || url.origin !== location.origin || !(page || SHELL.includes(url.pathname))) {
     return;
   }
   ev.respondWith(fresh(req, page ? "/" : url.pathname));
 });
 
-// the server's answer, kept; none, or the server down behind a proxy
-// (5xx), the one kept
+// the server's answer (never the browser's cache unchecked: a new build
+// shows at once), kept; none, or the server down behind a proxy (5xx),
+// the one kept
 async function fresh(req, key) {
   const cache = await caches.open(CACHE);
   try {
-    const res = await fetch(req);
+    const res = await fetch(req.mode === "navigate" ? req.url : req, { cache: "no-cache" });
     if (res.ok) {
       await cache.put(key, res.clone());
     }

@@ -72,7 +72,7 @@ test("spawn with labels: the answer names each with its label; one without stays
 test("the note keeps the label, after model and effort; one without as before", async () => {
   expect(Memory.agent(chat.mem, A)![0]).toMatchObject({ kind: "note", text: "subagent, labeled num-3182-verificador" });
   expect(Memory.agent(chat.mem, C)![0].text).toBe("subagent");
-  const out = await call("spawn", { tasks: ["d"], labels: ["com modelo"], effort: "high" });
+  const out = await call("spawn", { tasks: [{ task: "d", effort: "high", label: "com modelo" }] });
   const d = /^Started (\w+)/.exec(out.text)![1];
   expect(Memory.agent(chat.mem, d)![0].text).toBe("subagent at effort high, labeled com modelo");
 });

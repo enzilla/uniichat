@@ -60,14 +60,17 @@ export type Img = { type: string; data: string };
 // a message for the agent
 export type Say = { text: string; imgs: Img[] };
 
-// a text block of a call's message; `mark`: a cache entry ends after it
-export type Block = { text: string; mark: boolean };
+// a text block of a call's message; `mark`: a cache entry ends after it;
+// `back`: one too, further back, at claude-api in conversation mode
+// (Memory.view)
+export type Block = { text: string; mark: boolean; back?: boolean };
 
 // searches: the most web searches it runs (0: no web tools); probe: its
 // first request goes once (its pick is DOWN); fallback: a pick follows
 // its own, which a long usage-limit wait goes on with instead (Agent.step);
 // agent: a subagent's, which a long usage limit ends (after its
-// fallbacks) instead of parking it, its report saying so
+// fallbacks) instead of parking it, its report saying so; talk: a turn's
+// in conversation mode (claude-api caches it an hour: Anthropic.ts)
 export type Ask = Pick & {
   system    : string;
   blocks    : Block[];
@@ -79,6 +82,7 @@ export type Ask = Pick & {
   probe?    : boolean;
   agent?    : boolean;
   fallback? : boolean;
+  talk?     : boolean;
 };
 
 // a prefix cached: until when; while its leader's response has not
@@ -96,7 +100,8 @@ export type Parked = { until: number; known: boolean };
 // having left `from` (null: none, its own pick) as it failed, saying why
 export type Event =
   | { $: "Delta"; kind: Kind; text: string; fresh?: boolean }
-  | { $: "Entry"; kind: Kind; text: string; of?: string } // of: the tool call it is or answers (a call is logged with its result)
+  | { $: "Entry"; kind: Kind; text: string; of?: string; queued?: boolean } // of: the tool call it is or answers; queued: a call that runs later, once its Start comes
+  | { $: "Start"; of: string }                            // a queued tool call begins (Agent.ts runs a step's calls one by one)
   | { $: "Limit"; limit: Parked | null }                  // waiting for a usage limit, or no longer
   | { $: "Run"; run: Pick; from: Pick | null; why: string };
 
@@ -105,7 +110,8 @@ export type Event =
 // reason; asked again, it fails alike), we (`lost`: a stop), the vendor
 // (`down`; off: out for every call, not this request alone), or none
 // (our setup threw); acted: it ran a tool or took a message sent mid-run,
-// which another try would do again; until: when the vendor's refusal lifts, if it said (ms since 1970)
+// which another try would do again; until: when the vendor's refusal lifts, if it said (ms since 1970);
+// long: the vendor refused it as too long for the model (Agent.TOO_LONG)
 export type End = {
   ok     : boolean;
   text   : string;
@@ -115,6 +121,7 @@ export type End = {
   off?   : boolean;
   acted? : boolean;
   until? : number;
+  long?  : boolean;
 };
 
 // one try at a vendor

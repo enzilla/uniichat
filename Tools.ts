@@ -3,7 +3,7 @@
 // Unii's prompts, tools and agents. Calls get the tools as MCP over one
 // local port, at a URL with the chat's secret and the caller ("main", an
 // agent; a compaction has none).
-// shell, read, write, edit and view_video run on the device their
+// shell, read, write, edit, view_video and show run on the device their
 // `device` field names: a computer running `unii device` (Device.ts), one
 // per sign-in (host, host-2...), listed in each call's message. A name
 // stays its sign-in's while the server runs, so a call meant for one
@@ -21,7 +21,12 @@
 // wakes every call waiting for a usage limit (Agent.resume), for a user
 // who knows one lifted early.
 // The user's MCP servers (Mcp.ts) add their tools to the master's and its
-// subagents', but those of servers the chat turned off (Memory `off`).
+// subagents', but those of servers the chat turned off (Memory `off`):
+// each open device's own (Tools.servers), run on it; the server runs
+// none. They change only while nothing runs or as a turn starts with no
+// subagent working (one keeps the servers it started with). The fork has
+// one user, whose every device is: each one's servers reach the chat,
+// unchecked.
 
 import { AskAI, type Ask, type Block, type Call, type Event, type Kind } from "./AskAI.ts";
 import { Agent, type Out } from "./Agent.ts";
@@ -48,8 +53,9 @@ export type { Live };
 
 // a device: its sign-in (a session's hash), the host it said it is
 // (its name may be host-2...), its links by tab (none: closed), jobs by
-// id, its skills and its Claude Code's MCP servers' names as last looked
-// at (Tools.look)
+// id, its skills, its Claude Code's MCP servers' names and its
+// instructions as last looked at (Tools.look); the MCP servers it told
+// of (Tools.servers), and why some were left out
 type Device = {
   who    : string;
   host   : string;
@@ -61,6 +67,9 @@ type Device = {
   paths  : string[];
   proj   : Instructions.Part[];
   shown  : Set<string>;
+  mcp    : config.McpServer[];
+  why    : string;
+  clash  : string;
 };
 
 // a job: the link it runs on, what it runs, its output, what ends it
@@ -70,6 +79,15 @@ type Running = { term: string; job: Job; out: Promise<Out>; end: (out: Out) => v
 // work dir, its shell if not a POSIX one
 export type Link = { send: (msg: object) => void; live: () => boolean; work: string; shell: string | null };
 
+// a tool call awaiting its result (Server.ts Chat.on): its text as logged,
+// its tool's name, whether it is logged yet (something written while it
+// ran wrote it first: Chat.flush), whether it started (one queued behind
+// another of its step hasn't: AskAI.ts Start)
+export type Waiting = { text: string; tool: string; logged: boolean; started: boolean };
+
+// a task to spawn, with what it runs on
+export type Spawn = { task: string; role: Agent["role"]; label: string };
+
 // at work, the view its calls get and its replies so far
 export type Agent = {
   name    : string;
@@ -77,7 +95,7 @@ export type Agent = {
   role    : { effort: string | null; model: string | null };
   call    : Call | null;
   live    : Live[];
-  calls   : Record<string, string>; // its tool calls awaiting their results, by id (Chat.on)
+  calls   : Map<string, Waiting>; // its tool calls awaiting their results, by id, in the order they started (Chat.on)
   stop    : boolean; // its call was stopped: the report stays unanswered
   why     : string | null; // its report, if stopped by the stop tool
   view    : Block[];
@@ -101,13 +119,17 @@ type Hooks = {
   agents?  : () => void; // an agent started: AGENTES.md written again (Pipeline.agents_md; as it ends, its report does it, Server.ts Chat.report)
 };
 
-// the tools: the chat's MCP servers
+// the tools: the chat's MCP servers, those it runs from the next turn
+// (Tools.plug; null: no change), and whether it was told UNII_MCP's
+// servers are left out (Tools.left)
 export type Tools = {
   mem     : Memory;
   devices : Map<string, Device>;
   agents  : Map<string, Agent>;
   labels  : Map<string, string>; // every agent's label it has, by name (Tools.labels)
   mcp     : Servers;
+  next    : config.McpServer[] | null;
+  left    : boolean;
   key     : string;
   url     : string;
   hooks   : Hooks;
@@ -200,17 +222,27 @@ const LABEL_POINTS = 2 * LABEL;
 const GRAPHEMES = new Intl.Segmenter("en", { granularity: "grapheme" });
 
 // the models a subagent may be given (Tools.call)
-const MODELS = Pick.models(config.OFFER.vendors, config.OFFER.models).map(([, m]) => m.label);
+const MODELS = [...new Set(Pick.models(config.OFFER.vendors, config.OFFER.models).map(([, m]) => m.label))];
+
+// a spawn's task: what to do, and its own model and effort, if any
+const TASK = { type: "object", properties: {
+  task   : STR,
+  model  : { type: "string", enum: MODELS, description: "Its model; by default, the one it'd run on. Set it ONLY when the user asks for that model or vendor in this chat, since another vendor may come with additional costs." },
+  effort : { type: "string", enum: EFFORTS, description: "How hard it thinks; by default, as hard as you." },
+  label  : { type: "string", description: "A short label the user reads as this subagent's name instead of its generated one: <project>-<role>, as num-3182-verifier or uniichat-links-impl. Give one for every task. You still name it by its generated name in tell, stop and zoom." },
+}, required: ["task"] };
 
 // the devices: how they work, in the system prompt (DEVICES); those open
 // now, at the start of each call's message (Tools.devices), so one
 // joining or leaving changes a call's tail, never its cached prefix
 const DEVICES = `Devices: the user's computers that run unii's device now, by name, listed
-at the start of each message. Your shell, read, write, edit and view_video
-tools run on the one their \`device\` field names. A computer is listed only
+at the start of each message. Your shell, read, write, edit, view_video and
+show tools run on the one their \`device\` field names. A computer is listed only
 while its device runs, and leaves the list when it stops: a task that needs
 one not listed can't be done now, so tell the user it isn't available.`;
 const DEVICES_NONE = "(None is open now.)";
+// where a file of the chat's (/media/<name>, pasted or shown) is
+const MEDIA_AT = "Media and files in the chat, /media/<name>, are the files {dir}<name> on the server's computer.";
 
 const SKILLS = "Skills on the devices open now, by device: when a task matches one's description, load it with the skill tool first, then follow it (skills_search finds them by words).";
 
@@ -264,7 +296,7 @@ const REF_NEW_SPEC = { type: "boolean", description: "true: ref starts a new fro
 const KIND_SPEC = "What it is, as when it's late counts, from when it became the user's to act on: pr (a PR's approval: needs prs) 24 h, decision 72 h, test 2 h, action (a step only the user can do) 24 h, restart (the serve's restart, only while agents are at work: with no choices it gets its template, \"Sim, reinicie\" (yours) or \"Eu reinicio depois\"; with none at work, use the restart tool) 24 h, info (only to read) never, priority low unless given, and listed after every task to act on; none: 24 h (a GitHub pull link in its title makes it pr, a title opening with \"Teste\" makes it test). Whatever its kind, a task of the user's that cites a GitHub pull in its title or detail needs prs. A late one only says so: it never expires.";
 const AGENT_SPEC = { type: "string", description: "The agent at work on it now, by name (its generated name or its label): for a task of yours, who follows it up, so the views show it and a task with no agent at work is seen as stalled. \"\" for none." };
 const BOSS: Spec[] = [
-  spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees the view and the user's instructions, but knows what you want only from its task.", { tasks: { type: "array", items: STR }, labels: { type: "array", items: STR, description: "A short label per task, in the tasks' order, that the user reads as that subagent's name instead of its generated one: <project>-<role>, as num-3182-verifier or uniichat-links-impl. Give one for every task. You still name it by its generated name in tell, stop and zoom." }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." }, model: { type: "string", enum: MODELS, description: "Their model; by default, the one they'd run on. Set it ONLY when the user asks for that model or vendor in this chat, since another vendor may come with additional costs." } }, ["tasks"]),
+  spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees the view and the user's instructions, but knows what you want only from its task. Each task names its own model and effort, if any.", { tasks: { type: "array", items: TASK } }, ["tasks"]),
   spec("tell", "Send a message to a subagent, by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
   spec("schedule", "Schedule a message to yourself: at its time it reaches you as a message \"[Timer id]\" from the timer, not the user, starting a turn as a report does, whether or not the user is online. Give `at` to send it once, or `cron` to send it again and again, and the time zone both are read in (the user's). Write the message as the task to do then, whole: by then this turn is far back in the view.", {
     message : STR,
@@ -343,8 +375,8 @@ export namespace Tools {
     const key = crypto.randomUUID();
     const url = Tools.base() + key + "/";
     const run = (device: string, job: Job, signal: AbortSignal) => Tools.job(tools, device, job, signal, crypto.randomUUID());
-    const mcp = Mcp.servers((text) => hooks.note(text), config.MCP, run, (device) => typeof Tools.open(tools, device) !== "string");
-    const tools: Tools = { mem, devices: new Map(), agents: new Map(), labels: Tools.labels(mem), mcp, key, url, hooks };
+    const mcp = Mcp.servers((text) => hooks.note(text), run, (device) => Tools.live(tools.devices.get(device)));
+    const tools: Tools = { mem, devices: new Map(), agents: new Map(), labels: Tools.labels(mem), mcp, next: null, left: false, key, url, hooks };
     CHATS.set(key, tools);
     return tools;
   }
@@ -375,7 +407,7 @@ export namespace Tools {
     const shell = (d: Device) => [...d.terms.values()][0]?.shell;
     const line  = ([name, d]: [string, Device]) => "- " + name + ", work dir " + work(d) + (shell(d) ? ", shell " + shell(d) + " (stopping the device does not kill a process a call left running after its shell ended)" : "");
     const lines = Tools.opened(tools).map(line);
-    return { text: "Devices open now:\n" + (lines.length === 0 ? DEVICES_NONE : lines.join("\n")) + "\n\n", mark: false };
+    return { text: "Devices open now:\n" + (lines.length === 0 ? DEVICES_NONE : lines.join("\n")) + "\n" + MEDIA_AT.replace("{dir}", tools.mem.dir + "/docs/media/") + "\n\n", mark: false };
   }
 
   // after the devices, so a change hits a call's tail, not its cached
@@ -446,10 +478,9 @@ export namespace Tools {
       const proj = d.paths.length === 0 ? null : await Tools.ask_one(tools, name, "project_instructions", { paths: d.paths });
       d.proj = proj?.parts ?? d.proj;
       d.shown = new Set([...d.rules, ...d.proj].map((p) => p.id));
-      for (const mcp of d.mcps) {
-        Mcp.add(tools.mcp, { ...Tools.claude_conf(name, mcp), device: name, claude: mcp });
-      }
       if (JSON.stringify([d.skills, d.mcps]) !== was) {
+        // its Claude Code's servers join the chat's as its config's do
+        Tools.plug(tools);
         tools.hooks.change();
       }
     }));
@@ -499,14 +530,28 @@ export namespace Tools {
   // "<device>-<name>" in the letters a server's name takes (Config.ts), run
   // on that device, its program read there (Mcp.here)
   export function claude_conf(device: string, name: string): config.McpServer {
-    const safe = (device + "-" + name).replace(/[^A-Za-z0-9_-]/g, "-").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
-    return { name: safe, device, command: "", args: [], env: {}, cwd: "", url: "", headers: {}, timeout: 600 };
+    const safe = name.replace(/[^A-Za-z0-9-]/g, "-");
+    return { name: config.config_mcp_prefix(device) + "_" + safe, device, command: "", args: [], env: {}, cwd: "", url: "", headers: {}, timeout: 600, claude: name };
+  }
+
+  // a device's servers: its config.json's, then its Claude Code's (one
+  // whose name a config one took left out)
+  export function device_mcp(name: string, d: Device): config.McpServer[] {
+    const own = new Set(d.mcp.map((m) => m.name));
+    return [...d.mcp, ...d.mcps.map((m) => Tools.claude_conf(name, m)).filter((m) => !own.has(m.name))];
+  }
+
+  // the chat's MCP servers as they are, or will be from the next turn
+  // (Tools.plug): each one /mcp may turn on or off
+  export function known(tools: Tools): config.McpServer[] {
+    const next = tools.next ?? [...tools.mcp.all.values()].map((s) => s.conf);
+    return next;
   }
 
   // the MCP servers of the open devices' Claude Code, by the chat's name
   // (one a config server's name took is left out)
   export function claude(tools: Tools): string[] {
-    return Tools.opened(tools).flatMap(([device, d]) => d.mcps.map((m) => Tools.claude_conf(device, m).name)).filter((n) => tools.mcp.all.get(n)?.conf.claude !== undefined);
+    return Tools.opened(tools).flatMap(([device, d]) => Tools.device_mcp(device, d).filter((m) => m.claude !== undefined).map((m) => m.name));
   }
 
   // the master's agents at work now, at the start of each of its calls'
@@ -646,16 +691,8 @@ export namespace Tools {
         return { text: Memory.date(mem, Number(args.id)), fail: false };
       }
       case "spawn": {
-        const effort = args.effort === undefined ? null : String(args.effort);
-        if (effort !== null && !EFFORTS.includes(effort)) {
-          return { text: "No effort " + effort + "; one of " + EFFORTS.join(", ") + ".", fail: true };
-        }
-        const model = args.model === undefined ? null : String(args.model);
-        if (model !== null && !MODELS.includes(model)) {
-          return { text: "No model " + model + "; one of " + MODELS.join(", ") + ".", fail: true };
-        }
-        const labels = Array.isArray(args.labels) ? args.labels.map((l: unknown) => (typeof l === "string" ? l : "")) : [];
-        return { text: await Tools.spawn(tools, (args.tasks ?? []).map(String), effort, model, labels), fail: false };
+        const tasks = Tools.spawns(args);
+        return typeof tasks === "string" ? { text: tasks, fail: true } : { text: await Tools.spawn(tools, tasks), fail: false };
       }
       case "tell": {
         return { text: await Tools.tell(tools, String(args.name), String(args.message)), fail: false };
@@ -818,13 +855,14 @@ export namespace Tools {
     if (own === undefined) {
       Tools.forget(tools, name);
     }
-    const d = tools.devices.get(name) ?? { who, host, terms: new Map(), jobs: new Map(), skills: [], mcps: [], rules: [], paths: [], proj: [], shown: new Set<string>() };
+    const d = tools.devices.get(name) ?? { who, host, terms: new Map(), jobs: new Map(), skills: [], mcps: [], rules: [], paths: [], proj: [], shown: new Set<string>(), mcp: [], why: "", clash: "" };
     d.terms.set(term, link);
     tools.devices.set(name, d);
     Tools.sync(d, term, () => true);
     // told once looked at, even unchanged: its leave told the chat it had
     // none (Chat.leave), and a reconnect keeps what it had
     Tools.look(tools, name).then(() => tools.hooks.change());
+    Tools.plug(tools);
     return name;
   }
 
@@ -847,6 +885,7 @@ export namespace Tools {
         job.end({ text: "The device " + device + " that ran this stopped.", fail: true });
       }
     }
+    Tools.plug(tools);
   }
 
   // a device gone with its sign-in: its links and jobs end, its name is
@@ -860,6 +899,91 @@ export namespace Tools {
     d.terms.clear();
     for (const job of [...d.jobs.values()]) {
       job.end({ text: "The device " + device + " that ran this was signed out.", fail: true });
+    }
+    Tools.plug(tools);
+  }
+
+  // the MCP servers a device has in its own config.json (`mcp`, as it
+  // read it: Device.ts), run there, each named <device>_<server>; that
+  // file may be the server's own too (one machine, one ~/.unii). Why one
+  // is left out is told the chat, once
+  export function servers(tools: Tools, device: string, mcp: unknown): void {
+    const d = tools.devices.get(device);
+    if (d === undefined) {
+      return;
+    }
+    const notes: string[] = [];
+    try {
+      d.mcp = config.config_mcp(mcp, device, notes);
+    } catch (err: any) {
+      d.mcp = [];
+      notes.push(String(err?.message ?? err).replace(/^config: /, ""));
+    }
+    const why = notes.join("; ");
+    if (why !== d.why) {
+      d.why = why;
+      if (why !== "") {
+        console.error("unii: device " + device + ": " + why);
+        tools.hooks.note("The device " + device + "'s MCP servers: " + why + ".");
+      }
+    }
+    Tools.plug(tools);
+  }
+
+  // the chat's MCP servers as they are now: each linked device's (one
+  // whose link was lost has none till it is back), run from the next turn
+  // (Tools.apply): never changed in the middle of one; the views told.
+  // Two devices whose names make one prefix (desk_a, desk-a:
+  // config.config_mcp_prefix) would give tools of one name: the first
+  // here with servers keeps it, linked or not (so a name never moves to
+  // the other), the other's are left out, told the chat once
+  export function plug(tools: Tools): void {
+    const taken = new Map<string, string>();
+    const next: config.McpServer[] = [];
+    for (const [name, d] of tools.devices) {
+      const prefix = config.config_mcp_prefix(name);
+      const mine = Tools.device_mcp(name, d);
+      const other = mine.length === 0 ? undefined : taken.get(prefix);
+      const clash = other === undefined ? "" : "The device " + name + "'s MCP servers are left out: their tools would be named " + prefix + "_…, as the device " + other + "'s are. Rename one of the two (name in its ~/.config/unii/device.json).";
+      if (clash !== d.clash) {
+        d.clash = clash;
+        if (clash !== "") {
+          console.error("unii: " + clash);
+          tools.hooks.note(clash);
+        }
+      }
+      if (mine.length > 0 && other === undefined) {
+        taken.set(prefix, name);
+        if (Tools.live(d)) {
+          next.push(...mine);
+        }
+      }
+    }
+    tools.next = next;
+    tools.hooks.change();
+  }
+
+  // UNII_MCP's servers left out (config.MCP_LEFT), told the chat once, as
+  // its first turn here starts (config.json's `mcp` only the log tells:
+  // config.MCP_FILE)
+  export function left(tools: Tools): void {
+    if (!tools.left && config.MCP_LEFT !== null) {
+      tools.left = true;
+      tools.hooks.note(config.MCP_LEFT);
+    }
+  }
+
+  // whether a device has a live link
+  export function live(d: Device | undefined): boolean {
+    return d !== undefined && [...d.terms.values()].some((t) => t.live());
+  }
+
+  // the MCP servers as plugged, as a turn starts with no subagent working
+  // or while nothing works (Server.ts: Chat.turn, Chat.change)
+  export function apply(tools: Tools): void {
+    if (tools.next !== null) {
+      Mcp.sync(tools.mcp, tools.next);
+      tools.next = null;
     }
   }
 
@@ -958,13 +1082,42 @@ export namespace Tools {
   // Agents
   // ------
 
-  export async function spawn(tools: Tools, tasks: string[], effort: string | null, model: string | null = null, labels: string[] = []): Promise<string> {
+  // a spawn's tasks, each with its model and effort checked; one bad
+  // fails them all, naming it (a string: why), so none starts. A model or
+  // effort for the whole call (as spawn took them before) is refused, not
+  // ignored, so no task runs on one it wasn't meant to
+  export function spawns(args: any): Spawn[] | string {
+    if (args.model !== undefined || args.effort !== undefined) {
+      return "Give model and effort per task, in each of tasks: { task, model?, effort? }. Nothing started.";
+    }
+    const out: Spawn[] = [];
+    for (const [k, t] of (Array.isArray(args.tasks) ? args.tasks : []).entries()) {
+      const x = typeof t === "string" ? { task: t } : t ?? {};
+      const task = typeof x.task === "string" ? x.task : "";
+      const model = x.model === undefined ? null : String(x.model);
+      const effort = x.effort === undefined ? null : String(x.effort);
+      const bad = task === "" ? "no task text" : model !== null && !MODELS.includes(model) ? "no model " + model + "; one of " + MODELS.join(", ") : effort !== null && !EFFORTS.includes(effort) ? "no effort " + effort + "; one of " + EFFORTS.join(", ") : null;
+      if (bad !== null) {
+        return "Task " + (k + 1) + (task === "" ? "" : " (" + JSON.stringify(task.length > 60 ? task.slice(0, 60) + "…" : task) + ")") + ": " + bad + ". Nothing started.";
+      }
+      // its label, or the call's labels' k-th (as spawn took them before)
+      const label = typeof x.label === "string" ? x.label : Array.isArray(args.labels) && typeof args.labels[k] === "string" ? args.labels[k] : "";
+      out.push({ task, role: { model, effort }, label });
+    }
+    return out;
+  }
+
+  // each agent named with its model and effort, if given
+  export async function spawn(tools: Tools, tasks: Spawn[]): Promise<string> {
     const view = tasks.length === 0 ? "No tasks." : await Tools.view(tools);
     if (typeof view === "string") {
       return view;
     }
-    const names = tasks.map((task, k) => Tools.start(tools, { effort, model }, task, view, labels[k] ?? ""));
-    return "Started " + names.map((name) => Tools.named(tools, name)).join(", ") + ". Each one's report will reach you as a message when it finishes.";
+    const names = tasks.map(({ task, role, label }) => {
+      const knobs = [role.model, role.effort === null ? null : "effort " + role.effort].filter((k) => k !== null);
+      return Tools.named(tools, Tools.start(tools, role, task, view, label)) + (knobs.length === 0 ? "" : " (" + knobs.join(", ") + ")");
+    });
+    return "Started " + names.join(", ") + ". Each one's report will reach you as a message when it finishes.";
   }
 
   // what the work a restart cut is told as it goes on (Server.ts
@@ -1000,7 +1153,7 @@ export namespace Tools {
   export function start(tools: Tools, role: Agent["role"], task: string, view: Block[], label = ""): string {
     const name = Memory.agent_new(tools.mem);
     const shown = Tools.label_clean(label);
-    const agent = { name, label: shown, role, call: null, live: [], calls: {}, stop: false, why: null, view, replies: [] };
+    const agent = { name, label: shown, role, call: null, live: [], calls: new Map(), stop: false, why: null, view, replies: [] };
     tools.agents.set(name, agent);
     if (shown !== null) {
       tools.labels.set(name, shown);
@@ -1025,7 +1178,7 @@ export namespace Tools {
     const log = Memory.agent(tools.mem, name);
     const note = log !== null && log.length > 0 && log[0].kind === "note" ? log[0].text : "";
     const sub = SUB_ROLE.exec(note);
-    return sub === null ? null : { name, label: Tools.label_clean(sub[3] ?? ""), role: { effort: sub[2] ?? null, model: sub[1] ?? null }, call: null, live: [], calls: {}, stop: false, why: null, view: [], replies: [] };
+    return sub === null ? null : { name, label: Tools.label_clean(sub[3] ?? ""), role: { effort: sub[2] ?? null, model: sub[1] ?? null }, call: null, live: [], calls: new Map(), stop: false, why: null, view: [], replies: [] };
   }
 
   // a label as given, on one line, at most LABEL graphemes (LABEL_POINTS
@@ -1148,7 +1301,7 @@ export namespace Tools {
     let ended = true;
     if (call !== null) {
       const live = agent.live.at(-1);
-      const last = Object.values(agent.calls).at(-1) ?? (live && live.kind + ": " + live.text);
+      const last = [...agent.calls.values()].at(-1)?.text ?? (live && live.kind + ": " + live.text);
       const doing = last === undefined ? "" : " It was last at " + last.replace(/\s+/g, " ").slice(0, 300);
       agent.why = "Stopped by Unii" + (why.trim() === "" ? "." : ": " + why.trim().replace(/\.?$/, ".")) + doing;
       Tools.stop(tools, name);

@@ -300,11 +300,11 @@ test("a talk's turn reads the task whole: its detail, the draft not sent yet and
   await act({ $: "task", task: quiet.id, state: "dropped" });
 });
 
-test("the views' state carries the site's build (a page of another one reloads: main.ts desk_build)", () => {
-  const web = (Chat.state(chat) as any).web;
-  expect(typeof web).toBe("string");
-  expect(web).toMatch(/^[0-9a-z]+\.[0-9a-z]+$/);
-  expect((Chat.state(chat) as any).web).toBe(web);
+test("the views' state carries the site's build (a page of another one reloads: main.ts renew)", () => {
+  const build = (Chat.state(chat) as any).build;
+  expect(typeof build).toBe("string");
+  expect(build).not.toBe("");
+  expect((Chat.state(chat) as any).build).toBe(build);
 });
 
 // P1 (25/10/2026): the user's resolutions reach Unii on their own, in

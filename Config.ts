@@ -46,13 +46,15 @@ type Made = {
 // Types
 // =====
 
-// a user's MCP server (Mcp.ts): a program run here (stdio: command, its
-// args, its env: all it gets beside the few of this one's variables
-// Mcp.ts passes on, its dir) or a URL (streamable HTTP, with headers);
-// how long a tool call may take, in seconds; device: the device that
-// runs the program instead (Mcp.device; "": here); claude: one of that
-// device's Claude Code (Machine.claude_mcps), by its name there: the
-// device reads its command, args and env, which never reach the server
+// a user's MCP server (Mcp.ts), from a device's own config.json
+// (Tools.servers), run on that device (Mcp.here): a program (stdio:
+// command, its args, its env: all it gets beside the few of the device's
+// variables Mcp.ts passes on, its dir) or a URL (streamable HTTP, with
+// headers), reached from the device; how long a tool call may take, in
+// seconds; the device. Its ${VAR}s and ~ are read there. claude: one of
+// that device's Claude Code (Machine.claude_mcps, Tools.claude_conf), by
+// its name there: the device reads its command, args and env, which
+// never reach the server
 export type McpServer = {
   name    : string;
   device  : string;
@@ -78,7 +80,7 @@ export const SETTINGS: Setting[] = [
   { key: "vendors",   def: "claude-api",                        apply: "now",     web: true  },
   { key: "models",    def: LABELS.join(),                       apply: "now",     web: true  },
   { key: "pick",      def: "claude-api:sonnet-5.5:medium:slow", apply: "now",     web: true  },
-  { key: "compactor", def: "claude-api:haiku-5.5:high:slow",    apply: "now",     web: true  },
+  { key: "compactor", def: "claude-api:sonnet-5.5:medium:slow", apply: "now",     web: true  },
   { key: "compactor_context", def: "4",                         apply: "now",     web: true  },
   { key: "agents",    def: "",                                  apply: "now",     web: true  },
   { key: "site",      def: "http://127.0.0.1:8788",             apply: "restart", web: true  },
@@ -145,19 +147,27 @@ export const CURSOR     = config_path(config_get("cursor", ""));
 // how cursor-sub contains Cursor's agent: "bwrap" (bubblewrap), or
 // "docker" (a container of its own, where unprivileged namespaces are shut)
 export const CURSOR_SANDBOX = config_get("cursor_sandbox", "bwrap").trim();
+// the most a file put in the media store may be (config media_mb, in MB)
+export const MEDIA_MAX  = (Number(config_get("media_mb", "")) || 1024) * 2 ** 20;
 
 // the keys the environment gave (removed from it), and every key as used:
 // the environment's, else keys.json's
 const ENV_KEYS: Record<string, string> = Object.fromEntries(Object.entries(VARS).map(([name, v]) => [name, config_key(v)]));
 export const KEYS: Record<string, string> = config_keys(keys_read());
 
-// the MCP servers the chat runs (Mcp.ts): Claude's `mcpServers`, as an
-// object, its JSON, or a file holding it (read once the keys are out of
-// the environment, so ${VAR} never gives one). UNII_MCP leaves the
-// environment too (a server's headers are in it)
-const MCP_VAR           = process.env.UNII_MCP;
+// MCP servers run only on devices (Mcp.ts): UNII_MCP's are left out,
+// MCP_LEFT the note that says so (null: unset), for the log and the chat;
+// MCP_FILE: this config.json has servers in its `mcp`, which only a
+// device on this computer reading it as its own runs (Tools.servers):
+// only the log says so as the server starts, since as a turn starts
+// (one a restart cut, resumed) that device may not have joined yet.
+// UNII_MCP leaves the environment (its headers may hold a secret)
+const MCP_VAR = process.env.UNII_MCP;
 delete process.env.UNII_MCP;
-export const MCP        = config_mcp(MCP_VAR ?? (FILE.mcp as unknown) ?? {});
+export const MCP_LEFT: string | null = config_mcp_some(MCP_VAR)
+  ? "UNII_MCP is set, but unii serve runs no MCP servers, so they are left out: put them in the mcp of a device's own ~/.unii/config.json (for this computer, run unii device beside the server)."
+  : null;
+export const MCP_FILE = config_mcp_some(FILE.mcp);
 
 // Config
 // ======
@@ -310,51 +320,63 @@ function config_vendors(text: string): Vendor[] {
   return list;
 }
 
-// the servers of Claude's `mcpServers` shape (the object, or one that holds
-// it under that key, as Claude's .mcp.json does); ${VAR} in their
-// strings reads the environment
-export function config_mcp(raw: unknown): McpServer[] {
-  let all: any = raw;
-  if (typeof all === "string" && all.trim() !== "" && !all.trim().startsWith("{")) {
-    all = fs.readFileSync(config_path(all.trim()), "utf8");
-  }
-  if (typeof all === "string") {
+// a device's name as its MCP servers' start: other than letters, digits
+// and -, each character a - (so desk_a's and desk-a's are one: Tools.plug)
+export function config_mcp_prefix(device: string): string {
+  return device.replace(/[^A-Za-z0-9-]/g, "-");
+}
+
+// whether an `mcp` has any server: Claude's `mcpServers` shape with one,
+// its JSON, or a file's path (Device.ts reads that)
+function config_mcp_some(raw: unknown): boolean {
+  if (typeof raw === "string") {
     try {
-      all = all.trim() === "" ? {} : JSON.parse(all);
+      return raw.trim() !== "" && config_mcp_some(JSON.parse(raw));
     } catch {
-      // not the parser's why: it quotes the text, which may hold a secret
-      throw new Error("config: mcp is no JSON");
+      return true;
     }
   }
-  all = all?.mcpServers ?? all;
+  const all: any = (raw as any)?.mcpServers ?? raw;
+  return typeof all === "object" && all !== null && Object.keys(all).length > 0;
+}
+
+// a device's MCP servers, from the `mcp` of its own config.json
+// (Device.ts), in Claude's `mcpServers` shape (the object, or one that
+// holds it under that key, as Claude's .mcp.json does): each named
+// <device>_<server>, run there, its ${VAR}s and ~ read there (Mcp.here).
+// One that is wrong is left out, why in `notes`
+export function config_mcp(raw: unknown, device: string, notes: string[] = []): McpServer[] {
+  const all: any = (raw as any)?.mcpServers ?? raw;
   if (typeof all !== "object" || all === null || Array.isArray(all)) {
     throw new Error("config: mcp must be an object of servers by name");
   }
-  return Object.entries(all).map(([name, server]) => config_server(name, server));
+  return Object.entries(all).flatMap(([name, server]) => {
+    try {
+      return [config_server(name, server, device)];
+    } catch (err: any) {
+      notes.push(err.message.replace(/^config: /, "") + ", so it is left out");
+      return [];
+    }
+  });
 }
 
-// a server, its strings' ${VAR}s read (one unset is an error). An error
-// never quotes a value (it may hold a secret). A name has no "__" and
-// no _ at its ends, so "<server>__<tool>" names its server
-function config_server(name: string, s: any): McpServer {
+// a device's server, its strings kept as they are (the device reads
+// their ${VAR}s). An error never quotes a value (it may hold a secret). A
+// name has no "__" and no _ at its ends, so "<server>__<tool>" names its
+// server
+function config_server(name: string, s: any, device: string): McpServer {
   const bad = (why: string) => new Error("config: mcp server " + JSON.stringify(name) + " " + why);
-  const vars = (text: string) => text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, v) => {
-    if (process.env[v] === undefined) {
-      throw bad("uses ${" + v + "}, which isn't set");
-    }
-    return process.env[v]!;
-  });
   const strs = (list: unknown, what: string): string[] => {
     if (list !== undefined && (!Array.isArray(list) || list.some((x) => typeof x !== "string"))) {
       throw bad("needs " + what + " as a list of strings");
     }
-    return ((list ?? []) as string[]).map(vars);
+    return (list ?? []) as string[];
   };
   const map = (obj: unknown, what: string): Record<string, string> => {
     if (obj !== undefined && (typeof obj !== "object" || obj === null || Array.isArray(obj) || Object.values(obj).some((x) => typeof x !== "string"))) {
       throw bad("needs " + what + " as an object of strings");
     }
-    return Object.fromEntries(Object.entries((obj ?? {}) as Record<string, string>).map(([k, v]) => [k, vars(v)]));
+    return { ...(obj ?? {}) } as Record<string, string>;
   };
   if (!/^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)*$/.test(name)) {
     throw bad("needs a name of letters, digits, - and single _s inside (its tools are named <server>__<tool>)");
@@ -367,24 +389,22 @@ function config_server(name: string, s: any): McpServer {
   if (typeof timeout !== "number" || !(timeout > 0)) {
     throw bad("needs timeout as seconds, more than 0");
   }
-  if (s.device !== undefined && (type !== "stdio" || typeof s.device !== "string" || s.device === "")) {
-    throw bad("needs device as a device's name, on a stdio server");
+  if (s.device !== undefined) {
+    throw bad("has \"device\", which a device's own config.json doesn't take (its servers run on it)");
   }
-  const server = { name, device: "", command: "", args: [], env: {}, cwd: "", url: "", headers: {}, timeout };
+  // named for its device too (two devices of one prefix: Tools.plug)
+  const server = { name: config_mcp_prefix(device) + "_" + name, device, command: "", args: [], env: {}, cwd: "", url: "", headers: {}, timeout };
   if (type === "stdio") {
     if (typeof s.command !== "string" || s.command === "" || (s.cwd !== undefined && typeof s.cwd !== "string")) {
       throw bad("needs a command (and cwd, if any, as a string)");
     }
-    // a device's cwd is a path there, read by it
-    const device = s.device === undefined ? "" : vars(s.device);
-    const cwd = s.cwd ? (device ? vars(s.cwd) : config_path(vars(s.cwd))) : "";
-    return { ...server, device, command: vars(s.command), args: strs(s.args, "args"), env: map(s.env, "env"), cwd };
+    return { ...server, command: s.command, args: strs(s.args, "args"), env: map(s.env, "env"), cwd: s.cwd ?? "" };
   }
   if (type === "http") {
-    if (typeof s.url !== "string" || !URL.canParse(vars(s.url))) {
+    if (typeof s.url !== "string" || s.url === "") {
       throw bad("needs a url");
     }
-    return { ...server, url: vars(s.url), headers: map(s.headers, "headers") };
+    return { ...server, url: s.url, headers: map(s.headers, "headers") };
   }
   throw bad("has type " + JSON.stringify(type) + "; unii runs stdio and http (streamable HTTP) servers");
 }

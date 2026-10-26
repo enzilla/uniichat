@@ -25,11 +25,12 @@ import { clip_pages } from "./Clip.ts";
 import { Disk } from "./Disk.ts";
 import { Mcp } from "./Mcp.ts";
 import * as Import from "./Import.ts";
-import { JOBS, Memory, TALK, type Msg as Log, type Share } from "./Memory.ts";
+import * as Md from "./Md.ts";
+import { JOBS, Memory, type Msg as Log, type Pair, type Room, type Share } from "./Memory.ts";
 import { OpenAI } from "./OpenAI.ts";
 import { Owner } from "./Owner.ts";
 import { Pick } from "./Pick.ts";
-import { Push } from "./Push.ts";
+import { ACTIVE_MS, Push } from "./Push.ts";
 import { Reap } from "./Reap.ts";
 import { Settings } from "./Settings.ts";
 import { INSTALL, INSTALL_PS1 } from "./Update.ts";
@@ -40,8 +41,8 @@ import * as TaskPush from "./TaskPush.ts";
 import * as Tasks from "./Tasks.ts";
 import * as Restart from "./Restart.ts";
 import * as Pipeline from "./Pipeline.ts";
-import { PROMPTS, SEARCHES, Tools, type Agent, type Live } from "./Tools.ts";
-import { FRAME, IMAGES, live_push, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
+import { PROMPTS, SEARCHES, Tools, type Agent, type Live, type Waiting } from "./Tools.ts";
+import { ACTIVE, FRAME, IDLE, IMAGES, live_push, MEDIA, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
 import hello_md from "./hello.md" with { type: "text" };
 import app_js from "./web/app.js" with { type: "file" };
@@ -61,8 +62,9 @@ import icon_apple from "./web/apple-touch-icon.png" with { type: "file" };
 // =====
 
 // a socket: its sign-in (hashed), its query's fields, a device's name
-// (null: a view), the parts it was shown (Chat.teach)
-type Sock = ServerWebSocket<{ who: string; tab: string; wire: string | null; host: string | null; work: string; shell: string | null; device: string | null; seen: Set<string> }>;
+// (null: a view), the parts it was shown (Chat.teach), when its view last
+// said its page is in use (View.ACTIVE; 0: not)
+type Sock = ServerWebSocket<{ who: string; tab: string; wire: string | null; host: string | null; work: string; shell: string | null; device: string | null; seen: Set<string>; active: number }>;
 
 // a body: its file, its size so far
 type Body = { fh: fs.promises.FileHandle; size: number };
@@ -94,7 +96,9 @@ type Batch = Kept & { micros: number[][]; open: number[]; left: number; all: num
 // after another, and the logging held meanwhile (null: none); limits:
 // the calls waiting for a usage limit, by TURN or agent name; fell: the
 // fallback its calls ("") or an agent's (by name, till it reports) run
-// on (Chat.ran), forgotten as a pick is picked
+// on (Chat.ran), forgotten as a pick is picked; back: the view's block
+// the turn's last call (in conversation mode) marked last, which the
+// next marks too, for claude-api's cache (Memory.view)
 type Chat = {
   mem   : Memory;
   tools : Tools;
@@ -111,7 +115,7 @@ type Chat = {
   wait  : Msg[];
   halt  : AbortController;
   live  : Live[];
-  calls : Record<string, string>; // its tool calls awaiting their results, by id (Chat.on)
+  calls : Map<string, Waiting>; // its tool calls awaiting their results, by id, in the order they started (Chat.on)
   eye   : Eye;
   after : Promise<void>;
   batch : Batch | null;
@@ -120,6 +124,7 @@ type Chat = {
   limits: Record<string, Parked>;
   fell  : Map<string, string>;
   tell  : ReturnType<typeof setTimeout> | undefined; // its wait to tell the user's resolutions (Chat.tell_soon), while one runs
+  back  : number;
 };
 
 // Constants
@@ -148,11 +153,15 @@ const HEAD       = "Turn: the user's new message:\n\n";
 const GOAL       = "You check a goal. Below is a chat between a user and Unii, an AI agent: its older messages as summary lines (id+n|text), then its latest messages whole, then the goal the user set with /goal. Answer yes if the chat shows the goal fully satisfied now, else no. Write that one word, nothing else.";
 const GOAL_ASK   = "\nThe goal:\n\n";
 const GOAL_NO    = "The goal isn't satisfied yet: keep working.";
-// conversation mode (Memory.ts) full: switched off, as the chat says;
-// switched on with its first messages over its space already: refused
-const TALK_FULL  = "Conversation mode switched itself off: the messages it kept word for word, from message {id} on, filled their space in Unii's view. They show as summaries again; switch it on to keep the next ones whole.";
+// conversation mode (Memory.ts) switched itself off, said in one short
+// note: full; a model picked with less room than its messages take; a
+// turn refused as too long; an import filling it. Switched on with its
+// first messages over its space already: refused
+const TALK_FULL  = "Conversation mode switched itself off: it was full.";
+const TALK_SMALL = "Conversation mode switched itself off: too long for {model}.";
+const TALK_LONG  = "Conversation mode switched itself off: {model} refused the turn as too long.";
 const TALK_BIG   = "Conversation mode can't start: the messages since message {id} already fill its space in Unii's view.";
-const TALK_IMP   = "Conversation mode switched itself off: the messages imported filled its space in Unii's view (from message {id} on). Switch it on to keep the next ones whole.";
+const TALK_IMP   = "Conversation mode switched itself off: the import filled it.";
 const FULL       = "UniiChat's disk is full; try again soon.";
 // an import running: its batch's file in the chat's dir (Chat.keep)
 const BATCH      = "/import.json";
@@ -173,6 +182,21 @@ const TASK_PUSH  = 15000;
 // the acts with a body (Chat.post)
 const BODIES     = ["say", "import", "voice"];
 
+// the longest call id or tool name an import keeps (Chat.imported)
+const PAIR       = 200;
+
+// an HTML page of the media store (Main.media), shown in a frame (Html.ts):
+// nothing runs, nothing outside the server loads, no form posts, nothing
+// frames it but the app; its links open in a new tab, sandboxed too. A
+// base look first, the app's, so a bare page doesn't flash white; its own
+// CSS goes over it
+const PAGE_CSP   = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; font-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-same-origin allow-popups";
+const PAGE_BASE  = `<!doctype html><meta charset="utf-8"><base target="_blank"><style>:root { color-scheme: light dark; } body { margin: 10px 12px; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif; color: #111111; background: #ffffff; } a { color: inherit; } @media (prefers-color-scheme: dark) { body { color: #e3e3e6; background: #171719; } }</style>\n`;
+
+// the most images of the media store a message's text gives the models
+// (Chat.pictured)
+const PICTURED   = 20;
+
 // a read of a body: a buffer, no limit
 const READ       = 2 ** 20;
 
@@ -183,7 +207,7 @@ const BUFFER     = 2 ** 31 - 1;
 const PIECE      = 2 ** 16;
 
 // the paths of the owner's, but /api/'s (the rest: the site's files)
-const OWN        = ["/ws", "/tree", "/export"];
+const OWN        = ["/ws", "/export"];
 
 // the most an inbox post holds (Main.inbox)
 const INBOX_BODY = 16 * 1024;
@@ -193,10 +217,14 @@ const INBOX_BODY = 16 * 1024;
 const HELLO      = hello_md.trim().replace("{install}", config.SITE + "/install.sh");
 const HELLO_LINE = "unii: hello: UniiChat, one endless chat kept in a memory tree, recent days in more detail; build anything for years; recalls the past (ad2cat.py); a chatbot with a memory system; the user's terminal install.";
 
+// the site's page, index.html: imported as a file, a path (Bun's types
+// take any .html for an HTML bundle)
+const PAGE       = file_path(index_html);
+
 // the site's files, by path (a new one is imported above)
 const WEB: Record<string, string> = {
-  "/"               : index_html,
-  "/account"        : index_html,
+  "/"               : PAGE,
+  "/account"        : PAGE,
   "/app.js"         : app_js,
   "/apple-touch-icon.png": icon_apple,
   "/favicon.svg"    : mark_svg,
@@ -211,20 +239,53 @@ const WEB: Record<string, string> = {
   "/sw.js"          : sw_js,
 };
 
-// the settings page and the pipeline's panel, drawn by the site's page
+// the settings page, the memory tree and the pipeline's panel, drawn by the site's page
 WEB["/settings"] = WEB["/"];
+WEB["/tree"]     = WEB["/"];
 WEB["/pipeline"] = WEB["/"];
 
-// the site's build, in each state: a page opened on another one (the
-// server restarted with a new site) reloads (main.ts), as it would
-// misread what changed ("": unread, none reloads)
-export const WEB_BUILD = web_build();
-function web_build(): string {
-  try {
-    return Bun.hash(fs.readFileSync(app_js)).toString(36) + "." + Bun.hash(fs.readFileSync(style_css)).toString(36);
-  } catch {
-    return "";
+// the web app's build: its files hashed (the manifest too, never changed
+// for it: a manifest that changes each release makes Android mint its
+// installed app anew), in the chat's state and on the page (data-build):
+// an open page on another build reloads into this one (main.ts renew).
+// They are revalidated on each load, never taken from the browser's
+// cache unasked
+const SHELL      = [app_js, style_css, PAGE, sw_js, manifest];
+const BUILD      = Bun.hash(SHELL.map((f) => fs.readFileSync(f, "utf8")).join("\0")).toString(36);
+const INDEX      = fs.readFileSync(PAGE, "utf8").replace("<html ", `<html data-build="${BUILD}" `);
+// the service worker, its cache named by the build (a new build's drops
+// the old one's: sw.js)
+const WORKER     = fs.readFileSync(sw_js, "utf8").replace("{build}", BUILD);
+
+// the bytes the uploads to the media store hold, not yet written: room
+// the disk's free space doesn't count yet (Main.room)
+let held = 0;
+
+// a stream with head before it
+function stream_after(head: Uint8Array, tail: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const reader = tail.getReader();
+  let first = true;
+  return new ReadableStream({
+    async pull(out) {
+      if (first) {
+        first = false;
+        return out.enqueue(head);
+      }
+      const got = await reader.read();
+      return got.done ? out.close() : out.enqueue(got.value);
+    },
+    cancel() {
+      return reader.cancel();
+    },
+  });
+}
+
+// an imported file's path, as Bun gives it
+function file_path(x: unknown): string {
+  if (typeof x !== "string") {
+    throw new Error("an imported file is no path: " + String(x));
   }
+  return x;
 }
 
 // Chat
@@ -261,8 +322,8 @@ export namespace Chat {
     const pick = Pick.load(mem.pick, config.OFFER, config.PICK);
     const chat: Chat = {
       mem, tools, pick, socks: new Set(), acts: new Map(), busy: false, call: null, model: "", check: null, asked: false, open: 0, sent: [], wait: [],
-      halt: new AbortController(), live: [], calls: {}, eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null,
-      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(), tell: undefined,
+      halt: new AbortController(), live: [], calls: new Map(), eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null,
+      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(), tell: undefined, back: -1,
     };
     // a saved pick (a profile, by name) not offered gave way: told once
     const shown = (p: Pick) => p.profile ?? Pick.label(p);
@@ -357,7 +418,7 @@ export namespace Chat {
   }
 
   // up to n bytes of a body, from byte `at`
-  export async function read(body: Body, at: number, n: number): Promise<Buffer> {
+  export async function read(body: Body, at: number, n: number): Promise<Buffer<ArrayBuffer>> {
     const buf = Buffer.alloc(n);
     const got = await body.fh.read(buf, 0, n, at);
     return buf.subarray(0, got.bytesRead);
@@ -366,11 +427,31 @@ export namespace Chat {
   // a body's text from byte `at`, logged as the user's message, a read
   // at a time, the last with the images and the act's record
   export async function text(chat: Chat, body: Body, at: number, images: string[], act: string): Promise<Msg> {
-    const id = chat.mem.count;
+    // its first page's index, once written: the tool calls its push writes
+    // first (Chat.flush) are no part of it
+    let id = -1;
+    let all = "";
     for await (const [pages, more] of Chat.pieces(body, at, clip_pages)) {
-      Chat.push(chat, null, "user", pages.join(""), more ? [] : images, more, more ? undefined : act);
+      all += pages.join("");
+      const pics = more ? [] : [...images, ...await Chat.pictured(chat, all, images)];
+      const msg = Chat.push(chat, null, "user", pages.join(""), pics, more, more ? undefined : act);
+      id = id < 0 ? msg.id : id;
     }
     return { id, end: chat.mem.count };
+  }
+
+  // the images of the media store a message's text shows (pasted:
+  // main.ts attach), as its images too, so models see them as they see
+  // one sent with it (Memory.image_add names it as the store does)
+  export async function pictured(chat: Chat, text: string, had: string[]): Promise<string[]> {
+    const names = Md.md_pasted(text).map(([, , , url]) => url.slice("/media/".length)).filter((name) => /\.(?:png|jpeg|gif|webp)$/.test(name));
+    const out: string[] = [];
+    for (const name of [...new Set(names)].filter((n) => !had.includes(n)).slice(0, PICTURED)) {
+      const file = Memory.media_file(chat.mem, name);
+      const added = file === null ? null : await Memory.image_add(chat.mem, fs.readFileSync(file));
+      out.push(...(added === null ? [] : [added]));
+    }
+    return out;
   }
 
   // a post's logging, after the chat's earlier ones, holding its other
@@ -446,6 +527,11 @@ export namespace Chat {
 
   export async function turn(chat: Chat): Promise<void> {
     chat.busy = true;
+    Tools.left(chat.tools);
+    // a subagent working keeps the MCP servers it started with
+    if (Tools.working(chat.tools).length === 0) {
+      Tools.apply(chat.tools);
+    }
     try {
       let go = true;
       while (go && chat.wait.length > 0) {
@@ -497,7 +583,8 @@ export namespace Chat {
     const msgs = (chat.sent = chat.wait.splice(0));
     chat.tools.origin = Tasks.turn_origin(msgs.map((m) => m.origin));
     const says = msgs.filter((m) => m.end > from).map((m) => Memory.say(mem, Math.max(m.id, from), m.end));
-    const view = Memory.view(mem, from, mem.view.parts, mem.talk);
+    const view = Memory.view(mem, from, mem.view.parts, mem.talk, mem.talk === null ? -1 : chat.back);
+    chat.back = mem.talk === null ? -1 : view.length - 3;
     // the MCP servers' notes the chat showed are in the view: the call's
     // listing gives the master the rest, and those made since (Mcp.heard)
     Mcp.heard(chat.tools.mcp, Tools.off(chat.tools), "main", true);
@@ -510,7 +597,7 @@ export namespace Chat {
     const asked = await Chat.invoked(chat, text, halt.signal);
     // the skills first: they stay the same from turn to turn (Tools.skills)
     const blocks = [Tools.instructions(chat.tools), Tools.skills(chat.tools), ...view, Tools.devices(chat.tools), Tools.at_work(chat.tools), tasks, ...asked, { text: HEAD + text, mark: true }];
-    const ask = { ...Chat.share(chat, Tools.prompt("prompt")), searches: SEARCHES, server, blocks, imgs };
+    const ask = { ...Chat.share(chat, Tools.prompt("prompt")), searches: SEARCHES, server, blocks, imgs, talk: mem.talk !== null };
     chat.model = chat.pick.model;
     chat.asked = true;
     chat.open = 0;
@@ -550,6 +637,9 @@ export namespace Chat {
     // the pending list's changes the call showed: told (Tasks.ts)
     if (end.ok) {
       Tasks.tasks_told(Tasks.tasks_load(chat.mem.dir));
+    }
+    if (end.long && chat.mem.talk !== null) {
+      Chat.talk_off(chat, TALK_LONG);
     }
     if (end.note) {
       Chat.all(chat, { $: "note", text: end.note });
@@ -616,35 +706,82 @@ export namespace Chat {
     Chat.hold(chat, () => Chat.push(chat, null, "note", text));
   }
 
-  // to the chat (in pages), or an agent's log; each told to every view
-  export function push(chat: Chat, agent: Agent | null, kind: Kind, text: string, images: string[] = [], more = false, act?: string): Msg {
+  // to the chat (in pages), or an agent's log, after the tool calls still
+  // waiting there (Chat.flush; a result, those up to its own); each told
+  // to every view
+  export function push(chat: Chat, agent: Agent | null, kind: Kind, text: string, images: string[] = [], more = false, act?: string, pair: Pair = {}): Msg {
+    Chat.flush(chat, agent, kind === "echo" ? pair.of : undefined);
+    return Chat.put(chat, agent, { kind, text, images, more, act, ...pair });
+  }
+
+  // a message written where it goes, as it is (Chat.push)
+  export function put(chat: Chat, agent: Agent | null, msg: Log): Msg {
     if (agent !== null) {
-      const id = Memory.agent_push(chat.mem, agent.name, kind, text);
-      Chat.all(chat, { $: "entry", agent: agent.name, id, kind, text });
+      const { kind, text, of, tool } = msg;
+      const id = Memory.agent_push(chat.mem, agent.name, kind, text, { of, tool });
+      Chat.all(chat, { $: "entry", agent: agent.name, id, kind, text, of, tool });
       return { id, end: id + 1 };
     }
-    const roots = Memory.push(chat.mem, [{ kind, text, images, more, act }]);
-    for (const { i, kind, text, date, images } of roots) {
-      Chat.all(chat, { $: "entry", id: i, kind, text, date, images });
+    const roots = Memory.push(chat.mem, [msg]);
+    for (const { i, kind, text, date, images, of, tool } of roots) {
+      Chat.all(chat, { $: "entry", id: i, kind, text, date, images, of, tool });
     }
     Chat.talked(chat);
     return { id: roots[0].i, end: chat.mem.count };
   }
 
-  // a message logged in conversation mode: the views see its space fill
-  // (their meter); past it (TALK) it switches itself off, said in the
-  // chat: never a message of it quietly summarized again
+  // the tool calls still waiting in the chat (agent: null) or an agent's
+  // log, started and not logged, written in the order they started,
+  // before anything else is: so each sits above what came while it ran,
+  // and its result follows where it comes (one whose result comes before
+  // anything else goes right on top of it). A result (upto: its call's
+  // id) writes only those up to its own: one started after it ran later.
+  // None between the pages of a message being written
+  export function flush(chat: Chat, agent: Agent | null, upto?: string): void {
+    const at = agent ?? chat;
+    const ids = [...at.calls.keys()];
+    const end = upto === undefined ? ids.length : ids.indexOf(upto) + 1 || ids.length;
+    const left = [...at.calls].slice(0, end).filter(([, call]) => !call.logged && call.started);
+    if (left.length === 0 || (agent === null && chat.mem.open > 0)) {
+      return;
+    }
+    for (const [of, call] of left) {
+      call.logged = true;
+      Chat.put(chat, agent, { kind: "tool", text: call.text, of });
+    }
+    Chat.live(chat, agent, Chat.waiting(at));
+  }
+
+  // a message logged in conversation mode (or a model picked): the views
+  // see its space fill (their meter); past it (Chat.room) it switches
+  // itself off, said in the chat: never a message of it quietly
+  // summarized again
   export function talked(chat: Chat, why = TALK_FULL): void {
     const mem = chat.mem;
     if (mem.talk === null) {
       return;
     }
-    if (Memory.talk_size(mem) <= TALK) {
+    if (Memory.talk_size(mem) <= Chat.room(chat)) {
       return Chat.all(chat, Chat.state(chat));
     }
-    const from = mem.talk;
+    Chat.talk_off(chat, why);
+  }
+
+  // conversation mode off, said in the chat (why: a TALK_ note)
+  export function talk_off(chat: Chat, why: string): void {
+    const from = chat.mem.talk;
     Chat.talk(chat, null);
-    Chat.note(chat, why.replace("{id}", String(from)));
+    Chat.note(chat, why.replace("{id}", String(from)).replace("{model}", Chat.model_name(chat)));
+  }
+
+  // conversation mode's space on the chat's pick (bytes: Memory.talk_room)
+  export function room(chat: Chat): number {
+    return Memory.talk_room(Pick.window(chat.pick, config.OFFER));
+  }
+
+  // the chat's pick, as the chat names it: its profile, else its model
+  export function model_name(chat: Chat): string {
+    return chat.pick.profile ?? chat.pick.model;
   }
 
   // conversation mode from message `from` on, or off (null): saved, and
@@ -675,18 +812,29 @@ export namespace Chat {
       Chat.all(chat, { $: "delta", agent: name, kind: ev.kind, text: ev.text, fresh: ev.fresh });
       return;
     }
+    if (ev.$ === "Start") {
+      const call = at.calls.get(ev.of);
+      if (call !== undefined) {
+        call.started = true;
+      }
+      return;
+    }
     if (ev.kind === "tool" && ev.of !== undefined) {
-      at.calls[ev.of] = ev.text;
+      at.calls.set(ev.of, { text: ev.text, tool: ev.text.split(" ", 1)[0], logged: false, started: ev.queued !== true });
     } else if (ev.kind === "mind") {
       Chat.all(chat, { $: "entry", agent: name, kind: ev.kind, text: ev.text });
     } else if (ev.kind !== "user") {
-      const call = ev.of === undefined ? undefined : at.calls[ev.of];
-      delete at.calls[ev.of ?? ""];
+      // (a result: its call, if still waiting, goes first, written by push)
+      const { kind, text, of } = ev;
+      const call = of === undefined ? undefined : at.calls.get(of);
+      if (call !== undefined) {
+        call.started = true;
+      }
       Chat.hold(chat, () => {
-        if (call !== undefined) {
-          Chat.push(chat, agent, "tool", call);
+        Chat.push(chat, agent, kind, text, [], false, undefined, of === undefined ? {} : { of, tool: at.calls.get(of)?.tool });
+        if (of !== undefined && at.calls.delete(of)) {
+          Chat.live(chat, agent, Chat.waiting(at));
         }
-        Chat.push(chat, agent, ev.kind, ev.text);
       });
     }
     Chat.live(chat, agent, Chat.waiting(at));
@@ -726,19 +874,22 @@ export namespace Chat {
   }
 
   // what streams once an entry came: the tool calls awaiting their
-  // results, as they will be logged; what was drawn never vanishes
-  // before it is printed
-  export function waiting(at: { calls: Record<string, string> }): Live[] {
-    return Object.values(at.calls).map((text) => ({ kind: "tool", text }));
+  // results not logged yet (those queued too), in the order the log will
+  // have them; what was drawn never vanishes before it is printed
+  export function waiting(at: { calls: Map<string, Waiting> }): Live[] {
+    return [...at.calls.values()].filter((call) => !call.logged).map((call) => ({ kind: "tool", text: call.text }));
   }
 
   // a call's tool calls left without a result (it was stopped), logged
-  // as they are, once it ends
+  // as they are (those started and not yet), once it ends; one queued
+  // that never started is no call made
   export function unanswered(chat: Chat, agent: Agent | null): void {
     const at = agent ?? chat;
-    const calls = Object.values(at.calls);
-    at.calls = {};
-    Chat.hold(chat, () => calls.forEach((call) => Chat.push(chat, agent, "tool", call)));
+    const ids = [...at.calls.keys()];
+    Chat.hold(chat, () => {
+      Chat.flush(chat, agent);
+      ids.forEach((id) => at.calls.delete(id));
+    });
     Chat.live(chat, agent, []);
   }
 
@@ -974,7 +1125,10 @@ export namespace Chat {
       throw new Error("An import has a " + x.kind + " message with no text.");
     }
     const date = Number.isNaN(Date.parse(x.date)) ? undefined : new Date(x.date).toISOString();
-    return { kind: x.kind, text: x.text, date, more: x.more === true };
+    // a tool call's pairing with its result, as exported (Memory.dump)
+    const of = typeof x.of === "string" && x.of.length <= PAIR ? x.of : undefined;
+    const tool = typeof x.tool === "string" && x.tool.length <= PAIR ? x.tool : undefined;
+    return { kind: x.kind, text: x.text, date, more: x.more === true, of, tool };
   }
 
   // a summary built (Memory's made): counted, if the import's; sent to
@@ -1154,12 +1308,14 @@ export namespace Chat {
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, why, msgs: batch.b - batch.a, open: batch.open };
     const timers = chat.mem.timers.map((t) => ({ ...t, text: t.text.length > TIMER_TEXT ? t.text.slice(0, TIMER_TEXT) + "…" : t.text }));
-    const mcp = [...config.MCP.map(({ name }) => name), ...Tools.claude(chat.tools)].map((name) => ({ name, on: !Tools.off(chat.tools).includes(name) }));
+    const mcp = Tools.known(chat.tools).map(({ name }) => ({ name, on: !Tools.off(chat.tools).includes(name) }));
     const labels = Object.fromEntries(chat.tools.labels);
     const tasks = Tasks.tasks_view(Tasks.tasks_load(chat.mem.dir), Date.now());
     const skills = Tools.opened(chat.tools).flatMap(([device, d]) => d.skills.map((s) => ({ name: s.name, description: s.description, device })));
-    const talk = chat.mem.talk === null ? null : { from: chat.mem.talk, used: Math.min(1, Memory.talk_size(chat.mem) / TALK) };
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, skills, talk, web: WEB_BUILD };
+    const room = Chat.room(chat);
+    const size = chat.mem.talk === null ? 0 : Memory.talk_size(chat.mem);
+    const talk = chat.mem.talk === null ? null : { from: chat.mem.talk, used: Math.min(1, size / room), size, room };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, skills, talk, build: BUILD, site: config.SITE };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1183,11 +1339,16 @@ export namespace Chat {
       Chat.note(chat, saved + " isn't offered here, so the chat now runs on " + Pick.label(pick) + ".");
     }
     Chat.change(chat);
+    Chat.talked(chat, TALK_SMALL);
   }
 
   // what runs is saved, and told to every view
   export function change(chat: Chat): void {
     const work = Chat.running(chat);
+    // nothing at work: the MCP servers' changes need not wait for a turn
+    if (work.length === 0) {
+      Tools.apply(chat.tools);
+    }
     if (String(work) !== String(chat.mem.work)) {
       chat.mem.work = work;
       Memory.save(chat.mem);
@@ -1214,12 +1375,15 @@ export namespace Chat {
   }
 
   // a socket closed; a device goes only if it quit (a link lost is no
-  // quit), and its skills leave the state
+  // quit: its jobs wait for it, its MCP servers don't), and its skills
+  // leave the state
   export function leave(chat: Chat, sock: Sock, quit: boolean): void {
     chat.socks.delete(sock);
     if (quit && sock.data.device !== null) {
       Tools.detach(chat.tools, sock.data.tab, sock.data.device);
       Chat.change(chat);
+    } else if (sock.data.device !== null) {
+      Tools.plug(chat.tools);
     }
   }
 
@@ -1244,6 +1408,14 @@ export namespace Chat {
   // a read, answered by what it sends; null: no read
   export function ask(chat: Chat, sock: Sock, msg: any): Answer | null {
     switch (msg.$) {
+      case "servers": {
+        // a device's own MCP servers (Device.ts), told as it joins and as
+        // they change: the state of what it runs, done again the same
+        if (sock.data.device !== null) {
+          Tools.servers(chat.tools, sock.data.device, msg.mcp);
+        }
+        return {};
+      }
       case "zoom": {
         const [id, n] = [...msg.part].map(Number);
         if (n > 1 && Memory.part(chat.mem, id, n) !== null) {
@@ -1265,7 +1437,7 @@ export namespace Chat {
         const agent = log === null ? null : chat.tools.agents.get(name) ?? Tools.logged(chat.tools, name);
         const pick = agent === null ? null : Tools.shown(chat.tools, agent);
         Chat.send(sock, { $: "agent", name, found: log !== null, pick });
-        log?.forEach(({ kind, text, date }) => Chat.send(sock, { $: "entry", agent: name, kind, text, date }));
+        log?.forEach(({ kind, text, date, of, tool }) => Chat.send(sock, { $: "entry", agent: name, kind, text, date, of, tool }));
         Chat.send(sock, { $: "live", agent: name, live: chat.tools.agents.get(name)?.live ?? [] });
         return {};
       }
@@ -1348,6 +1520,7 @@ export namespace Chat {
         chat.fell.clear();
         Memory.save(chat.mem);
         Chat.change(chat);
+        Chat.talked(chat, TALK_SMALL);
         return {};
       }
       case "out": {
@@ -1371,7 +1544,7 @@ export namespace Chat {
         }
         const from = on ? Memory.talk_from(mem) : null;
         mem.talk = from;
-        if (from !== null && Memory.talk_size(mem) > TALK) {
+        if (from !== null && Memory.talk_size(mem) > Chat.room(chat)) {
           mem.talk = null;
           mem.talked.clear();
           return { error: TALK_BIG.replace("{id}", String(from)) };
@@ -1386,8 +1559,9 @@ export namespace Chat {
         // (a device's Claude Code one is off till turned on: mem.on)
         const name = String(msg.name);
         const on = msg.on === true || msg.on === "true";
-        const claude = Tools.claude(chat.tools).includes(name);
-        if (!claude && !config.MCP.some((s) => s.name === name)) {
+        const known = Tools.known(chat.tools).find((s) => s.name === name);
+        const claude = known?.claude !== undefined;
+        if (known === undefined) {
           return { error: "No MCP server " + name + "." };
         }
         if (Tools.off(chat.tools).includes(name) !== on) {
@@ -1592,7 +1766,7 @@ export namespace Chat {
       sock.data.seen.add(id + "+" + n);
       if (n === 1) {
         const m = Memory.message(chat.mem, id)!;
-        Chat.send(sock, { $: "know", whole: { [id]: { kind: m.kind, text: m.text, date: m.date, images: m.images } } });
+        Chat.send(sock, { $: "know", whole: { [id]: { kind: m.kind, text: m.text, date: m.date, images: m.images, of: m.of, tool: m.tool } } });
       }
       Chat.know(chat, sock, id, n);
     }
@@ -1682,24 +1856,47 @@ export namespace Main {
   }
 
   // a site's file
-  export function file(pathname: string): Response {
+  export function file(pathname: string, req: Request): Response {
     const file = WEB[pathname];
-    return file === undefined ? new Response("not found", { status: 404 }) : new Response(Bun.file(file));
+    if (file === undefined) {
+      return new Response("not found", { status: 404 });
+    }
+    if (!SHELL.includes(file)) {
+      return new Response(Bun.file(file));
+    }
+    const headers = { "cache-control": "no-cache", etag: `"${BUILD}"` };
+    if (req.headers.get("if-none-match") === headers.etag) {
+      return new Response(null, { status: 304, headers });
+    }
+    const made = file === PAGE ? INDEX : file === sw_js ? WORKER : null;
+    const type = file === PAGE ? "text/html;charset=utf-8" : "text/javascript;charset=utf-8";
+    return made === null ? new Response(Bun.file(file), { headers }) : new Response(made, { headers: { ...headers, "content-type": type } });
   }
 
-  // a long answer, sent as made, a PIECE at a time, the event loop
+  // a long answer, sent as read, a PIECE at a time, the event loop
   // running between
-  export async function* stream(lines: Iterable<string>): AsyncGenerator<string> {
-    let piece = "";
-    for (const line of lines) {
-      piece += line;
-      if (piece.length >= PIECE) {
-        yield piece;
-        piece = "";
+  export function stream(lines: Iterable<string>): ReadableStream<Uint8Array> {
+    const it = lines[Symbol.iterator]();
+    const utf8 = new TextEncoder();
+    return new ReadableStream({
+      async pull(out) {
+        let piece = "";
+        for (let next = it.next(); ; next = it.next()) {
+          piece += next.done ? "" : next.value;
+          if (next.done || piece.length >= PIECE) {
+            out.enqueue(utf8.encode(piece));
+            if (next.done) {
+              out.close();
+            }
+            break;
+          }
+        }
         await new Promise((ok) => setImmediate(ok));
-      }
-    }
-    yield piece;
+      },
+      cancel() {
+        it.return?.();
+      },
+    });
   }
 
   // a page or post of the chat (/api/act: an act with a body, its fields
@@ -1709,11 +1906,12 @@ export namespace Main {
   export async function page(chat: Chat, p: string, req: Request): Promise<Response> {
     const mem = chat.mem;
     switch (p) {
-      case "/tree": {
-        return new Response(Main.stream(Memory.page(mem)), { headers: { "content-type": "text/html; charset=utf-8" } });
-      }
       case "/api/tree": {
-        const get = (new URL(req.url).searchParams.get("get") ?? "").split(",").slice(0, 200);
+        const q = new URL(req.url).searchParams.get("get");
+        if (q === null) {
+          return Response.json(Memory.meta(mem));
+        }
+        const get = q.split(",").slice(0, 200);
         return Response.json(get.map((key) => Memory.card(mem, ...(key.split(".").map(Number) as [number, number]))));
       }
       case "/export": {
@@ -1744,10 +1942,103 @@ export namespace Main {
       case "/api/settings": {
         return await Main.settings(req);
       }
+      case "/api/media": {
+        if (req.method !== "POST" || req.body === null) {
+          return new Response("a file is posted", { status: 405 });
+        }
+        const file = new URL(req.url).searchParams.get("name") ?? "";
+        const size = req.headers.get("content-length");
+        const room = Main.room(file, size === null ? null : Number(size));
+        const out = typeof room === "string" ? { error: room } : await Memory.media_add(mem, req.body, file, room);
+        return Response.json(out, { status: "error" in out ? 400 : 200 });
+      }
+    }
+    if (p.startsWith("/media/")) {
+      return Main.media(Memory.media_file(mem, p.slice("/media/".length)), req);
     }
     const file = Memory.image_file(mem, p.slice("/image/".length));
     const keep = { "cache-control": "private, max-age=31536000, immutable" };
     return file === null ? new Response("not found", { status: 404 }) : new Response(Bun.file(file), { headers: keep });
+  }
+
+  // an upload's room on the disk (Memory.Room): media_mb at most, never
+  // past SPARE free, shared by the uploads at once: all one says it has
+  // (its content-length) held at its start, else each piece as it comes,
+  // till written (the free space counts it then); why not, at once
+  export function room(file: string, size: number | null): Room | string {
+    const free = () => {
+      const disk = fs.statfsSync(config.DIR);
+      return disk.bavail * disk.bsize - SPARE - held;
+    };
+    const cap = file + " is over the media store's " + Math.round(config.MEDIA_MAX / 2 ** 20) + " MB (config media_mb).";
+    if (size !== null && !(size >= 0)) {
+      return "An upload says no size it can have.";
+    }
+    if (size !== null && size > config.MEDIA_MAX) {
+      return cap;
+    }
+    if (size !== null && size > free()) {
+      return FULL;
+    }
+    // its bytes held, not yet written; its bytes so far
+    let [mine, got] = [size ?? 0, 0];
+    held += mine;
+    return {
+      take(n) {
+        if (got + n > (size ?? config.MEDIA_MAX)) {
+          return size === null ? cap : file + " is longer than its upload said.";
+        }
+        if (size === null && n > free()) {
+          return FULL;
+        }
+        held += size === null ? n : 0;
+        mine += size === null ? n : 0;
+        got += n;
+        return null;
+      },
+      wrote(n) {
+        held -= n;
+        mine -= n;
+      },
+      end() {
+        held -= mine;
+        mine = 0;
+      },
+    };
+  }
+
+  // a file of the media store (Memory.media_add), or the bytes a Range
+  // asks of it (a video or a sound seeking); never sniffed as another
+  // type, and an SVG never runs a script, opened as a page too. A file of
+  // no kind the chat shows (View.MEDIA) is only ever downloaded: nothing
+  // uploaded runs on the app's origin
+  export function media(file: string | null, req: Request): Response {
+    if (file === null) {
+      return new Response("not found", { status: 404 });
+    }
+    const type = MEDIA.get(file.split(".").pop()!);
+    const size = fs.statSync(file).size;
+    const headers: Record<string, string> = { "content-type": type ?? "application/octet-stream", "cache-control": "private, max-age=31536000, immutable", "accept-ranges": "bytes", "x-content-type-options": "nosniff" };
+    if (type === undefined) {
+      headers["content-disposition"] = "attachment";
+      headers["content-security-policy"] = "default-src 'none'; sandbox";
+    }
+    if (type === "image/svg+xml") {
+      headers["content-security-policy"] = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+    }
+    if (type === "text/html") {
+      headers["content-security-policy"] = PAGE_CSP;
+      return new Response(stream_after(new TextEncoder().encode(PAGE_BASE), Bun.file(file).stream()), { headers });
+    }
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? "");
+    if (range === null || range[1] + range[2] === "") {
+      return new Response(Bun.file(file), { headers });
+    }
+    const [a, b] = range[1] === "" ? [Math.max(0, size - Number(range[2])), size - 1] : [Number(range[1]), Math.min(size - 1, range[2] === "" ? Infinity : Number(range[2]))];
+    if (a > b) {
+      return new Response(null, { status: 416, headers: { ...headers, "content-range": "bytes */" + size } });
+    }
+    return new Response(Bun.file(file).slice(a, b + 1), { status: 206, headers: { ...headers, "content-range": "bytes " + a + "-" + b + "/" + size } });
   }
 
   // the two prompts (Tools.PROMPTS): a GET reads them, as used and as
@@ -1853,8 +2144,8 @@ export namespace Main {
     if (p === "/api/inbox") {
       return await Main.inbox(Main.chat, req);
     }
-    if (!OWN.includes(p) && !p.startsWith("/image/") && !p.startsWith("/api/")) {
-      return Main.file(p);
+    if (!OWN.includes(p) && !p.startsWith("/image/") && !p.startsWith("/media/") && !p.startsWith("/api/")) {
+      return Main.file(p, req);
     }
     if (!Owner.is(req)) {
       return new Response("sign in first", { status: 401 });
@@ -1862,7 +2153,7 @@ export namespace Main {
     if (p === "/ws") {
       const q    = new URL(req.url).searchParams;
       const who  = Owner.hash(Owner.token(req));
-      const data = { who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), work: q.get("work") ?? "~/.unii/work", shell: q.get("shell") === "PowerShell" ? "PowerShell" : null, device: null, seen: new Set<string>() };
+      const data = { who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), work: q.get("work") ?? "~/.unii/work", shell: q.get("shell") === "PowerShell" ? "PowerShell" : null, device: null, seen: new Set<string>(), active: 0 };
       return server.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
     }
     return await Main.page(Main.chat, p, req);
@@ -1917,8 +2208,11 @@ export namespace Main {
           }, () => ws.close(1011));
         },
         message(ws: Sock, data) {
-          if (Main.chat.socks.has(ws)) {
-            Chat.answer(Main.chat, ws, String(data));
+          const text = String(data);
+          if (text === ACTIVE || text === IDLE) {
+            ws.data.active = text === ACTIVE ? Date.now() : 0;
+          } else if (Main.chat.socks.has(ws)) {
+            Chat.answer(Main.chat, ws, text);
           }
         },
         close(ws: Sock, code) {
@@ -1951,6 +2245,12 @@ export namespace Main {
       Memory.stop(Main.chat.mem);
     });
     console.log("unii: " + config.SITE + ", data in " + config.DIR + ", on 127.0.0.1:" + port);
+    if (config.MCP_LEFT !== null) {
+      console.error("unii: " + config.MCP_LEFT);
+    }
+    if (config.MCP_FILE) {
+      console.error("unii: unii serve runs no MCP servers: the mcp in " + config.FILE_PATH + " runs only on a unii device that reads this file (unii device beside the server).");
+    }
   }
 
   // the settings page's (Settings.ts): a GET reads them, a POST saves

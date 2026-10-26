@@ -7,17 +7,21 @@
 // the log's rows only once a message (but a stream's piece) or an act
 // changed them, what streams in a place of its own, so typing, or a reply
 // streaming, touches no row.
-// The markup is index.html's: the header, the chat or the settings page
-// (/settings, once /account), and the footer as the terminal's. A tab is
-// no device; a signed-out one is told how to sign in (`unii serve
-// link`). The site installs as an app (manifest.webmanifest, sw.js) and
-// may notify (Notifications); in the iOS app (ios/: APP) the app
-// notifies.
+// The markup is index.html's: the header, the chat, the settings page
+// (/settings, once /account) or the memory tree (/tree: Tree.ts), and the
+// footer as the terminal's; a picture opens over them (Viewer.ts). A tab
+// is no device; a signed-out one is told how to sign in (`unii serve
+// link`). The site installs as an app
+// (manifest.webmanifest, sw.js) and may notify (Notifications); in the
+// iOS app (ios/: APP) the app notifies.
 
 import * as Import from "../../Import.ts";
 import { theme_css } from "../../Theme.ts";
 import * as View from "../../View.ts";
+import * as Box from "./Box.ts";
 import * as Html from "./Html.ts";
+import * as Tree from "./Tree.ts";
+import * as Viewer from "./Viewer.ts";
 
 // Types
 // =====
@@ -48,20 +52,29 @@ const SCENES = `
 // the chat
 const v = View.view_new();
 
-// the message box
-const BOX = $<HTMLTextAreaElement>("textarea");
+// the message box (Box.ts)
+const BOX = $<HTMLElement>(".composer .field");
+
+// the files uploading into it, by their item (Uploads)
+const UPS = new Map<HTMLElement, XMLHttpRequest>();
 
 // the import's slider: the first day it takes, in days since 1970, from
 // the first new message's (its left end: all) to today's
 const BACK = $<HTMLInputElement>("#import [name=back]");
 
 // the page's: end: at its bottom; stick: the next draw may keep it;
-// y: its scroll when last scrolled;
+// y: its scroll when last scrolled; open: the tool calls and results
+// unfolded, by id (folds); still: the page left where it is at the
+// log's next resize (unfold); build, due, going, since, dirty, saving,
+// gave, back: the web app's build and its reload into another (Renew);
+// after: a message sent while files upload (Uploads);
 // frame: awaited (0: none); rows: the log's rows changed, to draw;
 // found: the sources read, by name; done: sessions imported before; off:
-// left out (Import.Want); step: the import's
+// left out (Import.Want); step: the import's; away: the chat's scroll as
+// a page (the settings, the tree) was opened over it, kept for its return;
+// used: what the server was last told of this page's use (in_use); at:
+// the path (and hash) route last showed
 const P = {
-  imgs  : [] as Blob[],
   rec   : null as MediaRecorder | null,
   shown : "",
   end   : true,
@@ -80,8 +93,7 @@ const P = {
   // search and the project; pane: on a narrow screen, the task shown
   // (else the list); ids: the list's order; order: the list's order the
   // last time the task shown was in "now" (where "Próxima" goes on
-  // from, View.desk_next); web: the site's build the page first heard
-  // (another one reloads it)
+  // from, View.desk_next)
   mode  : (sessionStorage.getItem(kept("mode")) === "desk" ? "desk" : "chat") as "chat" | "desk",
   chose : false,
   sel   : null as string | null,
@@ -90,7 +102,20 @@ const P = {
   pane  : false,
   ids   : [] as string[],
   order : { sel: null as string | null, ids: [] as string[] },
-  web   : null as string | null,
+  away  : null as { y: number; end: boolean } | null,
+  used  : { ws: null as WebSocket | null, on: false, at: 0 },
+  open  : new Set<string>(),
+  build : document.documentElement.dataset.build ?? "",
+  still : false,
+  due   : false,
+  going : false,
+  since : false,
+  dirty : new Set<HTMLFormElement>(),
+  saving: 0,
+  gave  : null as WebSocket | null,
+  back  : null as { a: number; top: number } | null,
+  after : false,
+  at    : "",
 };
 
 // the Mesa and the list side by side, above this width (style.css)
@@ -119,7 +144,14 @@ async function boot(): Promise<void> {
   if (new URLSearchParams(location.search).has("mesa")) {
     sessionStorage.setItem(kept("mode"), "desk");
   }
-  history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : location.pathname === PIPE ? PIPE : "/");
+  const tree = location.pathname === TREE ? TREE + (tree_view() ? "#view" : "") : null;
+  // (reloaded with a picture open: its entry, now the chat's, holds the
+  // chat's under it too, so back would do nothing; it steps off it)
+  const pic = history.state?.pic != null;
+  history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : location.pathname === PIPE ? PIPE : tree ?? "/");
+  if (pic) {
+    history.back();
+  }
   if (await boot_me() === null) {
     solo("Sign in", "This UniiChat server is private. On the computer it runs on, run <code>unii serve link</code> and open the link it prints here.");
     return;
@@ -128,6 +160,20 @@ async function boot(): Promise<void> {
   signed();
   route();
   connect();
+  // (input a person makes: a page scrolling itself, to a reply, is none)
+  for (const ev of ["keydown", "pointerdown", "pointermove", "wheel", "touchstart"]) {
+    addEventListener(ev, () => in_use(), { capture: true, passive: true });
+  }
+  addEventListener("focus", () => in_use());
+  document.addEventListener("visibilitychange", () => {
+    in_use();
+    if (document.hidden && P.due && !P.going && renew_free(true)) {
+      P.going = true;
+      renew(true);
+    }
+  });
+  addEventListener("blur", () => in_use(true));
+  addEventListener("pagehide", () => in_use(true));
 }
 
 // whether signed in (null: no, as the server refuses the session);
@@ -155,6 +201,13 @@ const PAGES = ["/settings", "/account"];
 
 // the pipeline's panel (R6), a page drawn in #account too
 const PIPE = "/pipeline";
+// the memory tree's path, drawn in #tree (Tree.ts): its TREE, or with
+// #view its VIEW (#VIEW: the old page's link)
+const TREE = "/tree";
+
+function tree_view(): boolean {
+  return location.hash.toLowerCase() === "#view";
+}
 
 // a page of one note: how to sign in
 function solo(title: string, sub: string): void {
@@ -167,19 +220,9 @@ function solo(title: string, sub: string): void {
 
 function chat(): void {
   const file = $<HTMLInputElement>("input[type=file]");
-  BOX.oninput = () => {
-    sessionStorage.setItem(kept("draft"), BOX.value);
-    if (BOX.offsetParent !== null) {
-      // measured with the footer held at its height: the page never
-      // shrinks meanwhile, which would scroll it off its bottom
-      const foot = $("footer");
-      foot.style.minHeight = foot.offsetHeight + "px";
-      BOX.style.height = "auto";
-      BOX.style.height = Math.min(BOX.scrollHeight, innerHeight * 0.4) + "px";
-      foot.style.minHeight = "";
-    }
-    draw(true);
-  };
+  Box.box_new(BOX, { input: typed, files: attach });
+  // (a phone's keyboard down: a reload may be due, and was waiting for it)
+  BOX.addEventListener("blur", () => draw(false));
   // never the Enter that ends a composition (Japanese, Chinese: Safari
   // ends it first, so only its keyCode, 229, says so)
   BOX.onkeydown = (ev) => {
@@ -188,7 +231,6 @@ function chat(): void {
       submit();
     }
   };
-  BOX.onpaste = (ev) => attach([...(ev.clipboardData?.files ?? [])]);
   $("form").onsubmit = (ev) => {
     ev.preventDefault();
     submit();
@@ -202,12 +244,15 @@ function chat(): void {
     attach([...(file.files ?? [])]);
     file.value = "";
   };
-  onpopstate = route;
+  onpopstate = popped;
+  Viewer.viewer_new();
   importer();
   document.ondragover = (ev) => ev.preventDefault();
   document.ondrop = (ev) => {
     ev.preventDefault();
-    attach([...(ev.dataTransfer?.files ?? [])]);
+    if (View.view_typing(v) && (ev.dataTransfer?.files.length ?? 0) > 0) {
+      attach([...(ev.dataTransfer?.files ?? [])]);
+    }
   };
   document.onclick = click;
   for (const root of [$("#tasks"), $("#desk")]) {
@@ -225,7 +270,7 @@ function chat(): void {
   // a phone's keyboard up or down: the box's last line stays in sight, if
   // the caret is there; the page's bottom, if at it
   visualViewport!.onresize = () => {
-    if (document.activeElement === BOX && BOX.selectionStart === BOX.value.length) {
+    if (Box.box_focused() && Box.box_caret()[0] === Box.box_text().length) {
       BOX.scrollTop = BOX.scrollHeight;
     }
     draw(true);
@@ -246,29 +291,64 @@ function chat(): void {
   $(".mine").onclick = mine;
   $(".down").onclick = down;
   const keep = new ResizeObserver(() => {
-    if (P.end && $("#account").hidden && !at_end()) {
+    if (P.still) {
+      P.still = false;
+    } else if (P.end && !$("#log").hidden && !at_end()) {
       scrollTo(0, document.documentElement.scrollHeight);
     }
   });
   keep.observe($("#log"));
   keep.observe($("footer"));
+  let width = innerWidth;
+  addEventListener("resize", () => {
+    if (innerWidth !== width) {
+      width = innerWidth;
+      measured = new WeakSet();
+      folds();
+    }
+    frames(true);
+  });
   draw(true);
 }
 
 // the page signed in
 function signed(): void {
   document.body.className = "";
-  BOX.placeholder = View.HINT;
-  BOX.value = sessionStorage.getItem(kept("draft")) ?? "";
-  BOX.dispatchEvent(new Event("input"));
+  BOX.dataset.placeholder = View.HINT;
+  Box.box_set(sessionStorage.getItem(kept("draft")) ?? "");
+  renewed();
 }
 
+// the box changed: its text kept as the draft; an upload whose item was
+// deleted ends
+function typed(): void {
+  sessionStorage.setItem(kept("draft"), Box.box_text());
+  for (const [item, xhr] of UPS) {
+    if (!item.isConnected) {
+      UPS.delete(item);
+      xhr.abort();
+    }
+  }
+  draw(true);
+}
+
+// a message sent: never with a file that didn't upload in it (deleted, it
+// may go); with files still uploading, once they are
 function submit(): void {
-  const text = BOX.value.trim();
-  act({ $: "Send", text, images: P.imgs });
-  pics([]);
-  BOX.value = "";
-  BOX.dispatchEvent(new Event("input"));
+  if (Box.box_items().some((item) => item.dataset.state === "bad")) {
+    P.after = false;
+    toast(FAILED);
+    return;
+  }
+  if (UPS.size > 0) {
+    P.after = true;
+    toast("Sends once uploaded.");
+    return;
+  }
+  P.after = false;
+  const text = Box.box_text().trim();
+  act({ $: "Send", text });
+  Box.box_set("");
 }
 
 // a message refused goes back in the box, unless another is in it; the
@@ -277,33 +357,80 @@ function back(sent: View.Sent, out: View.Answer): void {
   if (out.error === undefined) {
     return;
   }
-  if (BOX.value.trim() === "" && P.imgs.length === 0) {
-    BOX.value = sent.text;
-    BOX.dispatchEvent(new Event("input"));
-    pics(sent.images ?? []);
+  if (Box.box_blank()) {
+    Box.box_set(sent.text);
   }
   toast(out.error);
 }
 
-// files to send with the next message, posted
+// Uploads
+// =======
+// A file pasted, dropped or picked (an image, a video, a sound, a page,
+// any other file) goes to the media store at once (Server.ts /api/media),
+// an item in the box where the caret is (Box.ts) showing it and how far
+// it is; once uploaded, the item is its markdown, ![name](/media/…), or
+// a file that isn't media its link, [name](/media/…). One refused says
+// so on it and in a toast: the message can't be sent till it is deleted.
+// A message sent meanwhile goes as the last upload ends (not if one is
+// refused); an item deleted ends its upload.
+
+const FAILED = "A file in the message didn't upload: delete it (Backspace after it), then send.";
+
 function attach(files: File[]): void {
-  if (files.length > 0) {
-    pics([...P.imgs, ...files]);
+  for (const file of files) {
+    const name = file.name.replace(/[[\]\\\n]/g, "") || "file";
+    // its kind as the store will name it (Memory.media_add): by its
+    // extension; with none, a picture if it says so (its bytes decide)
+    const ext = View.media_ext(file.name);
+    const kind = ext !== "" ? View.ext_kind(ext) ?? "file" : file.type.startsWith("image/") ? "image" : "file";
+    const item = Box.item_new(name, kind === "image" || kind === "video" ? URL.createObjectURL(file) : "", "up", kind, file.size);
+    Box.box_put(item);
+    upload(item, file);
   }
 }
 
-// the images waiting, shown over the box; a click drops one
-function pics(imgs: Blob[]): void {
-  const els = imgs.map((img) => {
-    const el = new Image();
-    el.src = URL.createObjectURL(img);
-    el.title = "Remove";
-    el.onclick = () => pics(imgs.filter((x) => x !== img));
-    return el;
-  });
-  P.imgs = imgs;
-  $("#pics").replaceChildren(...els);
-  draw(true);
+function upload(item: HTMLElement, file: File): void {
+  const xhr = new XMLHttpRequest();
+  UPS.set(item, xhr);
+  Box.item_state(item, "up", "0%");
+  item.style.setProperty("--part", "0%");
+  xhr.open("POST", "/api/media?name=" + encodeURIComponent(file.name));
+  xhr.upload.onprogress = (ev) => {
+    const part = Math.round((ev.lengthComputable ? ev.loaded / ev.total : 0) * 100) + "%";
+    Box.item_state(item, "up", part);
+    item.style.setProperty("--part", part);
+  };
+  xhr.onloadend = () => {
+    const out = upload_answer(xhr);
+    if (UPS.get(item) !== xhr) {
+      return;
+    }
+    UPS.delete(item);
+    if ("name" in out) {
+      Box.item_state(item, "ok", "", "/media/" + out.name);
+    } else {
+      Box.item_state(item, "bad", "Failed");
+      toast(out.error);
+    }
+    typed();
+    if (P.after && UPS.size === 0) {
+      submit();
+    }
+  };
+  xhr.send(file);
+}
+
+// an upload's answer: the file's name in the store, or why not
+function upload_answer(xhr: XMLHttpRequest): { name: string } | { error: string } {
+  let out: unknown = null;
+  try {
+    out = JSON.parse(xhr.responseText);
+  } catch {}
+  if (typeof out === "object" && out !== null && "name" in out && typeof out.name === "string") {
+    return { name: out.name };
+  }
+  const why = typeof out === "object" && out !== null && "error" in out && typeof out.error === "string" ? out.error : xhr.status === 0 ? "Can't reach UniiChat." : "HTTP " + xhr.status;
+  return { error: "Could not upload: " + why };
 }
 
 function act(a: View.Act): void {
@@ -319,8 +446,26 @@ function act(a: View.Act): void {
 // a click on a View.Act, a Copy button, a page (go), a knob or its
 // menu's row (Html.ts), unless it ends a selection dragged in its element
 function click(ev: MouseEvent): void {
-  const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], .choices > button");
+  const target = ev.target as HTMLElement;
+  const el = target.closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], .choices > button");
   const sel = getSelection();
+  // a picture opens in the page (Viewer.ts); with a key held, as a link
+  const pic = Viewer.viewer_pic(target);
+  if (pic !== null && !(ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) && (sel === null || sel.isCollapsed)) {
+    ev.preventDefault();
+    // (on a touch screen, the box focused would take the focus back as
+    // the picture closes, and its keyboard pop up)
+    if (!DESK.matches) {
+      BOX.blur();
+    }
+    Viewer.viewer_open(pic, true, target);
+    return;
+  }
+  const cut = target.closest(".unfold") ?? (el === null && target.closest("a") === null ? target.closest(".msg.long:not(.shown) > .cut") : null);
+  if (cut !== null && (sel === null || sel.isCollapsed)) {
+    unfold(cut.parentElement!);
+    return;
+  }
   if (el === null || (sel !== null && !sel.isCollapsed && el.contains(sel.focusNode))) {
     return;
   }
@@ -370,16 +515,19 @@ function click(ev: MouseEvent): void {
 }
 
 // a knob's menu, before it opens (the knob's own click opens and closes
-// it): over the knob, its right edge at the knob's, as tall and wide as
-// the screen has room for (style.css: it scrolls past that)
+// it): over the knob, its right edge at the knob's (one on the screen's
+// left half, as the mode's: its left edge at the knob's), as tall and
+// wide as the screen has room for (style.css: it scrolls past that)
 function place(knob: HTMLElement): void {
   const menu = $("#pick-" + knob.dataset.knob);
   const box = knob.getBoundingClientRect();
   const { clientWidth: w, clientHeight: h } = document.documentElement;
+  const left = box.left + box.width / 2 < w / 2 ? Math.max(8, box.left) : null;
   const right = Math.max(8, w - box.right);
-  menu.style.right = right + "px";
+  menu.style.left = left === null ? "auto" : left + "px";
+  menu.style.right = left === null ? right + "px" : "auto";
   menu.style.bottom = h - box.top + 4 + "px";
-  menu.style.maxWidth = w - right - 8 + "px";
+  menu.style.maxWidth = (left === null ? w - right : w - left) - 8 + "px";
   menu.style.maxHeight = box.top - 12 + "px";
 }
 
@@ -759,24 +907,8 @@ function desk_choose(): void {
   P.chose = true;
   const was = sessionStorage.getItem(kept("mode"));
   const mode = was === "desk" || was === "chat" ? was : View.desk_turn(v.tasks) ? "desk" : "chat";
-  if (mode !== P.mode && PAGES.includes(location.pathname) === false && location.pathname !== PIPE) {
+  if (mode !== P.mode && PAGES.includes(location.pathname) === false && location.pathname !== PIPE && location.pathname !== TREE) {
     desk_mode(mode, false);
-  }
-}
-
-// the site changed under the page (the server restarted with another
-// build): it reloads, what's typed in the box kept (sessionStorage)
-function desk_build(): void {
-  const web = v.web ?? "";
-  if (web === "") {
-    return;
-  }
-  if (P.web === null) {
-    P.web = web;
-  } else if (P.web !== web) {
-    P.web = web;
-    toast("O UniiChat foi atualizado. Recarregando…", true);
-    setTimeout(() => location.reload(), 300);
   }
 }
 
@@ -911,6 +1043,74 @@ function desk_keys(ev: KeyboardEvent): void {
   }
 }
 
+// Folds
+// =====
+// A tool call or result taller than FOLD of its own lines is long: it
+// shows 8 (style.css), its button and a tap on it unfold it, the button
+// folds it again; unfolded by id (P.open), so a row drawn anew keeps it.
+// Each is measured once as drawn, all again as the width changes.
+
+const FOLD = 10;
+
+let measured = new WeakSet<Element>();
+
+function folds(): void {
+  for (const cut of document.querySelectorAll<HTMLElement>("#log .msg > .cut")) {
+    const msg = cut.parentElement!;
+    if (!measured.has(msg)) {
+      measured.add(msg);
+      msg.classList.toggle("long", cut.scrollHeight > FOLD * parseFloat(getComputedStyle(cut).lineHeight));
+    }
+    fold_show(msg, P.open.has(msg.dataset.a ?? ""));
+  }
+}
+
+function fold_show(msg: HTMLElement, open: boolean): void {
+  msg.classList.toggle("shown", open);
+  const button = msg.querySelector(":scope > .unfold")!;
+  button.setAttribute("aria-expanded", String(open));
+  button.textContent = open ? "Show less" : "Show all";
+}
+
+// its top stays where it is: the page follows its bottom again only if
+// still at it
+function unfold(msg: HTMLElement): void {
+  const open = !msg.classList.contains("shown");
+  const id = msg.dataset.a ?? "";
+  open ? P.open.add(id) : P.open.delete(id);
+  const [top, follow] = [msg.getBoundingClientRect().top, P.end];
+  P.end = false;
+  fold_show(msg, open);
+  scrollBy(0, msg.getBoundingClientRect().top - top);
+  // (following the chat's end, it still is: the next message pulls the
+  // page down again; this resize leaves it)
+  P.end = follow || at_end();
+  P.still = follow;
+}
+
+// a page in a message (Html.ts) as tall as its content, measured as it
+// loads and as the window's size changes (all: each again); style.css
+// caps it, and it scrolls inside past that. Nothing runs in it, but its
+// frame is of this site, so this page reads its height
+const FRAMED = new WeakSet<HTMLIFrameElement>();
+
+function frames(all = false): void {
+  for (const f of document.querySelectorAll<HTMLIFrameElement>("#log iframe.page")) {
+    const fit = () => {
+      const root = f.contentDocument?.documentElement;
+      if (root !== undefined && f.contentDocument?.URL !== "about:blank") {
+        f.style.height = Math.ceil(root.getBoundingClientRect().height) + 2 + "px";
+      }
+    };
+    if (!FRAMED.has(f)) {
+      FRAMED.add(f);
+      f.addEventListener("load", fit);
+    } else if (all) {
+      fit();
+    }
+  }
+}
+
 function copied(button: HTMLElement): void {
   button.innerHTML = Html.CHECK;
   setTimeout(() => (button.innerHTML = Html.SHEETS), 1200);
@@ -998,10 +1198,9 @@ function heard(out: View.Answer): void {
     toast(out.error ?? "No words heard.");
     return;
   }
-  const gap = /\S$/.test(BOX.value.slice(0, BOX.selectionStart)) ? " " : "";
-  BOX.setRangeText(gap + text, BOX.selectionStart, BOX.selectionEnd, "end");
-  BOX.dispatchEvent(new Event("input"));
-  BOX.focus();
+  const gap = /\S$/.test(Box.box_text().slice(0, Box.box_caret()[0])) ? " " : "";
+  Box.box_insert(gap + text);
+  Box.box_focus();
 }
 
 // Socket
@@ -1018,6 +1217,19 @@ function connect(): void {
   });
 }
 
+// whether this page is in use (shown and focused; off: leaving it), told
+// the server on each socket, and again while in use at most each
+// USE_PING: no push goes out meanwhile (Server.ts Chat.phone)
+function in_use(off = false): void {
+  const on = !off && document.visibilityState === "visible" && document.hasFocus();
+  const ws = v.ws;
+  if (ws === null || !v.up || ws.readyState !== WebSocket.OPEN || (ws === P.used.ws && on === P.used.on && (!on || Date.now() - P.used.at < View.USE_PING))) {
+    return;
+  }
+  ws.send(on ? View.ACTIVE : View.IDLE);
+  P.used = { ws, on, at: Date.now() };
+}
+
 async function lost(up: boolean): Promise<boolean> {
   draw(true);
   const me = up ? null : await fetch("/api/me").catch(() => null);
@@ -1032,13 +1244,15 @@ async function lost(up: boolean): Promise<boolean> {
 // rows change with what they show: a state (~10/s importing)
 // only by its agents, an agent's page saying whether it runs
 function hear(msg: View.Server): void {
+  if (v.ws !== P.used.ws) {
+    in_use();
+  }
   const was = View.view_pick(v);
   const agents = v.agents.join() + JSON.stringify(v.labels ?? {});
   for (const out of View.view_hear(v, msg)) {
     View.link_send(v, out);
   }
   if (msg.$ === "state") {
-    desk_build();
     desk_choose();
   }
   const now = View.view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
@@ -1046,6 +1260,9 @@ function hear(msg: View.Server): void {
     toast("Now " + now.map((k) => k.hint).join("; ") + ".");
   }
   P.rows ||= msg.$ === "state" ? v.agents.join() + JSON.stringify(v.labels ?? {}) !== agents : msg.$ !== "delta" && msg.$ !== "live";
+  if (msg.$ === "state") {
+    renew_due(msg.build);
+  }
   import_welcome();
   draw(true);
 }
@@ -1183,7 +1400,7 @@ function import_sent(out: View.Answer): void {
 
 // the import the box wants
 function import_plan(): Import.Plan {
-  const form = new FormData($("#import form"));
+  const form = new FormData($<HTMLFormElement>("#import form"));
   const want = { off: [...P.off], since: import_since(), tools: form.has("tools") };
   const found = [...P.found.values()].flatMap((read) => read.sessions);
   return Import.import_plan(found, want, P.done);
@@ -1329,11 +1546,12 @@ function draw(stick: boolean): void {
   }
 }
 
-// a new chat shown opens at its bottom (folded: its top); the account
-// page shown, only the bars
+// a new chat shown opens at its bottom (folded: its top); a page shown
+// (the settings, the tree), only the bars
 function paint(): void {
-  if (!$("#account").hidden) {
+  if ($("#log").hidden) {
     P.frame = 0;
+    P.stick = true;
     bars();
     return;
   }
@@ -1346,15 +1564,27 @@ function paint(): void {
   const doc = document.documentElement;
   const follow = P.stick && P.end;
   const at = P.rows && !follow ? anchor() : null;
-  const shown = (v.page === null ? "" : v.page.name) + (v.fold === null ? "" : "/fold");
+  const shown = shown_key();
   P.frame = 0;
   P.stick = true;
   bars();
   if (P.rows) {
     markup($("#log .rows"), View.view_body(v).map(Html.row_html));
+    Box.box_sizes($("#log .rows"));
     P.rows = false;
   }
   markup($("#log .tail"), View.view_tail(v).map(Html.row_html));
+  Box.box_sizes($("#log .tail"));
+  folds();
+  frames();
+  const back = P.back === null ? null : document.querySelector<HTMLElement>(`#log [data-a="${P.back.a}"]`);
+  if (back !== null && P.back !== null) {
+    P.shown = shown;
+    scrollBy(0, back.getBoundingClientRect().top - P.back.top);
+    P.back = null;
+    P.end = at_end();
+    return;
+  }
   if (shown !== P.shown) {
     P.shown = shown;
     P.end = v.fold === null;
@@ -1376,6 +1606,12 @@ function paint(): void {
   }
 }
 
+// which chat shows (an agent's, folded): one other than last drawn opens
+// anew
+function shown_key(): string {
+  return (v.page === null ? "" : v.page.name) + (v.fold === null ? "" : "/fold");
+}
+
 // the page at its bottom
 function at_end(): boolean {
   return innerHeight + scrollY >= document.documentElement.scrollHeight - 1;
@@ -1388,8 +1624,13 @@ function bars(): void {
   for (const note of v.notes.splice(0)) {
     toast(note);
   }
+  // (after this draw: a page shown is drawn and placed first)
+  if (P.due && !P.going && renew_free()) {
+    P.going = true;
+    setTimeout(renew);
+  }
   const on = View.view_typing(v);
-  const stop = on && v.busy && BOX.value.trim() === "" && P.imgs.length === 0;
+  const stop = on && v.busy && Box.box_blank();
   const tabs = View.view_tabs(v);
   const send = $<HTMLButtonElement>(".send");
   $(".net").hidden = v.up;
@@ -1405,10 +1646,9 @@ function bars(): void {
   $(".mode").hidden = false;
   $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
   send.classList.toggle("stop", stop);
-  send.disabled = !on;
-  BOX.disabled = !on;
-  $<HTMLButtonElement>(".attach").disabled = !on;
-  $<HTMLButtonElement>(".mic").disabled = !on || v.out.some((p) => p.msg.$ === "voice");
+  // an agent's page has no box: messages go to UniiChat
+  $(".composer").hidden = !on;
+  $<HTMLButtonElement>(".mic").disabled = v.out.some((p) => p.msg.$ === "voice");
   $(".mic").classList.toggle("rec", P.rec !== null);
   $(".composer").classList.toggle("off", !on);
   $(".composer").classList.toggle("rec", P.rec !== null);
@@ -1418,7 +1658,7 @@ function bars(): void {
   if (knob !== undefined) {
     $("#pick [data-knob=" + knob + "]").focus();
   }
-  markup($("#menu .mcp"), Html.mcp_html(v.mcp));
+  mcp_draw();
   $("#tabs").hidden = tabs.length < 2;
   markup($("#tabs"), Html.tabs_html(tabs));
   import_bar();
@@ -1482,18 +1722,22 @@ function mine_above(el: HTMLElement): boolean {
 // since is refused. A key typed is sent once and gone from the page as
 // it is drawn again.
 
-// shows the page at path: the chat ("/") or the settings
+// shows the page at path: the chat ("/"), the settings or the tree (its
+// #view too)
 function go(path: string): void {
-  if (location.pathname !== path) {
+  if (location.pathname + location.hash !== path) {
     history.pushState(null, "", path);
   }
   route();
 }
 
-// the settings page keeps of the footer only its toasts (style.css)
+// the settings page and the tree keep of the footer only its toasts
+// (style.css); the chat, back from them, is where it was (P.away): at its
+// bottom, kept there
 function route(): void {
   const pipe = location.pathname === PIPE;
   const page = PAGES.includes(location.pathname) || pipe;
+  const tree = location.pathname === TREE;
   const st = history.state ?? {};
   if (st.mode === "desk" || st.mode === "chat") {
     P.mode = st.mode;
@@ -1502,23 +1746,57 @@ function route(): void {
     P.sel = st.sel;
   }
   P.pane = st.pane === true && NARROW.matches;
-  const desk = !page && P.mode === "desk";
-  $("#log").hidden = page || desk;
+  const desk = !page && !tree && P.mode === "desk";
+  const chat = !page && !tree && !desk;
+  if (!chat && !$("#log").hidden && P.away === null) {
+    P.away = { y: scrollY, end: P.end };
+  }
+  $("#log").hidden = !chat;
   $("#desk").hidden = !desk;
   document.body.classList.toggle("account", page);
+  document.body.classList.toggle("tree", tree);
   document.body.classList.toggle("desk", desk);
   document.body.classList.toggle("pane", desk && P.pane);
   $("#account").hidden = !page;
-  // the chat shown again: its rows drawn anew, at its bottom
-  P.rows = true;
-  P.shown = location.pathname + (desk ? "/mesa" : "");
+  $("#tree").hidden = !tree;
+  P.at = location.pathname + location.hash;
+  P.shown = chat && P.away !== null ? shown_key() : location.pathname + (desk ? "/mesa" : "");
+  if (chat && P.away !== null) {
+    P.end = P.away.end;
+    // its rows drawn first (none yet, if the page was reloaded away from it)
+    P.rows = true;
+    paint();
+    scrollTo(0, P.end ? document.documentElement.scrollHeight : P.away.y);
+    P.y = scrollY;
+    P.away = null;
+  }
   $("#account").classList.toggle("pipe", pipe);
   if (pipe) {
     pipeline();
   } else if (page) {
     account();
   }
-  draw(false);
+  if (tree) {
+    Tree.tree_show(tree_view() ? "VIEW" : "TREE");
+  } else {
+    Tree.tree_hide();
+  }
+  draw(chat && P.end);
+}
+
+// back or forward: another page shows (route), or the same, a picture
+// opened or closed over it only (Viewer.ts: no page of its own); a
+// reload put off while it showed may go now (bars)
+function popped(): void {
+  // the Mesa and the Conversa (and a task's pane) share "/": their step
+  // is told by the history's state
+  const st = history.state ?? {};
+  const desk = (st.mode === "desk" || st.mode === "chat") && (st.mode !== P.mode || (st.pane === true) !== P.pane || (typeof st.sel === "string" && st.sel !== P.sel));
+  if (location.pathname + location.hash !== P.at || desk) {
+    route();
+  }
+  Viewer.viewer_sync();
+  draw(true);
 }
 
 // The pipeline's panel
@@ -1557,10 +1835,19 @@ async function account(): Promise<void> {
   const prompts: View.Prompts | null = got !== null && got.ok ? await got.json().catch(() => null) : null;
   const push = await notify_state().catch(() => null);
   el.innerHTML = Html.account_html(prompts, push);
+  // (drawn anew: nothing on it edited yet)
+  P.dirty.clear();
+  el.oninput = (ev) => {
+    const form = (ev.target as Element).closest("form");
+    if (form !== null) {
+      P.dirty.add(form);
+    }
+  };
   el.querySelectorAll<HTMLFormElement>("form.prompt").forEach((form) => (form.onsubmit = (ev) => {
     ev.preventDefault();
     account_prompt(form);
   }));
+  mcp_draw();
   el.querySelectorAll<HTMLButtonElement>(".retry").forEach((retry) => (retry.onclick = () => account()));
   $("#account .out").onclick = signout;
   const bell = document.querySelector<HTMLButtonElement>("#account .notify");
@@ -1574,6 +1861,19 @@ async function account(): Promise<void> {
     return;
   }
   settings_draw(page);
+}
+
+// the page's MCP servers, as the chat's state has them (Html.mcp_html);
+// a switch focused stays so as it flips
+function mcp_draw(): void {
+  // (no pick: the chat's state not here yet)
+  const box = document.querySelector("#account .mcp");
+  if (box === null || v.pick === null) {
+    return;
+  }
+  const on = box.contains(document.activeElement) ? document.activeElement!.getAttribute("aria-label") : null;
+  markup(box, Html.mcp_html(v.mcp));
+  [...box.querySelectorAll<HTMLElement>("[role=switch]")].find((b) => b.getAttribute("aria-label") === on)?.focus();
 }
 
 async function signout(): Promise<void> {
@@ -1591,13 +1891,20 @@ async function account_prompt(form: HTMLFormElement): Promise<void> {
   const save = form.querySelector("button")!;
   const sent = area.value;
   save.disabled = true;
+  P.saving++;
   const out = await View.post("/api/prompts", { [area.name]: sent });
+  P.saving--;
   save.disabled = false;
   if (out.error === undefined && area.value === sent) {
     area.value = out[area.name]?.text ?? sent;
   }
   why.textContent = out.error ?? (area.value === out[area.name]?.text ? "Saved." : "Not saved yet: Save again.");
   form.classList.toggle("bad", out.error !== undefined);
+  if (out.error === undefined && area.value === sent) {
+    P.dirty.delete(form);
+    P.since = true;
+  }
+  draw(false);
 }
 
 // Notifications
@@ -1920,7 +2227,9 @@ async function settings_save(form: HTMLFormElement, page: any, unset: Set<string
   const go = form.querySelector<HTMLButtonElement>(".go")!;
   go.disabled = true;
   why.textContent = "";
+  P.saving++;
   const out = await View.post("/api/settings", { version: page.version, set, keys, ...(profiles === undefined ? {} : { profiles }) });
+  P.saving--;
   go.disabled = false;
   if (!out.ok) {
     const at = out.key === undefined ? null : form.querySelector<HTMLElement>(`.set[data-key="${out.key}"]`);
@@ -1929,8 +2238,92 @@ async function settings_save(form: HTMLFormElement, page: any, unset: Set<string
     return;
   }
   const later = (out.saved as string[]).filter((key) => page.settings.find((r: any) => r.key === key)?.apply === "restart");
+  // (drawn anew from what was saved: nothing edited on it now)
   settings_draw(out);
+  P.dirty.delete(form);
+  P.since = true;
+  draw(false);
   toast(later.length === 0 ? "Saved." : "Saved. " + later.join(", ") + " " + (later.length === 1 ? "applies" : "apply") + " once the server restarts.");
+}
+
+// Renew
+// =====
+// The server's web app has another build than this page (after an
+// update): the page reloads into it by itself, once nothing would be
+// lost, keeping what it showed: the box's text and caret, the folds
+// opened, where the chat or the page was scrolled. Never while the mic
+// records, a file uploads, an act awaits its answer, or Import History
+// or a picture (Viewer.ts) is open; on a phone, not while its keyboard
+// is up (the box focused), but as the page is hidden. On the settings
+// page only once a change is saved after the new build came, with
+// nothing else edited and unsaved, or as it is left. Checked again
+// right before reloading. The cached shell is dropped first; at most two
+// reloads per build (the second past the browser's cache too), then one
+// more on each new socket.
+
+function renew_due(build: string | undefined): void {
+  if (build === undefined || P.build === "" || build === P.build) {
+    P.build ||= build ?? "";
+    P.due = false;
+    return;
+  }
+  const [was, n] = (sessionStorage.getItem(kept("build")) ?? "").split(" ");
+  if (was === build && Number(n) >= 2 && (P.gave === null || P.gave === v.ws)) {
+    P.gave = v.ws;
+    return;
+  }
+  P.since = P.due && P.since;
+  P.due = true;
+  draw(false);
+}
+
+function renew_free(hidden = false): boolean {
+  const page = location.pathname !== "/" && location.pathname !== TREE;
+  const quiet = P.rec === null && UPS.size === 0 && v.out.length === 0 && !$("#import").matches(":popover-open") && !Viewer.viewer_on();
+  const typing = !DESK.matches && Box.box_focused() && !hidden;
+  return quiet && !typing && (!page || (P.since && P.dirty.size === 0 && P.saving === 0));
+}
+
+async function renew(hidden = false): Promise<void> {
+  const [was, n] = (sessionStorage.getItem(kept("build")) ?? "").split(" ");
+  const tries = was === v.build ? Number(n) : 0;
+  const store = isSecureContext && "caches" in window ? window.caches : null;
+  const keys = (await store?.keys().catch(() => [])) ?? [];
+  await Promise.all(keys.filter((k) => k.startsWith("unii-shell")).map((k) => store?.delete(k)));
+  if (tries > 0) {
+    await Promise.all(["/", "/app.js", "/style.css", "/sw.js"].map((path) => fetch(path, { cache: "reload" }).catch(() => null)));
+  }
+  // (the page may have changed meanwhile)
+  if (!P.due || !renew_free(hidden)) {
+    P.going = false;
+    return;
+  }
+  const chat = !$("#log").hidden;
+  const back = { at: chat && !P.end ? anchor() : null, y: chat ? null : scrollY, away: P.away, caret: Box.box_caret(), focus: Box.box_focused(), open: [...P.open] };
+  sessionStorage.setItem(kept("back"), JSON.stringify(back));
+  sessionStorage.setItem(kept("build"), (v.build ?? "") + " " + (tries + 1));
+  location.reload();
+}
+
+// after a renew, what the page showed before
+function renewed(): void {
+  const text = sessionStorage.getItem(kept("back"));
+  sessionStorage.removeItem(kept("back"));
+  const back = text === null ? null : JSON.parse(text);
+  if (back === null) {
+    return;
+  }
+  if (back.focus && DESK.matches) {
+    Box.box_focus();
+  }
+  Box.box_place(back.caret[0], back.caret[1]);
+  back.open.forEach((id: string) => P.open.add(id));
+  P.back = back.at;
+  P.away = back.away;
+  // a page (the settings, the tree) back where it was, once drawn that long
+  const end = Date.now() + 3000;
+  const y = () => back.y !== null && (document.documentElement.scrollHeight >= back.y + innerHeight || Date.now() > end ? scrollTo(0, back.y) : setTimeout(y, 100));
+  y();
 }
 
 // Notes

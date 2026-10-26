@@ -25,6 +25,7 @@
   --del    : #cf222e; /* a diff's line dropped */
   --accent : #6d3fd8; /* the name UniiChat in a message */
   --red    : #b42318; /* deleting the account */
+  --warm   : #e8590c; /* conversation mode's meter, half full */
   --veil   : rgb(0 0 0 / .3); /* the page behind a box over it */
   --shadow : 0 1px 2px rgba(0, 0, 0, .05), 0 6px 20px rgba(0, 0, 0, .05);
 }
@@ -44,6 +45,7 @@
     --del    : #f8857c;
     --accent : #ad94ff;
     --red    : var(--del);
+    --warm   : #f59f4c;
     --veil   : rgb(0 0 0 / .5);
     --shadow : 0 1px 2px rgb(0 0 0 / .4), 0 8px 28px rgb(0 0 0 / .45);
   }
@@ -67,9 +69,11 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round
 ::selection { background: var(--ink); color: var(--paper); }
 a { color: inherit; text-underline-offset: 3px; }
 /* no word left alone on a line: all text balanced (every browser keeps
-   it), but the prose of messages (not notes), pretty */
+   it), but the prose of messages (not notes), pretty, and text being
+   typed filling each line */
 body { text-wrap: balance; }
 .msg:not(.note) { text-wrap: pretty; }
+textarea { text-wrap: wrap; }
 
 /* a guest's chat: only the log and the message box; a note alone (the
    terminal signed in) */
@@ -96,13 +100,24 @@ header .net { font-size: 13px; color: var(--mid); }
    so a phone with its keyboard up still shows the chat; the account
    page keeps only its toasts, at the screen's foot */
 footer { position: sticky; bottom: 0; z-index: 2; padding: 18px max(20px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); background: linear-gradient(transparent, var(--paper) 14px); }
-body.account footer { position: fixed; inset: auto 0 0; background: none; pointer-events: none; }
-body.account footer > :not(#toast) { display: none; }
+body:is(.account, .tree) footer { position: fixed; inset: auto 0 0; background: none; pointer-events: none; }
+body:is(.account, .tree) footer > :not(#toast) { display: none; }
 #pick { width: min(var(--col), 100%); margin: 0 auto 6px; display: flex; align-items: center; gap: 6px; font: 12.5px/20px var(--sans); color: var(--mid); }
 #pick .rule { flex: 1; height: 1px; background: var(--hair); margin-right: 4px; }
-#pick > button { padding: 0 6px; border-radius: 6px; }
+/* conversation mode's meter: the rule, as thin, filled to --used, grey, orange from half full
+   (warm), red from 80% (hot); a taller strip (::before) over it takes the hover for its tooltip */
+#pick .rule.meter { --fill: var(--mid); position: relative; background: linear-gradient(to right, var(--fill) var(--used), var(--hair) var(--used)); }
+#pick .rule.meter.warm { --fill: var(--warm); }
+#pick .rule.meter.hot { --fill: var(--del); }
+#pick .rule.meter::before { content: ""; position: absolute; inset: -7px 0; }
+#pick > :is(button, .knob) { padding: 0 6px; border-radius: 6px; }
 #pick > button:hover, #pick > button:has(+ :popover-open) { background: var(--block); color: var(--ink); }
 #pick .dot { color: var(--soft); }
+/* a narrow screen: the knobs closer; the rule (the meter too) stays in their row */
+@media (max-width: 600px) {
+  #pick { flex-wrap: wrap; white-space: nowrap; gap: 2px; }
+  #pick > :is(button, .knob) { padding: 0 4px; }
+}
 /* a knob's menu (main.ts places it over its knob): a row per value, the
    pick's checked; a model's vendor over its group */
 #pick .choices { inset: auto; width: max-content; min-width: 150px; padding: 6px; overflow: auto; font: 14px/20px var(--sans); }
@@ -114,8 +129,26 @@ body.account footer > :not(#toast) { display: none; }
 
 .composer { width: min(var(--col), 100%); margin: 0 auto; display: flex; align-items: flex-end; gap: 10px; border: 1px solid var(--frame); border-radius: 24px; padding: 7px 7px 7px 20px; background: var(--lift); box-shadow: var(--shadow); }
 .composer:focus-within { border-color: var(--soft); }
-.composer textarea { flex: 1; resize: none; border: 0; outline: 0; background: none; color: var(--ink); font: 16px/1.5 var(--sans); padding: 7px 0; max-height: 40vh; }
-.composer textarea::placeholder { color: var(--soft); }
+/* the message box (Box.ts): text as typed, as tall as it is up to 40% of
+   the screen, then it scrolls; its placeholder while it holds nothing */
+.composer .field { position: relative; flex: 1; min-width: 0; outline: 0; color: var(--ink); font: 16px/1.5 var(--sans); padding: 7px 0; max-height: 40vh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: wrap; cursor: text; }
+.composer .field.blank::before { content: attr(data-placeholder); position: absolute; color: var(--soft); pointer-events: none; }
+/* an item in it, like a character in the line: a sound's, a page's or a
+   file's tile, one size; a picture or a video's first frame that size
+   till its own is known, then its own aspect ratio, sized by Box.ts
+   (item_fit: 150 px at most), never cropped, stretched or blown up
+   (scale-down), never wider than the box; its note at its foot while it
+   uploads (a bar as far as it is) or was refused */
+.field .item { position: relative; display: inline-block; width: 96px; height: 72px; max-width: 100%; margin: 2px 2px; padding: 0; vertical-align: bottom; overflow: hidden; border: 1px solid var(--hair); border-radius: 8px; background: var(--block); }
+.field .item:has(> :is(img, video)) { box-sizing: content-box; }
+.field .item > :is(img, video) { display: block; width: 100%; height: 100%; object-fit: scale-down; pointer-events: none; }
+.field .item .tile { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 4px 6px; font: 12px/1.3 var(--sans); color: var(--mid); text-align: center; overflow: hidden; overflow-wrap: anywhere; }
+.field .item .tile small { font-size: 11px; color: var(--soft); }
+.field .item .state { position: absolute; inset: auto 0 0; padding: 1px 6px; font: 600 11px/1.5 var(--sans); color: #fff; background: linear-gradient(to right, rgb(0 0 0 / .75) var(--part, 0%), rgb(0 0 0 / .45) var(--part, 0%)); }
+.field .item[data-state=ok] .state { display: none; }
+.field .item[data-state=up] > :is(img, video) { opacity: .6; }
+.field .item[data-state=bad] { border-color: var(--red); }
+.field .item[data-state=bad] .state { background: var(--red); }
 .send, .attach, .mic { flex: none; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; }
 .send svg, .attach svg, .mic svg { width: 20px; height: 20px; stroke-width: 2; }
 .send { background: var(--ink); color: var(--paper); }
@@ -134,7 +167,7 @@ body.account footer > :not(#toast) { display: none; }
    newest at the right, and the time so far */
 .composer .voice { display: none; flex: 1; align-items: center; gap: 12px; height: 38px; color: var(--ink); }
 .composer.rec .voice { display: flex; }
-.composer.rec textarea { display: none; }
+.composer.rec .field { display: none; }
 /* width 0, the row gives it the rest: else its drawn pixels (main.ts meter)
    set its width through their aspect, a little wider each frame where the
    screen's pixel ratio isn't whole, until it pushes the buttons off */
@@ -174,13 +207,6 @@ body.account footer > :not(#toast) { display: none; }
 #timers .text { grid-column: 1; font-size: 14px; overflow-wrap: anywhere; }
 #timers .cancel { grid-row: 1 / 3; grid-column: 2; padding: 5px 10px; border-radius: 8px; background: var(--block); font-size: 13px; }
 #timers .cancel:hover { background: var(--hover); }
-#menu .mcp:empty { display: none; }
-#menu .mcp { margin: 4px 0; padding: 4px 0; border-block: 1px solid var(--hair); }
-#menu .mcp p { margin: 2px 4px 4px; font-size: 12px; color: var(--mid); }
-#menu .mcp button { display: flex; justify-content: space-between; width: 100%; padding: 8px 4px; text-align: left; font-size: 14.5px; border-radius: 10px; }
-#menu .mcp button:hover { background: var(--hover); }
-#menu .mcp span { color: var(--mid); font-size: 13px; }
-#menu .mcp .off { color: var(--mid); }
 /* Import History (also a new chat's first step): centered over the
    page. A running
    import's progress shows in Import History and, small, in the header */
@@ -271,12 +297,12 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 .more > summary::after { content: "Show all"; }
 .more[open] > summary::after { content: "Fold"; }
 .more > summary:hover { color: var(--ink); }
-/* a tool's long call or result (Html.ts SHORT) folded to about six lines,
-   faded out at its foot */
-.msg:has(> .more.out:not([open])) > .clip { max-height: 12.5em; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
-.more.out > summary { margin-top: 2px; font-size: 12.5px; }
-.more.out > summary::after { content: "Mostrar tudo (" attr(data-n) ")"; }
-.more.out[open] > summary::after { content: "Mostrar menos"; }
+/* a tool call or result taller than about 10 of its lines (main.ts
+   folds: long) shows 8, fading out; a tap on it or Show all unfolds it */
+.msg > .unfold { display: none; }
+.msg.long > .unfold { display: block; margin-top: 4px; font: 13px var(--sans); color: var(--mid); }
+.msg.long > .unfold:hover { color: var(--ink); }
+.msg.long:not(.shown) > .cut { max-height: 8lh; overflow: hidden; cursor: pointer; -webkit-mask-image: linear-gradient(#000 calc(100% - 3lh), transparent); mask-image: linear-gradient(#000 calc(100% - 3lh), transparent); }
 
 /* a message, by kind */
 .msg { position: relative; overflow-wrap: anywhere; font: 17.5px/1.68 var(--serif); color: var(--fg); font-style: var(--it); }
@@ -285,6 +311,9 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 .msg p, .msg ul, .msg ol, .msg pre, .msg blockquote { margin: 0 0 .85em; }
 .msg ul, .msg ol { padding-left: 1.3em; }
 .msg li > :is(ul, ol):last-child { margin-bottom: 0; }
+/* a task's item: its box (shown, not clicked) where its bullet was */
+.msg li.task { list-style: none; }
+.msg li.task > input { margin: 0 .45em 0 -1.3em; vertical-align: -.1em; }
 .msg code { font: .82em var(--mono); background: var(--block); border-radius: 5px; padding: .1em .35em; }
 /* code in a message: filled, as the terminal; a call's code (on the
    call's fill) and a file's lines: framed. Code never wraps on the
@@ -312,6 +341,9 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
    (Md.md_output). Thinking bare and unnamed */
 .msg.tool { padding: 9px 14px; background: var(--block); border-radius: 10px; }
 .msg.note[data-who]::before { content: attr(data-who); display: block; font: 700 12px/1.5 var(--sans); font-style: normal; color: var(--soft); }
+/* a result apart from its call that no frame of its own names (a diff
+   alone): its tool, over it, as a frame's name reads (pre .lang) */
+.msg.echo[data-who]::before { content: attr(data-who); display: block; margin: 6px 0 -2px; font: 600 11px var(--sans); color: var(--mid); }
 .msg.mind { color: var(--mid); }
 .msg.tool p, .msg.echo p { margin: 0; }
 /* a tool call's head: its tool's icon, then the call (a command's
@@ -357,19 +389,37 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 /* a finger needs 44px: small buttons take taps around them (a box
    centered on each, not drawn), links in small print above and below */
 @media (pointer: coarse) {
-  :is(header > :is(button, a), #pick > button, #tabs button) { position: relative; }
-  :is(header > :is(button, a), #pick > button, #tabs button, .mine, .down, .copy, .open.one > .fold)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+  :is(header > :is(button, a), #pick > button, #tabs button, #tree .tab) { position: relative; }
+  :is(header > :is(button, a), #pick > button, #tabs button, #tree .tab, .mine, .down, .copy, .open.one > .fold)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
   .foot a { padding: 14px 0; }
   .chip { height: 44px; }
-  :is([popover] > button, #menu .mcp button) { min-height: 44px; }
+  [popover] > button { min-height: 44px; }
   [popover] > a { padding: 11px 4px; }
 }
 
-/* images: under a message, each a link; over the box, those waiting to
-   be sent (a click drops one) */
+/* media in a message (Md's ![](/media/…)): at most about 70% of the
+   window's height, never wider than the message; a sound one row */
+.msg .media { display: block; width: fit-content; max-width: 100%; margin: .4em 0; }
+.msg :is(img, video):is(.media, .media > *) { display: block; max-width: 100%; max-height: 70vh; width: auto; height: auto; border-radius: 8px; }
+.msg audio.media { width: min(100%, 480px); }
+/* a file of the store that isn't media (Html.ts chip_html): a chip, its
+   name and size, downloaded on a click */
+.msg a.file { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin: .2em 0; padding: 6px 12px; border: 1px solid var(--frame); border-radius: 10px; background: var(--lift); color: var(--ink); font: 14px/1.4 var(--sans); font-style: normal; text-decoration: none; vertical-align: middle; }
+.msg a.file:hover { background: var(--hover); }
+.msg a.file .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg a.file small { flex: none; color: var(--mid); font-size: 12px; }
+.msg a.file small:empty { display: none; }
+.msg .media + br { display: none; }
+/* a page in a bubble as wide as a bubble may be (as wide as its text, a
+   frame would be a frame's default 300px) */
+.msg.user:has(iframe.page) { width: min(82%, 560px); }
+/* a page (main.ts frames sizes it): as tall as it is, up to 70% of the
+   window, scrolling inside past that */
+.msg iframe.page { width: 100%; height: 0; max-height: 70vh; border: 1px solid var(--hair); border-radius: 8px; background: var(--paper); color-scheme: light dark; }
+
+/* images: under a message, each a link */
 .pics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .pics img { display: block; height: 120px; max-width: 100%; object-fit: cover; border-radius: 8px; border: 1px solid var(--hair); }
-#pics { width: min(var(--col), 100%); margin: 0 auto 8px; }
 /* the pending list (Tasks.ts): the header's ✓ opens it; on a wide screen,
    while it has tasks, it stays open as an aside at the right, the column
    centered in the rest. Each task: its id and title, a line of its ref,
@@ -602,6 +652,38 @@ body.desk footer > :not(#toast) { display: none; }
 }
 #pics:empty { display: none; }
 #pics img { height: 64px; cursor: pointer; }
+/* a picture in the chat or the box opens whole in the page (Viewer.ts) */
+:is(.pics, .msg .media) img, .field .item:has(> img) { cursor: zoom-in; }
+
+/* the picture viewer (Viewer.ts): the whole screen, the app's dark theme
+   in either scheme (the phone's bars too); a bar on top, its name,
+   zoom, download and close, clear of a notch; the picture under it on
+   the stage, placed by a transform, zoomed and panned by hand (no
+   browser zoom or scroll there) */
+#viewer { --ink: #e3e3e6; --mid: #a6a6ad; --hover: #37373d; position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; flex-direction: column; color: var(--ink); background: #171719; overflow: hidden; overscroll-behavior: contain; touch-action: none; user-select: none; -webkit-user-select: none; text-wrap: wrap; }
+#viewer[open] { display: flex; }
+#viewer::backdrop { background: #171719; }
+#viewer .bar { flex: none; display: flex; align-items: center; gap: 4px; min-height: 52px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
+#viewer .name { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; }
+#viewer .zoom { flex: none; margin-right: 6px; font: 12px var(--mono); color: var(--mid); }
+#viewer :is(.get, .shut) { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; color: var(--ink); }
+#viewer :is(.get, .shut):hover { background: var(--hover); }
+#viewer :is(.get, .shut) svg { width: 22px; height: 22px; stroke-width: 1.8; }
+#viewer .stage { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: zoom-in; }
+#viewer.big .stage { cursor: grab; }
+#viewer.big .stage:active { cursor: grabbing; }
+#viewer .stage img { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; -webkit-user-drag: none; }
+#viewer .stage img.wait { visibility: hidden; }
+#viewer.ease .stage img { transition: transform .2s ease-out; }
+#viewer .why { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--mid); font-size: 14.5px; }
+#viewer :is(.prev, .next) { position: absolute; top: 50%; translate: 0 -50%; display: grid; place-items: center; width: 44px; height: 64px; border-radius: 10px; color: var(--ink); background: rgb(0 0 0 / .4); }
+#viewer :is(.prev, .next):hover { background: var(--hover); }
+#viewer :is(.prev, .next) svg { width: 24px; height: 24px; stroke-width: 2; }
+#viewer .prev { left: max(8px, env(safe-area-inset-left)); }
+#viewer .next { right: max(8px, env(safe-area-inset-right)); }
+/* on a touch screen a swipe goes to the picture beside */
+@media (hover: none) { #viewer :is(.prev, .next) { display: none; } }
+@media (prefers-reduced-motion: reduce) { #viewer.ease .stage img { transition: none; } }
 
 @media (max-width: 600px) {
   :root { --head: 51px; }
@@ -685,6 +767,7 @@ body.desk footer > :not(#toast) { display: none; }
 /* The server's settings, the owner's, at the settings page's bottom: a
    row a setting or a key, its name over a line about it, its control,
    where its value comes from; Save sticks to the bottom */
+#account .mcp > .sub { margin: 0; font-size: 13.5px; }
 .owned > .sub { margin: 0 0 14px; padding-top: 22px; border-top: 1px solid var(--hair); font-size: 13.5px; }
 .settings > section > .sub { margin: 0 0 4px; font-size: 13.5px; }
 .set { padding: 14px 0; }
@@ -787,3 +870,35 @@ body.desk footer > :not(#toast) { display: none; }
 /* what a choice means, under its label (Tasks.ts descriptions) */
 :is(#tasks, #desk) .opts button.opt { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; }
 :is(#tasks, #desk) :is(.opt, .field label) small { display: block; color: var(--mid); font-size: 12.5px; font-weight: 400; }
+
+/* The memory tree (/tree, web/src/Tree.ts): under the header its bar
+   (← Chat, the VIEW and TREE tabs, a legend, ‹ ›), then the view or the
+   tree, each scrolling in the screen's height; the footer keeps only its
+   toasts, as on the account page */
+body.tree { height: 100dvh; }
+#tree { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#tree .top { display: flex; align-items: center; gap: 6px; padding: 10px 20px 0; } #tree .back { padding: 8px 0; margin-right: 6px; font-size: 14px; color: var(--mid); text-decoration: none; } #tree .back:hover { color: var(--ink); }
+#tree .top small { flex: 1; min-width: 0; margin-left: 10px; font: 12px/1.35 var(--sans); color: var(--mid); } #tree .top small b { font-weight: 600; letter-spacing: .06em; font-size: 11px; padding-left: 5px; box-shadow: inset 3px 0 var(--mid); }
+#tree .top :is(button, .tab) { height: 32px; min-width: 36px; padding: 0 12px; border-radius: 8px; background: var(--block); font-size: 13.5px; font-weight: 500; } #tree .top :is(button, .tab):hover { background: var(--hover); } #tree .top button:disabled { opacity: .4; cursor: default; }
+#tree .tab { display: grid; place-items: center; text-decoration: none; } #tree .tab.here, #tree .tab.here:hover { background: var(--ink); color: var(--paper); }
+#tree .top [hidden] { display: none; } #tree .note { position: absolute; left: 0; right: 0; padding: 0 14px; font: 12.5px/1.45 var(--sans); color: var(--mid); }
+#tree section { display: none; flex: 1; overflow: auto; padding: 0 20px 20px; outline: none; font: 15px/1.55 var(--serif); text-wrap: pretty; } #tree section.on { display: block; }
+#tree h4 { margin: .8em 0 .2em; font: 600 11.5px/1.5 var(--sans); color: var(--mid); } #tree pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+#tree .bracket { --g: 30px; gap: var(--g); scroll-snap-type: x mandatory; scroll-padding: 0 20px; } #tree .bracket.on { display: flex; }
+#tree .bracket::after { content: ""; flex: 0 0 calc(100% - min(22em, 65vw) - var(--g)); }
+#tree .col { flex: 0 0 min(22em, 65vw); position: relative; scroll-snap-align: start; }
+#tree .col h3 { position: sticky; top: 0; z-index: 2; margin: 0; height: 3em; font: 600 .8em/3em var(--sans); letter-spacing: .06em; color: var(--mid); background: var(--paper); cursor: pointer; margin-right: calc(0px - var(--g)); } #tree .col h3:hover { color: var(--ink); }
+#tree .s { position: absolute; left: 0; right: 0; height: var(--card); display: flex; flex-direction: column; padding: 0 14px .7em; border-radius: 10px; background: var(--block); } #tree .s h4 { flex: none; margin-top: .7em; } #tree .s pre { flex: 1; min-height: 0; overflow: hidden; }
+#tree .s.more { cursor: pointer; } #tree .s.more pre { -webkit-mask-image: linear-gradient(#000 calc(100% - 2.4em), transparent 90%); mask-image: linear-gradient(#000 calc(100% - 2.4em), transparent 90%); }
+#tree .s.big { z-index: 1; --lift-shadow: 0 0 0 1px var(--frame), var(--shadow), 0 10px 30px rgb(0 0 0 / .16); box-shadow: var(--lift-shadow); } #tree .s.big.in { box-shadow: inset 3px 0 var(--mid), var(--lift-shadow); }
+#tree .s.big pre { overflow: auto; overscroll-behavior: contain; -webkit-mask-image: none; mask-image: none; } #tree .s.ease { z-index: 1; transition: top .16s ease-out, height .16s ease-out, box-shadow .16s ease-out; }
+#tree .s:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; } #tree .wait { overflow: hidden; } #tree .s.in { box-shadow: inset 3px 0 var(--mid); } #tree .s.in h4::after { content: " · IN CONTEXT"; } #tree .s.none { background: none; outline: 1px dashed var(--hair); outline-offset: -1px; color: var(--mid); }
+#tree .up::after { content: ""; position: absolute; left: 100%; width: calc(var(--g) / 2); top: var(--c, 50%); border-top: 1px solid var(--frame); }
+#tree .dn::before { content: ""; position: absolute; right: 100%; width: calc(var(--g) / 2); top: var(--t); height: calc(var(--h) + 1px); border-left: 1px solid var(--frame); background: linear-gradient(var(--frame), var(--frame)) 0 var(--m) / 100% 1px no-repeat; }
+#tree .s.user pre, #tree .s.unii pre { font: 16px/1.55 var(--sans); } #tree .s.tool pre, #tree .s.echo pre { font: 12.5px/1.5 var(--mono); }
+#tree .s { padding-bottom: var(--pb, .7em); } #tree .s h4 { margin-top: var(--hm, .7em); } #tree .s pre { opacity: var(--o, 1); }
+#tree .s.one { cursor: pointer; } #tree .s.line h4 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } #tree .s.thin h4 { visibility: hidden; }
+#tree .s.one pre { -webkit-mask-image: linear-gradient(#000 calc(100% - 2.4em), transparent 90%); mask-image: linear-gradient(#000 calc(100% - 2.4em), transparent 90%); }
+#tree .bracket.drag { scroll-snap-type: none; user-select: none; cursor: grabbing; }
+@media (prefers-reduced-motion: reduce) { #tree .s.ease { transition: none; } }
+@media (max-width: 600px) { #tree section { padding: 0 14px 14px; } #tree .bracket { scroll-padding: 0 14px; } #tree .top { padding: 4px 14px 0; } #tree .top .tab { height: 30px; padding: 0 10px; font-size: 13px; } }

@@ -30,7 +30,7 @@ export type Notify = "off" | "on" | "blocked" | "home";
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
 
 // a user's message past TALL chars (a line counts 80 or more: a paste)
-// shows its head; its `details` unfolds it (style.css)
+// shows its head, but one with media; its `details` unfolds it (style.css)
 const TALL = 4000;
 
 // a tool's call or result past SHORT lines (a pre's don't wrap) shows
@@ -88,12 +88,13 @@ function row_make(row: View.Row): string {
       const copy = copy_html(text);
       const body = row.call === null ? row.body.map(block_html).join("") : call_html(row.call);
       const pics = images_html(row.images);
-      const tall = ["user", "work"].includes(row.kind) && row.text.length + 80 * row.text.split("\n").length > TALL;
-      const lines = text.trim().split("\n").length;
-      const long = ["tool", "echo"].includes(row.kind) && lines > SHORT;
-      const fold = tall ? `<div class="clip">${body}</div><details class="more"><summary></summary></details>`
-        : long ? `<div class="clip">${body}</div><details class="more out"><summary data-n="${lines} linhas"></summary></details>`
-        : body;
+      // (never one with media in it: media is never folded away)
+      const tall = ["user", "work"].includes(row.kind) && row.text.length + 80 * row.text.split("\n").length > TALL && !row.text.includes("](/media/");
+      // a tool call or result folds by its height (main.ts folds), but a
+      // result drawing media (a show call's)
+      const media = row.body.some((b) => b.$ === "Para" && b.x.some((s) => s.$ === "Pict"));
+      const cut = row.kind === "tool" || (row.kind === "echo" && !media);
+      const fold = tall ? `<div class="clip">${body}</div><details class="more"><summary></summary></details>` : cut ? `<div class="cut">${body}</div><button class="unfold" aria-expanded="false">Show all</button>` : body;
       const who = row.who === "" ? "" : ` data-who="${esc(row.who)}"`;
       return `<div class="msg ${row.kind}"${at}${who}>${copy}${fold}${pics}</div>`;
     }
@@ -118,6 +119,7 @@ function head_html(c: Call.Call, text: string, device: string): string {
   return `<p class="call">${where}${icon}${verb}${esc(text)}</p>`;
 }
 
+// (a link to its file: a plain click opens it in the page, Viewer.ts)
 function images_html(names: string[]): string {
   const pics = names.map((name) => {
     const url = "/image/" + esc(name);
@@ -126,16 +128,37 @@ function images_html(names: string[]): string {
   return names.length === 0 ? "" : `<div class="pics">${pics.join("")}</div>`;
 }
 
-// the line over the message box: fold/unfold (none on an agent's page),
-// a rule, then the pick's knobs, each opening its menu (the browser's
-// popover, placed by main.ts)
-export function pick_html(fold: string | null, on: boolean, knobs: View.Knob[]): string[] {
-  const parts = knobs.map((k) => [
-    `<button title="${esc(k.hint)}" data-knob="${k.move}" popovertarget="pick-${k.move}" aria-haspopup="menu">${esc(k.text)}</button>`,
-    `<div id="pick-${k.move}" class="choices" popover role="menu" aria-label="${k.move[0].toUpperCase() + k.move.slice(1)}">${k.choices.map(choice_html).join("")}</div>`,
-  ]);
+// the memory modes (the chat's page's mode knob) and their tooltips
+export const MODES: Array<[string, string]> = [
+  ["standard", "Each message is summarized for Unii's memory. Cheapest, good for long working sessions."],
+  ["conversation", "Messages stay word-for-word in Unii's view until you switch back. Use it for discussions. It costs more per turn."],
+];
+
+// the line over the message box: fold/unfold and the memory mode (none
+// on an agent's page: talk undefined), a rule, then the pick's knobs,
+// each opening its menu (the browser's popover, placed by main.ts); one
+// without choices (an agent's page) shown only. The mode is a knob too,
+// its menu the two modes. In conversation mode the rule is its meter,
+// as thin: filled as far as its space is, its usual grey turning orange
+// from half full, red from 80%
+export function pick_html(fold: string | null, on: boolean, knobs: View.Knob[], talk?: View.Talk | null): string[] {
+  const knob = (move: string, hint: string, text: string, rows: string) => [
+    `<button title="${esc(hint)}" data-knob="${move}" popovertarget="pick-${move}" aria-haspopup="menu">${esc(text)}</button>`,
+    `<div id="pick-${move}" class="choices" popover role="menu" aria-label="${move[0].toUpperCase() + move.slice(1)}">${rows}</div>`,
+  ];
+  const parts = knobs.map((k) => k.choices.length === 0 ? [`<span class="knob" title="${esc(k.hint)}">${esc(k.text)}</span>`] : knob(k.move, k.hint, k.text, k.choices.map(choice_html).join("")));
   const all = fold === null ? [] : [`<button class="all"${act_html({ $: "Fold", on })}>${esc(fold)}</button>`];
-  return [...all, `<span class="rule"></span>`, ...parts.flatMap((part, i) => (i === 0 ? part : [`<span class="dot">·</span>`, ...part]))];
+  // a mode's row, as choice_html's, its tooltip kept
+  const mode = ([name, hint]: [string, string], k: number) => {
+    const here = (talk != null) === (k === 1);
+    return `<button role="menuitemradio" aria-checked="${here}" title="${esc(hint)}"${here ? " autofocus" : act_html({ $: "Talk", on: k === 1 })}>${name}</button>`;
+  };
+  const [now, about] = MODES[talk == null ? 0 : 1];
+  const modes = talk === undefined ? [] : knob("mode", about, now, MODES.map(mode).join(""));
+  const used = talk == null ? 0 : Math.round(talk.used * 100);
+  const heat = used >= 80 ? " hot" : used >= 50 ? " warm" : "";
+  const rule = talk == null ? `<span class="rule"></span>` : `<span class="rule meter${heat}" style="--used:${used}%" title="Conversation: ${used}% of space used (${View.talk_tokens(talk)})" role="meter" aria-valuenow="${used}" aria-valuemin="0" aria-valuemax="100" aria-label="Conversation space used"></span>`;
+  return [...all, ...modes, rule, ...parts.flatMap((part, i) => (i === 0 ? part : [`<span class="dot">·</span>`, ...part]))];
 }
 
 // a menu's row: a model's vendor over its first; the pick's marked and
@@ -146,14 +169,17 @@ function choice_html(c: View.Choice): string {
   return `${head}<button role="menuitemradio" aria-checked="${c.here}"${act}>${esc(c.text)}</button>`;
 }
 
-// the MCP servers in the ☰ menu, each on or off in this chat (a click
-// switches it); none: nothing
+// the settings page's MCP servers (each open device's),
+// a row each, on or off in this chat (its switch flips it); none: where
+// they are set up
 export function mcp_html(plugs: View.Plug[]): string[] {
   const one = (p: View.Plug) => {
-    const hint = "Its tools are " + (p.on ? "on" : "off") + " in this chat; click to turn them " + (p.on ? "off" : "on") + ".";
-    return `<button class="${p.on ? "on" : "off"}" title="${esc(hint)}"${act_html({ $: "Plug", name: p.name })}>${esc(p.name)}<span>${p.on ? "on" : "off"}</span></button>`;
+    const act = act_html({ $: "Plug", name: p.name });
+    const button = `<button class="chip" role="switch" aria-checked="${p.on}" aria-label="${esc(p.name)}"${act}>${p.on ? "Turn off" : "Turn on"}</button>`;
+    return `<div class="item"><p>${esc(p.name)}<small>Its tools are ${p.on ? "on" : "off"} in this chat.</small></p>${button}</div>`;
   };
-  return plugs.length === 0 ? [] : [`<p>MCP servers</p>`, ...plugs.map(one)];
+  const none = `<p class="sub">None set up. Add them as <code>mcp</code> in a device's own config.json: they run on that device.</p>`;
+  return plugs.length === 0 ? [none] : plugs.map(one);
 }
 
 export function tabs_html(tabs: View.Tab[]): string[] {
@@ -513,7 +539,8 @@ export function account_html(prompts: View.Prompts | null, notify: Notify | null
   const unread  = item("Could not read the prompts.", "", `<button class="chip retry">Try again</button>`);
   const mine    = section_html("Prompts", prompts === null ? unread : prompt_html("prompt", prompts.prompt.text, "The user prompt: Unii's system prompt in every turn; its subagents get it too once you change it. Add who you are and how you want work done at its end. prompt.md in the server's folder; empty: the built-in one.")
     + prompt_html("compact", prompts.compact.text, "The compaction prompt: all a summary of the memory gets, nothing else. compact.md in the server's folder; empty: the built-in one."));
-  return `<a class="back" href="/" data-go="/">← Chat</a><h1>Settings</h1>` + mine + section_html("This browser", acts.join("")) + `<div class="owned"></div>`;
+  const mcp     = section_html("MCP servers", `<div class="mcp"></div>`);
+  return `<a class="back" href="/" data-go="/">← Chat</a><h1>Settings</h1>` + mine + section_html("This browser", acts.join("")) + mcp + `<div class="owned"></div>`;
 }
 
 // a prompt's editor: its note, its text (name: what /api/prompts sets), Save
@@ -729,7 +756,7 @@ function section_html(title: string, body: string): string {
 export function block_html(b: Md.Block): string {
   switch (b.$) {
     case "Para": {
-      return `<p>${b.x.map(spans_html).join("<br>")}</p>`;
+      return `<p>${spans_html(b.x)}</p>`;
     }
     case "Head": {
       const tag = "h" + Math.min(4, b.k + 1);
@@ -748,13 +775,14 @@ export function block_html(b: Md.Block): string {
     case "List": {
       const tag = b.k ? "ol" : "ul";
       const start = b.k && b.n !== 1 ? ` start="${b.n}"` : "";
-      const items = b.x.map((item) => `<li>${item_html(item, b.t)}</li>`);
+      const box = (c: boolean | null) => (c === null ? "" : `<input type="checkbox" disabled${c ? " checked" : ""}> `);
+      const items = b.x.map((item, k) => `<li${b.c[k] == null ? "" : ` class="task"`}>${box(b.c[k] ?? null)}${item_html(item, b.t)}</li>`);
       return `<${tag}${start}>${items.join("")}</${tag}>`;
     }
     case "Tabl": {
       const rows = b.x.map((row, i) => {
         const tag = i === 0 ? "th" : "td";
-        const cells = row.map((cell) => `<${tag}>${spans_html(cell)}</${tag}>`);
+        const cells = row.map((cell, c) => `<${tag}${b.a[c] ? ` style="text-align:${b.a[c]}"` : ""}>${spans_html(cell)}</${tag}>`);
         return `<tr>${cells.join("")}</tr>`;
       });
       return `<table>${rows.join("")}</table>`;
@@ -771,7 +799,7 @@ export function block_html(b: Md.Block): string {
 // a list item's blocks; in a tight list its paragraphs bare (lines, not
 // paragraphs spaced apart)
 function item_html(blocks: Md.Block[], tight: boolean): string {
-  return blocks.map((b) => (tight && b.$ === "Para" ? b.x.map(spans_html).join("<br>") : block_html(b))).join("");
+  return blocks.map((b) => (tight && b.$ === "Para" ? spans_html(b.x) : block_html(b))).join("");
 }
 
 // a diff: its file and its lines added and dropped over its lines, each
@@ -797,6 +825,14 @@ function file_html(shown: string, from: number, lines: string[]): string {
   return `<pre class="diff" style="--nw:${nw}ch">${head}<code>${body}</code></pre>`;
 }
 
+// a file of the media store that isn't media (View.store_file): a chip,
+// its name and its size (main.ts sizes, once known), downloaded under
+// its name
+function chip_html(url: string, name: string): string {
+  const shown = name.trim() || url.split("/").pop()!;
+  return `<a class="file" href="${esc(url)}" download="${esc(shown)}" title="Download ${esc(shown)}"><span class="ic">📎</span><span class="fname">${esc(shown)}</span><small data-of="${esc(url)}"></small></a>`;
+}
+
 function spans_html(spans: Md.Span[]): string {
   return spans.map(span_html).join("");
 }
@@ -815,8 +851,26 @@ function span_html(s: Md.Span): string {
     case "Ital": {
       return `<em>${spans_html(s.x)}</em>`;
     }
+    case "Strk": {
+      return `<del>${spans_html(s.x)}</del>`;
+    }
     case "Link": {
-      return `<a href="${esc(s.k)}" target="_blank" rel="noopener">${spans_html(s.x)}</a>`;
+      if (View.store_file(s.k)) {
+        return chip_html(s.k, Md.spans_text(s.x));
+      }
+      return `<a href="${esc(s.k)}"${s.t === "" ? "" : ` title="${esc(s.t)}"`} target="_blank" rel="noopener">${spans_html(s.x)}</a>`;
+    }
+    case "Pict": { // a file of the media store inline (an image opens whole: Viewer.ts), a file that isn't media its chip, any other a link
+      const [k, title, kind] = [esc(s.k), s.t === "" ? "" : ` title="${esc(s.t)}"`, View.media_kind(s.k)];
+      return kind === "image" ? `<a class="media" href="${k}" target="_blank"><img src="${k}" alt="${esc(s.x)}"${title} loading="lazy"></a>`
+        : kind === "video" ? `<video class="media" src="${k}"${title} controls preload="metadata"></video>`
+        : kind === "audio" ? `<audio class="media" src="${k}"${title} controls preload="metadata"></audio>`
+        : kind === "html" ? `<iframe class="media page" src="${k}" title="${esc(s.t || s.x)}" sandbox="allow-same-origin allow-popups" loading="lazy"></iframe>`
+        : View.store_file(s.k) ? chip_html(s.k, s.x)
+        : `<a href="${k}"${title} target="_blank" rel="noopener">${esc(s.x || s.k)}</a>`;
+    }
+    case "Brk": {
+      return "<br>";
     }
     case "Name": {
       const label = View.agent_label(s.x);

@@ -1,12 +1,15 @@
 // Mcp
 // ===
-// The user's MCP servers (config.MCP: README), whose tools the master and
-// its subagents get beside unii's own (Tools.ts), each named
-// "<server>__<tool>", on every vendor. A server is a program run here
-// (stdio: a JSON-RPC message a line each way), a program run on a device
-// (`device`: each message a job of it, Mcp.device, Mcp.here),
-// or a URL (streamable HTTP: a POST each, answered as JSON or an event
-// stream).
+// The user's MCP servers (README), whose tools the master and its
+// subagents get beside unii's own (Tools.ts), each named
+// "<device>_<server>__<tool>", on every vendor. Each is in a device's own
+// config.json, as it told (Tools.servers), and runs on that device: each
+// message a job of it (Mcp.device, Mcp.here). unii serve runs none
+// itself. There, a server is a program (stdio: a JSON-RPC message a line
+// each way) or a URL the device reaches (streamable HTTP: a POST each,
+// answered as JSON or an event stream). The servers change
+// as devices come, go and edit theirs (Mcp.sync), between turns only
+// (Tools.apply).
 // Each chat runs its own (one user's never see another's), started by
 // the first listing or call, ended as the chat closes, moves (a call
 // running finishes first) or turns it off. One that fails to start, dies
@@ -14,10 +17,10 @@
 // gives it the notes it hasn't heard (Mcp.heard), for the request it
 // builds. Only a why the user can act on (a server that won't start) is
 // also a note in the chat; the rest (its device isn't open, it died and
-// starts again at the next call) only the model is told, and tools left
-// out go to the log. A dead one starts again at the next call; one that
-// failed to start rests LIMITS.again first. While a device server's
-// device isn't open, its tools are left out.
+// starts again at the next call) only the model is told. Tools left out
+// (a name too long, say) go to the log and the chat. A dead one starts again at the next call; one that
+// failed to start rests LIMITS.again first. While a server's device
+// isn't open, its tools are left out.
 
 import * as os from "node:os";
 import type { Out } from "./Agent.ts";
@@ -106,17 +109,29 @@ const HERE = new Map<string, { link: Link; changed: boolean }>();
 
 export namespace Mcp {
 
-  export function servers(note: (text: string) => void, confs: config.McpServer[], run: Run, open: (device: string) => boolean): Servers {
-    const servers: Servers = { all: new Map(), note, run, open };
-    confs.forEach((conf) => Mcp.add(servers, conf));
-    return servers;
+  // a chat's servers: none till its devices tell theirs (Mcp.sync)
+  export function servers(note: (text: string) => void, run: Run, open: (device: string) => boolean): Servers {
+    return { all: new Map(), note, run, open };
   }
 
-  // a server more (a device's Claude Code's, found as it opens); none if
-  // its name is taken
-  export function add(servers: Servers, conf: config.McpServer): void {
-    if (!servers.all.has(conf.name)) {
-      servers.all.set(conf.name, { conf, up: null, fail: null, link: null, names: new Map(), stale: false, said: null, shown: false, heard: new Map(), left: "", calls: 0, gone: false });
+  // the chat's servers made `confs`: one gone or changed ends as its last
+  // call does (as Mcp.end's), a new one waits for its first listing or
+  // call
+  export function sync(servers: Servers, confs: config.McpServer[]): void {
+    const want = new Map(confs.map((conf) => [conf.name, conf]));
+    for (const [name, s] of servers.all) {
+      if (JSON.stringify(want.get(name)) !== JSON.stringify(s.conf)) {
+        s.gone = true;
+        if (s.calls === 0) {
+          Mcp.close(s);
+        }
+        servers.all.delete(name);
+      }
+    }
+    for (const conf of want.values()) {
+      if (!servers.all.has(conf.name)) {
+        servers.all.set(conf.name, { conf, up: null, fail: null, link: null, names: new Map(), stale: false, said: null, shown: false, heard: new Map(), left: "", calls: 0, gone: false });
+      }
     }
   }
 
@@ -145,7 +160,7 @@ export namespace Mcp {
   // a server's tools: started (anew if its link died), listed again if
   // it said they changed; else why none, told
   export async function start(servers: Servers, s: Server): Promise<Spec[] | string> {
-    if (s.conf.device && !servers.open(s.conf.device)) {
+    if (!servers.open(s.conf.device)) {
       Mcp.close(s);
       s.fail = null;
       const why = "can't run: device " + s.conf.device + " isn't open";
@@ -185,7 +200,7 @@ export namespace Mcp {
     return got;
   }
 
-  // a server run (or reached) and initialized, its tools listed, within
+  // a server run on its device and initialized, its tools listed, within
   // LIMITS.start; else why not. Once up, its link dying is told
   export async function open(servers: Servers, s: Server): Promise<Spec[] | string> {
     const timer = AbortSignal.timeout(LIMITS.start);
@@ -194,7 +209,7 @@ export namespace Mcp {
     let link: Link | null = null;
     const died = (why: string) => up && s.link === link && Mcp.tell(servers, s, why + "; the next call starts it again", false);
     try {
-      link = s.link = s.conf.url ? Mcp.http(s.conf, changed) : s.conf.device ? Mcp.device(s.conf, servers.run, changed, died) : Mcp.stdio(s.conf, changed, died);
+      link = s.link = Mcp.device(s.conf, servers.run, changed, died);
       await link.ask("initialize", INIT, timer);
       await link.tell("notifications/initialized", {}, timer);
       const specs = await Mcp.listed(servers, s, timer);
@@ -205,9 +220,9 @@ export namespace Mcp {
     }
   }
 
-  // its tools, named for the model; one whose name clashes with another's
-  // once made the vendors', or whose input schema they refuse, left out,
-  // logged
+  // its tools, named for the model; one whose name is over the vendors'
+  // 64 characters or clashes with another's once made theirs, or whose
+  // input schema they refuse, left out, logged and told the chat
   export async function listed(servers: Servers, s: Server, signal: AbortSignal): Promise<Spec[]> {
     const specs: Spec[] = [];
     const names = new Map<string, string>();
@@ -217,7 +232,8 @@ export namespace Mcp {
       const got = await s.link!.ask("tools/list", cursor === undefined ? {} : { cursor }, signal);
       for (const tool of Array.isArray(got?.tools) ? got.tools : []) {
         const name = Mcp.name(s.conf.name, String(tool?.name));
-        const schema = names.has(name) ? "its name is another's for the model" : Mcp.schema(tool?.inputSchema);
+        const long = name.length > 64 ? "its name for the model, " + name + ", is over 64 characters" : null;
+        const schema = long ?? (names.has(name) ? "its name is another's for the model" : Mcp.schema(tool?.inputSchema));
         if (typeof schema === "string") {
           left.push(JSON.stringify(String(tool?.name)) + " (" + schema + ")");
           continue;
@@ -231,6 +247,7 @@ export namespace Mcp {
       s.left = left.join(", ");
       if (s.left !== "") {
         console.error("unii: MCP server " + s.conf.name + " has tools left out: " + s.left);
+        Mcp.say(servers, s, "MCP server " + s.conf.name + " has tools left out: " + s.left + ".");
       }
     }
     s.names = names;
@@ -289,7 +306,7 @@ export namespace Mcp {
     s.calls += 1;
     try {
       for (let again = true; ; again = false) {
-        if (s.link === null || s.link.dead() !== null || !s.names.has(name) || (s.conf.device && !servers.open(s.conf.device))) {
+        if (s.link === null || s.link.dead() !== null || !s.names.has(name) || !servers.open(s.conf.device)) {
           const got = await Mcp.start(servers, s);
           if (typeof got === "string") {
             return fail(head + got + ".");
@@ -310,7 +327,7 @@ export namespace Mcp {
           if (timer.aborted) {
             return fail(head + "didn't answer within " + s.conf.timeout + " s; the call was cancelled.");
           }
-          if (again && why === EXPIRED) {
+          if (again && why?.startsWith(EXPIRED)) {
             continue;
           }
           const next = why === "was ended by unii" ? "." : "; the next call starts it again.";
@@ -373,7 +390,7 @@ export namespace Mcp {
   }
 
   export function name(server: string, tool: string): string {
-    return (server + "__" + tool).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64);
+    return (server + "__" + tool).replace(/[^A-Za-z0-9_-]/g, "_");
   }
 
   export function why(err: any): string {
@@ -560,10 +577,11 @@ export namespace Mcp {
   }
 
   // on a device, a message of a chat's server (Mcp.device) to the program
-  // it runs here: initialize starts it (Mcp.stdio, its `cwd` read here; a
-  // Claude Code one's command, args and env read here, by its name);
-  // close ends it. Answered as JSON: its result or error, why it is dead,
-  // whether its tools changed
+  // it runs here (Mcp.stdio) or the URL it reaches from here (Mcp.http):
+  // initialize starts it, its ${VAR}s and `cwd` read here (a Claude Code
+  // one's command, args and env read here, by its name); close ends it.
+  // Answered as JSON: its result or error, why it is dead, whether its
+  // tools changed
   export async function here(input: any, signal: AbortSignal, home = os.homedir()): Promise<Out> {
     const { key, method, params } = input;
     const answer = (got: object): Out => {
@@ -582,16 +600,38 @@ export namespace Mcp {
     }
     if (method === "initialize") {
       s?.link.close();
-      const name = input.conf.claude;
-      const own = name === undefined ? {} : Machine.claude_mcps(home).find((m) => m.name === name)?.conf;
-      if (own === undefined) {
-        HERE.delete(key);
-        return answer({ dead: "isn't in Claude Code's config there any more" });
+      HERE.delete(key);
+      const c: config.McpServer = input.conf;
+      const vars = (text: string) => text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, v) => {
+        if (process.env[v] === undefined) {
+          throw new Error("uses ${" + v + "}, which isn't set");
+        }
+        return process.env[v]!;
+      });
+      let conf: config.McpServer;
+      try {
+        // a Claude Code one: its program as that config says now, by
+        // name, its variables read there already (Machine.claude_mcps)
+        if (c.claude !== undefined) {
+          const own = Machine.claude_mcps(home).find((m) => m.name === c.claude)?.conf;
+          if (own === undefined) {
+            return answer({ dead: "isn't in Claude Code's config there any more" });
+          }
+          conf = { ...c, ...own, url: "", headers: {}, cwd: own.cwd.replace(/^~(?=[\\/]|$)/, home) };
+        } else {
+        const env = Object.fromEntries(Object.entries(c.env).map(([k, v]) => [k, vars(v)]));
+        const headers = Object.fromEntries(Object.entries(c.headers).map(([k, v]) => [k, vars(v)]));
+        conf = { ...c, command: vars(c.command), args: c.args.map(vars), env, cwd: vars(c.cwd).replace(/^~(?=[\\/]|$)/, home), url: vars(c.url), headers };
+        if (conf.url !== "" && !URL.canParse(conf.url)) {
+          throw new Error("needs a url");
+        }
+        }
+      } catch (err) {
+        return answer({ dead: Mcp.why(err) });
       }
-      const conf = { ...input.conf, ...own };
-      const cwd = String(conf.cwd ?? "").replace(/^~(?=\/|$)/, home);
       const run = { link: null as unknown as Link, changed: false };
-      run.link = Mcp.stdio({ ...conf, cwd }, () => (run.changed = true), () => {});
+      const changed = () => (run.changed = true);
+      run.link = conf.url ? Mcp.http(conf, changed) : Mcp.stdio(conf, changed, () => {});
       HERE.set(key, (s = run));
     }
     if (s === undefined) {

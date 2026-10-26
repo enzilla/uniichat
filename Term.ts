@@ -198,6 +198,7 @@ function term_commands(v: View.View): Cmd[] {
 // ====
 
 function term_new(url: string, token: string): Term {
+  Paint.paint_site(url);
   const t: Term = {
     v       : View.view_new(),
     scr     : Screen.screen_new((key) => term_press(t, key)),
@@ -282,6 +283,9 @@ function term_hear(t: Term, msg: View.Server): void {
   const was   = t.v.page;
   for (const out of View.view_hear(t.v, msg)) {
     term_send(t, out);
+  }
+  if (msg.$ === "state" && msg.site) {
+    Paint.paint_site(msg.site);
   }
   term_went(t, was);
   if (t.panel === null) {
@@ -920,7 +924,7 @@ function term_pick(t: Term, move: Move, arg: string): void {
   term_choose(t, { model: "Modelo", effort: "Esforço", speed: "Velocidade" }[move as string] ?? move, items);
 }
 
-// the MCP servers the server's config sets, on or off in this chat; with
+// the chat's MCP servers (its devices'), on or off in this chat; with
 // a name, that one switched
 function term_mcp(t: Term, arg: string): void {
   if (arg !== "") {
@@ -931,7 +935,7 @@ function term_mcp(t: Term, arg: string): void {
   if (t.scr.tty && list.length > 0) {
     return term_choose(t, "Servidores MCP (Enter liga ou desliga)", t.v.mcp.map((p): Choice => ({ text: p.name, note: p.on ? "ligado" : "desligado", now: false, run: () => term_act(t, { $: "Plug", name: p.name }) })));
   }
-  term_note(t, list.length === 0 ? "No MCP servers: the server's config sets none." : "MCP servers: " + list.join(", ") + ". Turn one on or off with /mcp <name>.");
+  term_note(t, list.length === 0 ? "No MCP servers: none is set up." : "MCP servers: " + list.join(", ") + ". Turn one on or off with /mcp <name>.");
 }
 
 // /copy: Unii's last answer, or its n-th code block, to the clipboard of
@@ -959,7 +963,7 @@ function term_mode(t: Term, arg: string): void {
     return;
   }
   const talk = t.v.talk;
-  const now = talk === null ? "standard" : "conversation, from message " + talk.from + ", " + Math.round(talk.used * 100) + "% of its space used";
+  const now = talk === null ? "standard" : "conversation, from message " + talk.from + ", " + Math.round(talk.used * 100) + "% of its space used (" + View.talk_tokens(talk) + ")";
   term_note(t, (arg === "" ? "" : "No mode " + arg + ". ") + "The memory mode is " + now + ". /mode standard or /mode conversation switches it.");
 }
 
@@ -1218,7 +1222,9 @@ function term_print(t: Term, msg: View.Server): void {
       t.last = main && msg.id !== undefined ? msg.id : t.last;
       const due  = main && msg.id !== undefined && View.part_due(v, [msg.id, 1], v.parts[v.parts.length - 2]);
       const head = due ? [View.Cap(View.AI)] : [];
-      term_rows(t, [...head, ...View.entry_rows(msg.id ?? null, msg.kind, text, msg.images)], false);
+      // (the message before it, which a result's head depends on: View.entry_of)
+      const before = main ? v.whole.get((msg.id ?? 0) - 1) : v.page?.log?.[n - 2];
+      term_rows(t, [...head, ...View.entry_rows(msg.id ?? null, msg.kind, text, msg.images, View.entry_of(msg, before))], false);
       return;
     }
     case "root": {
