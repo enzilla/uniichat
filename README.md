@@ -98,21 +98,21 @@ Features
   do Guilherme.") asks you only with `owner_name` set. "Me avise se
   falhar." and "Se falhar, me avise." (an instruction on an event) and
   "Ele não decide, você decide." (who decides, by contrast) ask nothing;
-  "Me avise se posso seguir.", "Não está ok?" and "Falta só a sua aprovação." ask, as
-  meant ("Não falta a sua aprovação." doesn't), and so do "Se quiser, me
-  avise.", "Me avise caso aprove.", "Me avise caso discorde." and "Me
-  avise caso não queira." (the user's will, also denied), "Me avise
-  caso precise de algo." and "Me avise se não gostar." (a need or a
-  liking), and "Se mesclar, me avise." (an act of the user's with no
-  subject: mesclar, aplicar, assinar, publicar, revisar, validar, confirmar, responder;
-  "Se o CI mesclar, me avise." doesn't). Limits: "Me avise quando
-  falhar." and "Quando terminar, me avise." ask ("quando" isn't read as
-  an event), and so does "Rodei os testes? ok." ("Rodei os testes?"); an
-  event said with one of those verbs and no subject ("Se publicar, me
-  avise.", meaning the pipeline) asks, and so does a need with no
-  subject that isn't the user's ("Me avise caso precise reiniciar o
-  serve.", meaning Unii or the pipeline needs it: "precisar" with no
-  subject is read as yours).
+  "Me avise se posso seguir.", "Não está ok?" and "Falta só a sua
+  aprovação." ask, as meant ("Não falta a sua aprovação." doesn't), and
+  so do "Se quiser, me avise.", "Me avise caso aprove.", "Me avise caso
+  discorde." and "Me avise caso não queira." (the user's will, also
+  denied), "Me avise caso precise de algo." and "Me avise se não
+  gostar." (a need or a liking), and "Se mesclar, me avise." (an act of
+  the user's with no subject: mesclar, aplicar, assinar, publicar,
+  revisar, validar, confirmar, responder; "Se o CI mesclar, me avise."
+  doesn't). Limits: "Me avise quando falhar." and "Quando terminar, me
+  avise." ask ("quando" isn't read as an event), and so does "Rodei os
+  testes? ok." ("Rodei os testes?"); an event said with one of those
+  verbs and no subject ("Se publicar, me avise.", meaning the pipeline)
+  asks. "precisar" with no subject is always read as your need, so "Me
+  avise caso precise reiniciar o serve." asks you even when it is Unii
+  or the pipeline that needs the restart.
   Terminal: `/mesa [projeto]`, `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
   `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
   `/descartar`, `/reabrir`, `/avisar`.
