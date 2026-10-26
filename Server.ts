@@ -42,7 +42,7 @@ import * as Tasks from "./Tasks.ts";
 import * as Restart from "./Restart.ts";
 import * as Pipeline from "./Pipeline.ts";
 import { PROMPTS, SEARCHES, Tools, type Agent, type Live, type Waiting } from "./Tools.ts";
-import { ACTIVE, FRAME, IDLE, IMAGES, live_push, MEDIA, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
+import { ACTIVE, FRAME, IDLE, IMAGES, live_push, MEDIA, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Sums, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
 import hello_md from "./hello.md" with { type: "text" };
 import app_js from "./web/app.js" with { type: "file" };
@@ -98,7 +98,9 @@ type Batch = Kept & { micros: number[][]; open: number[]; left: number; all: num
 // fallback its calls ("") or an agent's (by name, till it reports) run
 // on (Chat.ran), forgotten as a pick is picked; back: the view's block
 // the turn's last call (in conversation mode) marked last, which the
-// next marks too, for claude-api's cache (Memory.view)
+// next marks too, for claude-api's cache (Memory.view); sums: the
+// summaries the call waits on, the messages before `from` whose own
+// wasn't built as it began waiting (null: it doesn't wait)
 type Chat = {
   mem   : Memory;
   tools : Tools;
@@ -125,6 +127,7 @@ type Chat = {
   fell  : Map<string, string>;
   tell  : ReturnType<typeof setTimeout> | undefined; // its wait to tell the user's resolutions (Chat.tell_soon), while one runs
   back  : number;
+  sums  : { from: number; total: number } | null;
 };
 
 // Constants
@@ -306,7 +309,7 @@ export namespace Chat {
   // the chat, opened at the start (the one before, if any, resumed by
   // Main.start). One that fails to open throws, and the server ends
   export function open(): Chat {
-    const mem = Memory.load(CHAT, () => Chat.share(chat, Tools.prompt("compact")), Owner.act_put);
+    const mem = Memory.load(CHAT, () => ({ system: Tools.prompt("compact"), searches: 0, server: "" }), Owner.act_put);
     const tools = Tools.serve(mem, {
       push   : (agent, kind, text) => Chat.push(chat, agent, kind, text),
       note   : (text) => Chat.note(chat, text),
@@ -319,11 +322,12 @@ export namespace Chat {
       restart : (how) => Chat.restart(how),
       agents  : () => Chat.agents_md(chat),
     });
+    Chat.keep_pick(mem.pick);
     const pick = Pick.load(mem.pick, config.OFFER, config.PICK);
     const chat: Chat = {
       mem, tools, pick, socks: new Set(), acts: new Map(), busy: false, call: null, model: "", check: null, asked: false, open: 0, sent: [], wait: [],
       halt: new AbortController(), live: [], calls: new Map(), eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null,
-      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(), tell: undefined, back: -1,
+      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(), tell: undefined, back: -1, sums: null,
     };
     // a saved pick (a profile, by name) not offered gave way: told once
     const shown = (p: Pick) => p.profile ?? Pick.label(p);
@@ -331,6 +335,7 @@ export namespace Chat {
     if (saved !== null && saved !== shown(pick)) {
       mem.pick = pick;
       Memory.save(mem);
+      Chat.keep_pick(mem.pick);
       Chat.note(chat, saved + " isn't offered here, so the chat now runs on " + shown(pick) + ".");
     }
     if (mem.count === 0) {
@@ -391,11 +396,18 @@ export namespace Chat {
     }, Restart.DELAY);
   }
 
-  // what a call of the chat starts with: its system prompt, the user
-  // prompt (a turn's) or the compaction prompt (a summary's, which gets
-  // nothing else). A summary gets no tools: one it called, ours or the
-  // API's own (web search brings code execution), sent its whole input
-  // again
+  // the vendor of the pick the chat saved (its own, not the default)
+  // kept offered, whatever is signed in (config.config_keep)
+  export function keep_pick(pick: object | null): void {
+    const vendor = pick === null ? undefined : (pick as Partial<Pick>).vendor;
+    config.config_keep(typeof vendor === "string" ? [vendor] : []);
+  }
+
+  // what a call of the chat starts with: its pick and system prompt. A
+  // summary's takes nothing of the chat's pick (Memory.ask: the
+  // compactor's, profile and all) and gets no tools: one it called, ours
+  // or the API's own (web search brings code execution), sent its whole
+  // input again (Chat.open)
   export function share(chat: Chat, system: string): Share {
     return { ...Pick.ask(chat.pick), system, searches: 0, server: "" };
   }
@@ -547,6 +559,7 @@ export namespace Chat {
       chat.call = null;
       chat.sent = [];
       chat.wait = [];
+      chat.sums = null;
       chat.busy = false;
       Chat.live(chat, null, []);
       Chat.tasks_talked(chat);
@@ -560,10 +573,17 @@ export namespace Chat {
     return Memory.whole(chat.mem, chat.wait[0].id);
   }
 
-  // false: the turn ends
+  // false: the turn ends: at once if no model can be asked here (nor
+  // summaries written: it doesn't wait on them)
   export async function call(chat: Chat): Promise<boolean> {
     const mem = chat.mem;
     const halt = (chat.halt = new AbortController());
+    Main.follow();
+    const none = config.config_none();
+    if (none !== null) {
+      Chat.failed(chat, none);
+      return false;
+    }
     Chat.change(chat);
     await Tools.look(chat.tools);
     if (halt.signal.aborted) {
@@ -571,15 +591,22 @@ export namespace Chat {
     }
     let from = -1;
     while (from !== Chat.from(chat)) {
+      // those before the last `from` are built: those up to this one join
       from = Chat.from(chat);
+      chat.sums = { from, total: (chat.sums?.total ?? 0) + Memory.unbuilt(mem, from) };
+      if (chat.sums.total > 0) {
+        Chat.all(chat, Chat.state(chat));
+      }
       const why = await Memory.settle(mem, from, halt.signal);
       if (why !== null) {
+        chat.sums = null;
         if (!halt.signal.aborted) {
           Chat.failed(chat, why);
         }
         return false;
       }
     }
+    chat.sums = null;
     const msgs = (chat.sent = chat.wait.splice(0));
     chat.tools.origin = Tasks.turn_origin(msgs.map((m) => m.origin));
     const says = msgs.filter((m) => m.end > from).map((m) => Memory.say(mem, Math.max(m.id, from), m.end));
@@ -799,6 +826,10 @@ export namespace Chat {
     const name = agent?.name;
     if (ev.$ === "Limit") {
       return Chat.limit(chat, name ?? TURN, ev.limit);
+    }
+    // (only a patient call, a summary's, tells it: Memory.ask)
+    if (ev.$ === "Again") {
+      return;
     }
     if (ev.$ === "Run") {
       Chat.ran(chat, agent, ev);
@@ -1145,11 +1176,15 @@ export namespace Chat {
     }
   }
 
-  // as the view changes (Memory's wait): the state; done when all are
-  // built; not as the chat is let go (Chat.resumed)
+  // as the view changes (Memory's wait): the state, while the turn waits
+  // on summaries (they come, or fail: Memory `again`) or an import runs;
+  // done when all are built; not as the chat is let go (Chat.resumed)
   export function progress(chat: Chat): void {
     const batch = chat.batch;
     if (batch === null || chat.mem.done) {
+      if (!chat.mem.done && Chat.waits(chat) === SUMMARIES) {
+        Chat.all(chat, Chat.state(chat));
+      }
       return;
     }
     if (batch.open.every((n) => n === 0)) {
@@ -1315,7 +1350,13 @@ export namespace Chat {
     const room = Chat.room(chat);
     const size = chat.mem.talk === null ? 0 : Memory.talk_size(chat.mem);
     const talk = chat.mem.talk === null ? null : { from: chat.mem.talk, used: Math.min(1, size / room), size, room };
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, skills, talk, build: BUILD, site: config.SITE };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, sums: Chat.sums(chat), again: chat.mem.again, timers, mcp, tasks, skills, talk, build: BUILD, site: config.SITE };
+  }
+
+  // the summaries the call waits on, done and in all (View Sums)
+  export function sums(chat: Chat): Sums | null {
+    const sums = chat.sums;
+    return sums === null || sums.total === 0 ? null : { done: sums.total - Memory.unbuilt(chat.mem, sums.from), total: sums.total };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1336,6 +1377,7 @@ export namespace Chat {
     if (saved !== null && saved !== Pick.label(pick)) {
       chat.mem.pick = pick;
       Memory.save(chat.mem);
+      Chat.keep_pick(chat.mem.pick);
       Chat.note(chat, saved + " isn't offered here, so the chat now runs on " + Pick.label(pick) + ".");
     }
     Chat.change(chat);
@@ -1374,16 +1416,16 @@ export namespace Chat {
     }
   }
 
-  // a socket closed; a device goes only if it quit (a link lost is no
-  // quit: its jobs wait for it, its MCP servers don't), and its skills
-  // leave the state
+  // a socket closed; a device goes at once if it quit (a link lost is no
+  // quit: its jobs wait for it a grace time, its MCP servers don't:
+  // Tools.lost), and its skills leave the state
   export function leave(chat: Chat, sock: Sock, quit: boolean): void {
     chat.socks.delete(sock);
     if (quit && sock.data.device !== null) {
       Tools.detach(chat.tools, sock.data.tab, sock.data.device);
       Chat.change(chat);
     } else if (sock.data.device !== null) {
-      Tools.plug(chat.tools);
+      Tools.lost(chat.tools, sock.data.tab, sock.data.device);
     }
   }
 
@@ -1519,6 +1561,7 @@ export namespace Chat {
         chat.pick = chat.mem.pick = pick;
         chat.fell.clear();
         Memory.save(chat.mem);
+        Chat.keep_pick(pick);
         Chat.change(chat);
         Chat.talked(chat, TALK_SMALL);
         return {};
@@ -2233,6 +2276,7 @@ export namespace Main {
         sock.close(QUIT, "signed out");
       });
       Tools.prune(Main.chat.tools, kept);
+      Main.follow();
     }, PING / 2);
     // the pending list's pushes, looked for every TASK_PUSH
     setInterval(() => Main.event("the pending list's pushes", () => Chat.task_push(Main.chat)), TASK_PUSH);
@@ -2257,6 +2301,7 @@ export namespace Main {
   export async function settings(req: Request): Promise<Response> {
     const fresh = { "cache-control": "no-store" };
     if (req.method === "GET") {
+      Main.follow();
       return Response.json(Settings.page(), { headers: fresh });
     }
     if (req.method !== "POST") {
@@ -2270,6 +2315,14 @@ export namespace Main {
       Chat.offer(Main.chat);
     }
     return Response.json(out.body, { status: out.status, headers: fresh });
+  }
+
+  // the defaults following a sign-in or out (config.config_follow): the
+  // chat runs on its pick if still offered, else on the new default
+  export function follow(): void {
+    if (config.config_follow()) {
+      Chat.offer(Main.chat);
+    }
   }
 
   // a failure no owner took: every background promise has one that ends

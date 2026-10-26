@@ -22,5 +22,8 @@ if (!was.startsWith("/tmp/")) {
 if (!(process.env.UNII_AGENTES ?? "").startsWith("/tmp/")) {
   delete process.env.UNII_AGENTES;
 }
+// a key, fake, so a chat can be asked (with nothing signed in a turn is
+// refused: config_none): the tests fake the AI, and never use a real key
+process.env.ANTHROPIC_API_KEY = "sk-ant-test";
 // a preload's afterAll runs once, after every file's tests
 afterAll(() => fs.rmSync(process.env.UNII_DIR!, { recursive: true, force: true }));

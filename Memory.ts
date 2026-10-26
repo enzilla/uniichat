@@ -46,7 +46,7 @@
 // hash; an agent's log in docs/agent/<Name>.jsonl.
 
 import * as fs from "node:fs";
-import { AskAI, type Ask, type Block, type Call, type Img, type Kind, type Say } from "./AskAI.ts";
+import { AskAI, type Again, type Ask, type Block, type Call, type Event, type Img, type Kind, type Say } from "./AskAI.ts";
 import { clip_page, clip_pages } from "./Clip.ts";
 import * as config from "./Config.ts";
 import { Disk } from "./Disk.ts";
@@ -84,7 +84,8 @@ type View = { parts: Part[]; size: number; batch: boolean; high: number };
 type Sum = Part & { kind: Served };
 type Served = "compactor" | "import";
 
-// what a compaction's call takes but its blocks (Server.ts share)
+// what a call takes but its blocks (Server.ts share); a compaction's,
+// `share`, but its pick too: the compactor's alone (Memory.ask)
 export type Share = Omit<Ask, "blocks">;
 
 // what an upload to the media store may write (Memory.media_add; Server.ts
@@ -119,8 +120,10 @@ type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; go
 // each log is indexed; busy: nodes building, by slot, with their side;
 // sides: the side by the last message of nodes not built; calls: those
 // building's calls; hold: why each side is held (null: it builds);
-// wait: checks run as the views change; share: a compaction's call but
-// its blocks; made, acted: told of each node built, of each act indexed
+// wait: checks run as the views change (and as `again` does); share: a
+// compaction's call but its pick and blocks; made, acted: told of each
+// node built, of each act indexed; again: how the chat's summaries last
+// failed, waiting to ask again (null: none, or one answered since)
 export type Memory = {
   dir    : string;
   fds    : Map<string, number>;
@@ -146,9 +149,10 @@ export type Memory = {
   hold   : Array<string | null>;
   done   : boolean;
   wait   : Set<() => void>;
-  share  : () => Share;
+  share  : () => Omit<Share, keyof Pick>;
   made?  : (l: number, i: number) => void;
   acted  : (id: string, ans: object) => void;
+  again  : Again | null;
 };
 
 // Constants
@@ -156,6 +160,12 @@ export type Memory = {
 
 const NODE  = 512;
 export const JOBS = 64;
+
+// a summary's failure is logged once in LOGGED ms, each distinct one
+const LOGGED = 60e3;
+
+// the failures logged lately: when, by what was logged
+const FAILED = new Map<string, number>();
 const TRIES = 5;
 // a view past its `high` merges to half: the chat's 64-128 KB (96 KB on
 // average), the compactions' half to all of config COMPACTOR_CONTEXT (by
@@ -223,7 +233,7 @@ export namespace Memory {
     const mem: Memory = {
       dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, off: [], on: [], talk: null, talked: new Map(), work: [], timers: [], nodes: new Map(), agents: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
       view: { parts: [], size: 0, batch: false, high: HIGH }, seen: { parts: [], size: 0, batch: false, high: config.COMPACTOR_CONTEXT },
-      busy: new Map(), sides: new Map(), calls: new Map(), hold: [null, "paused"], done: false, wait: new Set(), share, acted,
+      busy: new Map(), sides: new Map(), calls: new Map(), hold: [null, "paused"], done: false, wait: new Set(), share, acted, again: null,
     };
     const saved = Memory.saved(dir);
     mem.pick = saved?.pick ?? null;
@@ -682,6 +692,14 @@ export namespace Memory {
     return (mem.ready[side][0] ?? [])[k] ?? mem.count;
   }
 
+  // how many of the chat's messages before `end` have no summary of
+  // their own yet (level 0, side 0: those a turn waits on)
+  export function unbuilt(mem: Memory, end: number): number {
+    const queue = mem.ready[0][0] ?? [];
+    const k = queue.findIndex((i) => i >= end);
+    return k < 0 ? queue.length : k;
+  }
+
   // a node ready (on), or no more (built)
   export function ready(mem: Memory, { l, i }: Part, on: boolean): void {
     const queue = (mem.ready[Memory.side(mem, l, i)][l] ??= []);
@@ -846,9 +864,42 @@ export namespace Memory {
     parts.forEach(({ l, i }) => mem.made?.(l, i));
   }
 
-  // a call of node (l,i)'s summary, on the compactor
+  // a call of node (l,i)'s summary, on the compactor as set when it
+  // asks, and each time it starts over (`repick`), so a fix in Settings
+  // counts at once; how it fails is heard (Memory.heard)
   export function ask(mem: Memory, l: number, i: number, text: string, blocks: Block[]): Call {
-    return AskAI.ask({ ...mem.share(), ...Pick.ask(config.COMPACTOR), blocks, patient: true, yields: Memory.served(mem, l, i) === "import" ? mem.dir : undefined }, () => {});
+    const own = Memory.served(mem, l, i) === "compactor";
+    const repick = () => Pick.ask(config.COMPACTOR);
+    const told: { again: Again | null } = { again: null };
+    return AskAI.ask({ ...mem.share(), ...repick(), blocks, patient: true, repick, yields: own ? undefined : mem.dir }, (ev) => Memory.heard(mem, own, ev, told));
+  }
+
+  // a summary's call's event: a failure waiting to ask again (Again)
+  // logged, each distinct one once in LOGGED; the chat's (`own`, not an
+  // import's) kept as `again`, till this call asks again (unless another
+  // failed since: `told`, this call's last) or one answers, the views'
+  // checks run as it changes
+  export function heard(mem: Memory, own: boolean, ev: Event, told: { again: Again | null }): void {
+    const failed = ev.$ === "Again" ? ev.again : null;
+    if (failed !== null) {
+      const now = Date.now();
+      const line = (own ? "compactor: " : "compactor (import): ") + failed.why.slice(0, 300).replace(/\.$/, "");
+      FAILED.forEach((at, seen) => now - at >= LOGGED && FAILED.delete(seen));
+      if (!FAILED.has(line)) {
+        FAILED.set(line, now);
+        console.error(line + "; asking again " + (failed.limit ? "at " + new Date(failed.until).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "in " + Math.ceil((failed.until - now) / 60e3) + " min"));
+      }
+    }
+    const answered = ev.$ === "Delta" || (ev.$ === "Entry" && ev.kind !== "mind");
+    const asks = ev.$ === "Again" && failed === null && mem.again === told.again;
+    const again = failed ?? (asks || answered ? null : mem.again);
+    if (ev.$ === "Again") {
+      told.again = failed;
+    }
+    if (own && again !== mem.again) {
+      mem.again = again;
+      mem.wait.forEach((check) => check());
+    }
   }
 
   // a summary's try: its call's end, the call held in `calls` till then
