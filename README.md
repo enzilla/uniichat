@@ -30,13 +30,20 @@ Features
   (fields: one choice, many, a text, yes or no; each answer kept as a
   draft till you conclude), and have a thread: talk with Unii about it
   without resolving it (your message is a message of the chat, marked
-  `[Pendência P7: …]`; it shows "aguardando o Unii", then "sua vez").
+  `[Pendência P7: …]`; it shows "aguardando o Unii", then "sua vez" if
+  the next step is yours, or "Unii respondeu" on one of Unii's).
   On the web, the **Mesa** is the list as a screen of its own, beside
-  the **Conversa** (the header's button, or `m`): tasks grouped by whose
+  the **Conversa** (the header's button, or `m`; the Conversa shows no
+  list, only the button's count, "Mesa · 3"): tasks grouped by whose
   move it is (Agora, Aguardando o Unii, Em andamento, Aguardando outras
   pendências, Resolvidas recentemente), searched and filtered by project,
-  the one picked whole at the right (on a phone, list and task one at a
-  time); `j`/`k` or the arrows move, Enter opens, `/` searches, Esc goes
+  the one picked whole at the right: first a line saying whose move it
+  is and what's expected ("Sua vez: escolha uma das 3 opções…", "Com o
+  Unii: nada a fazer agora"), then what to read and decide, with its
+  ficha beside (whose, origin, front, kind and limit, depends on and
+  frees, PRs with verdict and head, fields left, agent, next step,
+  dates) (on a phone, list and task one at a time, the ficha after the
+  decision); `j`/`k` or the arrows move, Enter opens, `/` searches, Esc goes
   back. A task of yours open over a day says how late ("atrasada há
   2 d", as the late push counts it); the GitHub PRs it links show as
   `repo#n` in its row and over its detail; once one is resolved, the

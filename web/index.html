@@ -24,8 +24,7 @@
   <span class="net">offline</span>
   <button class="imping" popovertarget="import" hidden><span></span><progress max="1" value="0"></progress></button>
   <button class="timers" popovertarget="timers" title="Schedules" hidden>⏰ <span></span></button>
-  <button class="mode" type="button" title="Alternar entre a Mesa e a Conversa (m)" hidden>Mesa</button>
-  <button class="tasks" popovertarget="tasks" title="Pendências" hidden>✓ <span></span></button>
+  <button class="mode" type="button" title="Pendências: alternar entre a Mesa e a Conversa (m)" hidden>Mesa</button>
   <button class="menu" popovertarget="menu">☰</button>
 </header>
 <main id="log"><div class="rows"></div><div class="tail"></div></main>
@@ -60,16 +59,6 @@
   <p class="title">Schedules</p>
   <ul></ul>
 </div>
-<!-- the pending list, set by Unii's task tools (Tasks.ts): an aside on a
-     wide screen, else the header's ✓ popover (style.css) -->
-<aside id="tasks" popover>
-  <p class="title">Pendências <span class="n"></span></p>
-  <p class="none">Nenhuma pendência aberta.</p>
-  <ul class="now"></ul>
-  <details class="waiting" hidden><summary></summary><ul></ul></details>
-  <button class="tell" type="button" data-act='{"$":"TasksTell"}' title="Suas respostas já estão salvas; o Unii as vê quando voltar a trabalhar. Este botão o chama agora." hidden>Avisar o Unii agora (<span></span>)</button>
-  <details class="closed" hidden><summary>Resolvidas recentemente</summary><ul></ul></details>
-</aside>
 <div id="menu" popover>
   <button data-go="/settings">Settings</button>
   <button data-go="/pipeline">Pipeline</button>

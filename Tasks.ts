@@ -2,7 +2,8 @@
 // =====
 // The chat's pending list ("pendências"): what Unii needs of the user (an
 // approval, a product decision, a hand step) or keeps for itself, shown
-// beside the chat (the web's aside, the terminal's footer and /p) where
+// apart from the chat (the web's Mesa, the Conversa keeping only its
+// count in the header; the terminal's footer and /p) where
 // the user resolves each: done (with one of its choices, if any, and a
 // comment), dropped, or opened again. Only the master's tools add and
 // edit them (Tools.ts task_add, task_edit, tasks); subagents ask in
@@ -46,7 +47,10 @@
 // task, Tasks.task_mark), that starts a turn with the task in focus;
 // the task then waits for Unii ("aguardando o Unii") till it replies in
 // the thread (task_reply) or the turn ends (its last reply goes there,
-// tasks_talked): then it's the user's turn ("sua vez").
+// tasks_talked): then, if it's a task of the user's (or one of Unii's
+// waiting for them), it's the user's turn ("sua vez"); one of Unii's,
+// Unii's reply is news to read, no step of the user's ("Unii
+// respondeu": TaskDeps.user_move).
 
 // The evidence round (Evidence.ts): no task is closed without a
 // concrete, documented solution. Unii closes one (task_edit, done or
@@ -2253,7 +2257,7 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const more = [
     t.detail,
     answers === "" ? "" : (t.state === "done" ? "answers: " : "draft (not sent yet): ") + answers,
-    t.thread.length === 0 ? "" : "thread (" + (t.talk === "unii" ? "waiting for your reply" : t.talk === "user" ? "the user's turn" : "quiet") + "):\n" + t.thread.slice(-VIEW_TALK).map((m) => (m.who === "user" ? "user: " : "you: ") + m.text).join("\n"),
+    t.thread.length === 0 ? "" : "thread (" + (t.talk === "unii" ? "waiting for your reply" : t.talk === "user" ? (Deps.user_move(t, all === null ? new Set<string>() : Deps.blocked_ids(all)) ? "the user's turn" : "you replied; the next step is yours, not the user's") : "quiet") + "):\n" + t.thread.slice(-VIEW_TALK).map((m) => (m.who === "user" ? "user: " : "you: ") + m.text).join("\n"),
   ].filter((x) => x !== "");
   return more.length === 0 ? head : head + "\n  " + more.join("\n").replace(/\n/g, "\n  ");
 }

@@ -295,7 +295,8 @@ test("the web: an order says so, offers Cancelar ordem, not Pode fechar; the ter
   expect(all).toContain('<span class="mark order">ordem recebida: Sim, reinicie</span>');
   expect(all).toContain(">Cancelar ordem</button>");
   expect(all).not.toContain(">Pode fechar</button>");
-  expect(all).toContain("Ordem recebida: o Unii a executa e só a fecha com a evidência da execução.");
+  expect(all).toContain('<p class="turn-line others"><strong>Ordem recebida</strong> O Unii executa “Sim, reinicie” e só fecha com a evidência da execução: nada a fazer agora. Você pode cobrar ou cancelar a ordem.</p>');
+  expect(all).toContain("<dt>Ordem recebida</dt><dd>Sim, reinicie</dd>");
   const v = View.view_new();
   v.tasks = view;
   expect(View.tasks_md(v, view[0])).toContain("aberta · **ordem recebida: Sim, reinicie**");

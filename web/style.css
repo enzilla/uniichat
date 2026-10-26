@@ -87,7 +87,7 @@ header > .brand { margin-right: auto; display: flex; align-items: center; gap: 1
 header > .brand:hover { background: none; }
 /* the logo: its shape (mark.svg, the infinity cut out) filled with the
    ink, so it follows the theme */
-.mark { display: block; width: 26px; height: 26px; background: var(--ink); -webkit-mask: url(/mark.svg) center / contain no-repeat; }
+i.mark { display: block; width: 26px; height: 26px; background: var(--ink); -webkit-mask: url(/mark.svg) center / contain no-repeat; }
 header .net { font-size: 13px; color: var(--mid); }
 
 /* Footer: the rule with the pick (a click on a part opens its menu), the
@@ -370,101 +370,75 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 .pics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .pics img { display: block; height: 120px; max-width: 100%; object-fit: cover; border-radius: 8px; border: 1px solid var(--hair); }
 #pics { width: min(var(--col), 100%); margin: 0 auto 8px; }
-/* the pending list (Tasks.ts): the header's ✓ opens it; on a wide screen,
-   while it has tasks, it stays open as an aside at the right, the column
-   centered in the rest. Each task: its id and title, a line of its ref,
-   who and date, its detail folded, its choices, a comment, its acts */
-#tasks { width: 360px; max-height: calc(100vh - 80px); overflow: auto; }
-#tasks .title { margin-top: 4px; font-weight: 600; }
-#tasks .title .n { color: var(--mid); font-weight: 400; }
-#tasks .none { color: var(--mid); font-size: 13.5px; }
-#tasks ul { margin: 0; padding: 0; list-style: none; }
-#tasks li { padding: 10px 0; border-top: 1px solid var(--hair); }
-:is(#tasks, #desk) .head { margin: 0; display: flex; gap: 8px; font-size: 14.5px; line-height: 1.4; font-weight: 500; overflow-wrap: anywhere; }
-:is(#tasks, #desk) .id { flex: none; font: 12px/20px var(--mono); color: var(--mid); }
-:is(#tasks, #desk) .meta { margin: 2px 0 4px; font-size: 12.5px; color: var(--mid); overflow-wrap: anywhere; }
-:is(#tasks, #desk) .meta:empty { display: none; }
-:is(#tasks, #desk) .ref { padding: 0 6px; border-radius: 6px; background: var(--block); }
-:is(#tasks li, #desk article).other .title, :is(#tasks li, #desk article).closed .title { color: var(--mid); }
-/* the open ones by assignee: each group's heading; a task not the
-   user's has no Concluir in relief; where one came from, a quiet badge */
-#tasks li.group { padding: 12px 0 2px; border-top: 0; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--mid); }
-#tasks li.group .n { font-weight: 400; }
-:is(#tasks, #desk) .origin { padding: 0 6px; border: 1px solid var(--hair); border-radius: 6px; font-size: 11.5px; color: var(--mid); text-decoration: none; }
-:is(#tasks, #desk) a.origin:hover { color: var(--ink); }
-:is(#tasks, #desk) details { margin: 4px 0; font-size: 13.5px; }
-:is(#tasks, #desk) summary { cursor: pointer; color: var(--mid); font-size: 13px; }
-:is(#tasks, #desk) .md { overflow-wrap: anywhere; }
-:is(#tasks, #desk) .md :is(p, ul, ol, pre, blockquote) { margin: 6px 0; font-size: 13.5px; }
-:is(#tasks, #desk) .opts, :is(#tasks, #desk) .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
-:is(#tasks, #desk) :is(.opts, .acts) button { padding: 4px 10px; border-radius: 8px; background: var(--block); font-size: 13px; }
-:is(#tasks, #desk) .opts button { border: 1px solid var(--frame); }
-:is(#tasks, #desk) :is(.opts, .acts) button:hover { background: var(--hover); }
-:is(#tasks, #desk) .acts .done { background: var(--ink); color: var(--paper); }
-:is(#tasks, #desk) .acts .done:hover { background: var(--ink); opacity: .85; }
-:is(#tasks, #desk) .acts .done.quiet { background: var(--block); color: var(--mid); }
-:is(#tasks, #desk) .acts .done.quiet:hover { background: var(--hover); opacity: 1; }
-:is(#tasks, #desk) .acts .hint { margin-right: auto; font-size: 12.5px; color: var(--mid); }
-/* the aside's items are narrow: the batch's note only on the Mesa */
-#tasks .acts .hint.told { display: none; }
+/* the pending list (Tasks.ts), on the Mesa alone (the Conversa shows
+   only the header's Mesa · N). Each task: its id and title, a line of
+   marks, whose move it is, its detail, its choices, a comment, its acts,
+   its ficha */
+#desk .head { margin: 0; display: flex; gap: 8px; font-size: 14.5px; line-height: 1.4; font-weight: 500; overflow-wrap: anywhere; }
+#desk .id { flex: none; font: 12px/20px var(--mono); color: var(--mid); }
+#desk .meta { margin: 2px 0 4px; font-size: 12.5px; color: var(--mid); overflow-wrap: anywhere; }
+#desk .meta:empty { display: none; }
+#desk .ref { padding: 0 6px; border-radius: 6px; background: var(--block); }
+#desk article:is(.other, .closed) .title { color: var(--mid); }
+#desk .origin { padding: 0 6px; border: 1px solid var(--hair); border-radius: 6px; font-size: 11.5px; color: var(--mid); text-decoration: none; }
+#desk a.origin:hover { color: var(--ink); }
+#desk details { margin: 4px 0; font-size: 13.5px; }
+#desk summary { cursor: pointer; color: var(--mid); font-size: 13px; }
+#desk .md { overflow-wrap: anywhere; }
+#desk .md :is(p, ul, ol, pre, blockquote) { margin: 6px 0; font-size: 13.5px; }
+#desk .opts, #desk .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+#desk :is(.opts, .acts) button { padding: 4px 10px; border-radius: 8px; background: var(--block); font-size: 13px; }
+#desk .opts button { border: 1px solid var(--frame); }
+#desk :is(.opts, .acts) button:hover { background: var(--hover); }
+#desk .acts .done { background: var(--ink); color: var(--paper); }
+#desk .acts .done:hover { background: var(--ink); opacity: .85; }
+#desk .acts .done.quiet { background: var(--block); color: var(--mid); }
+#desk .acts .done.quiet:hover { background: var(--hover); opacity: 1; }
+#desk .acts .hint { margin-right: auto; font-size: 12.5px; color: var(--mid); }
 /* Unii's recommendation (View.task_rec, field_rec): the choice framed in
    the accent, a tag saying it; "Aceitar as recomendadas" takes them */
-:is(#tasks, #desk) .opts button.rec { border: 2px solid var(--accent); font-weight: 600; }
-:is(#tasks, #desk) .rec-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 5px; border: 1px solid var(--accent); color: var(--accent); font-size: 11px; font-weight: 600; line-height: 1.5; vertical-align: 1px; }
-:is(#tasks, #desk) .field label.rec { font-weight: 600; }
-:is(#tasks, #desk) .rec-text { margin: 2px 0 4px; font-size: 12.5px; color: var(--mid); }
-:is(#tasks, #desk) .acts .accept { border: 2px solid var(--accent); color: var(--accent); font-weight: 600; background: var(--paper); }
+#desk .opts button.rec { border: 2px solid var(--accent); font-weight: 600; }
+#desk .rec-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 5px; border: 1px solid var(--accent); color: var(--accent); font-size: 11px; font-weight: 600; line-height: 1.5; vertical-align: 1px; }
+#desk .field label.rec { font-weight: 600; }
+#desk .rec-text { margin: 2px 0 4px; font-size: 12.5px; color: var(--mid); }
+#desk .acts .accept { border: 2px solid var(--accent); color: var(--accent); font-weight: 600; background: var(--paper); }
 /* under the pointer, inverted (accent fill, paper text): the same pair as at
    rest, 6.26:1 light and 7.21:1 dark, not accent on --hover (4.76:1 dark) */
-:is(#tasks, #desk) .acts .accept:hover { background: var(--accent); color: var(--paper); }
+#desk .acts .accept:hover { background: var(--accent); color: var(--paper); }
 /* a task of Unii's (P6): Cobrar agora, Pode fechar */
-:is(#tasks, #desk) .acts.unii .chase { background: var(--ink); color: var(--paper); }
-:is(#tasks, #desk) .acts.unii .chase:hover { background: var(--ink); opacity: .85; }
-:is(#tasks, #desk) .acts.unii .chase:disabled { background: var(--block); color: var(--mid); opacity: 1; cursor: default; }
-:is(#tasks, #desk) .note { width: 100%; margin-top: 6px; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); }
-#tasks .tell { margin: 8px 0 0; text-align: center; background: var(--block); font-size: 13.5px; }
-#tasks .closed, #tasks .waiting { margin-top: 10px; }
-#tasks .waiting summary { padding: 4px 0; }
-:is(#tasks, #desk) li.waiting .title { color: var(--mid); }
-:is(#tasks, #desk) .frees { padding: 0 6px; border-radius: 6px; background: var(--ink); color: var(--paper); font-weight: 500; }
-#tasks .closed summary { padding: 4px 0; }
+#desk .acts.unii .chase { background: var(--ink); color: var(--paper); }
+#desk .acts.unii .chase:hover { background: var(--ink); opacity: .85; }
+#desk .acts.unii .chase:disabled { background: var(--block); color: var(--mid); opacity: 1; cursor: default; }
+#desk .note { width: 100%; margin-top: 6px; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); }
+#desk .frees { padding: 0 6px; border-radius: 6px; background: var(--ink); color: var(--paper); font-weight: 500; }
 /* a task's fields (each answered apart, a draft till Concluir) and its
    thread (talk without concluding), with whose turn it is */
-:is(#tasks, #desk) .fields { margin-top: 6px; display: grid; gap: 6px; }
-:is(#tasks, #desk) .field { margin: 0; padding: 6px 8px; border: 1px solid var(--hair); border-radius: 8px; min-width: 0; }
-:is(#tasks, #desk) .field legend { padding: 0 4px; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
-:is(#tasks, #desk) .field .req { color: var(--mid); }
-:is(#tasks, #desk) .field .picks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
-:is(#tasks, #desk) .field label { display: flex; align-items: center; gap: 4px; cursor: pointer; overflow-wrap: anywhere; }
-:is(#tasks, #desk) .field textarea, :is(#tasks, #desk) .thread textarea { width: 100%; box-sizing: border-box; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); resize: vertical; }
-:is(#tasks, #desk) .talk { padding: 0 6px; border-radius: 6px; background: var(--block); }
-:is(#tasks, #desk) .talk.user { background: var(--ink); color: var(--paper); font-weight: 500; }
-:is(#tasks, #desk) .thread { margin-top: 8px; }
-:is(#tasks, #desk) .thread ol { margin: 6px 0; padding: 0; list-style: none; display: grid; gap: 6px; }
-:is(#tasks, #desk) .thread ol li { padding: 0; border: 0; font-size: 13.5px; overflow-wrap: anywhere; }
-:is(#tasks, #desk) .thread .who { display: block; font-size: 12px; color: var(--mid); }
-:is(#tasks, #desk) .thread li.user p { margin: 0; white-space: pre-wrap; }
-:is(#tasks, #desk) .thread .acts { justify-content: flex-end; }
-@media (min-width: 1100px) {
-  body.tasking { padding-right: 376px; }
-  body.tasking header .tasks { display: none; }
-  body.tasking #tasks:not(:popover-open) { display: block; }
-  body.tasking #tasks { position: fixed; inset: calc(var(--head) + 12px) 16px 16px auto; width: 344px; max-height: none; z-index: 1; box-shadow: none; }
-  body.account #tasks:not(:popover-open) { display: none; }
-  body.account { padding-right: 0; }
+#desk .fields { margin-top: 6px; display: grid; gap: 6px; }
+#desk .field { margin: 0; padding: 6px 8px; border: 1px solid var(--hair); border-radius: 8px; min-width: 0; }
+#desk .field legend { padding: 0 4px; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+#desk .field .req { color: var(--mid); }
+#desk .field .picks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
+#desk .field label { display: flex; align-items: center; gap: 4px; cursor: pointer; overflow-wrap: anywhere; }
+#desk .field textarea, #desk .thread textarea { width: 100%; box-sizing: border-box; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); resize: vertical; }
+#desk .talk { padding: 0 6px; border-radius: 6px; background: var(--block); }
+#desk .talk.user { background: var(--ink); color: var(--paper); font-weight: 500; }
+#desk .thread { margin-top: 8px; }
+#desk .thread ol { margin: 6px 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+#desk .thread ol li { padding: 0; border: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+#desk .thread .who { display: block; font-size: 12px; color: var(--mid); }
+#desk .thread li.user p { margin: 0; white-space: pre-wrap; }
+#desk .thread .acts { justify-content: flex-end; }
 }
 /* the Mesa (main.ts desk): the pending list as a screen, Conversa's
    alternative (the header's .mode switches them). The list at the left,
    searched and filtered by project, its groups each under a heading, a
    task a row (the one shown marked); the task shown whole at the right.
    On a narrow screen, one at a time: the list, or the task (← back).
-   While it shows, the chat's footer and the aside are out */
+   While it shows, the chat's footer is out */
 header > .mode { font-weight: 600; }
-/* the user's move (main.ts turn_show): the ✓ and the Mesa's switch marked */
-header > :is(.tasks, .mode).turn { background: var(--ink); color: var(--paper); border-radius: 999px; }
+/* the user's move (main.ts turn_show): the Mesa's switch marked */
+header > .mode.turn { background: var(--ink); color: var(--paper); border-radius: 999px; }
 body.desk header > .mode.turn { background: none; color: inherit; }
-body.desk #tasks, body.desk header > .tasks { display: none !important; }
-body.desk { padding-right: 0 !important; }
 body.desk footer { position: fixed; inset: auto 0 0; background: none; pointer-events: none; }
 body.desk footer > :not(#toast) { display: none; }
 #desk { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); height: calc(100dvh - var(--head)); }
@@ -490,6 +464,7 @@ body.desk footer > :not(#toast) { display: none; }
 #desk .list .tell { margin: 0 14px 10px; padding: 8px; border-radius: 8px; background: var(--block); font-size: 13.5px; }
 #desk .pane { min-height: 0; overflow: auto; padding: 20px max(24px, env(safe-area-inset-right)) 40px 28px; }
 #desk .pane > * { max-width: 720px; }
+#desk .pane > article { max-width: 1180px; }
 #desk .pane .back { display: none; margin-bottom: 10px; padding: 6px 10px; border-radius: 8px; background: var(--block); font-size: 13.5px; }
 #desk article .head { font-size: 19px; line-height: 1.35; }
 #desk article .id { font-size: 13px; line-height: 27px; }
@@ -513,24 +488,24 @@ body.desk footer > :not(#toast) { display: none; }
    links by repo#n over the detail; a choice concludes ("Concluir como");
    a required field left empty at Concluir, framed red (main.ts
    task_missing); after one resolved, the next of Agora */
-:is(#tasks, #desk) .late { padding: 0 6px; border-radius: 6px; color: var(--red); border: 1px solid currentColor; font-weight: 500; }
-:is(#tasks, #desk) .pr { padding: 0 6px; border-radius: 6px; background: var(--block); white-space: nowrap; }
+#desk .late { padding: 0 6px; border-radius: 6px; color: var(--red); border: 1px solid currentColor; font-weight: 500; }
+#desk .pr { padding: 0 6px; border-radius: 6px; background: var(--block); white-space: nowrap; }
 /* a task of someone else's: how long it stalled (under a day, quiet;
    past it, .late), the agent on it ("sem agente": framed red); the wait
    for Unii says why, so it may wrap */
-:is(#tasks, #desk) .stalled { padding: 0 6px; border-radius: 6px; border: 1px solid var(--frame); }
-:is(#tasks, #desk) .agent.none { padding: 0 6px; border-radius: 6px; color: var(--red); border: 1px dashed currentColor; }
+#desk .stalled { padding: 0 6px; border-radius: 6px; border: 1px solid var(--frame); }
+#desk .agent.none { padding: 0 6px; border-radius: 6px; color: var(--red); border: 1px dashed currentColor; }
 /* read by a screen reader only (the Mesa's wait for Unii, aria-live):
    out of sight and of the grid */
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 /* a priority declared (not normal), first in the line: high in the
    accent, framed; low, quiet. Its kind and limit ("teste, prazo 2 h"),
    quiet, on the Mesa's detail (P3, P4) */
-:is(#tasks, #desk) .prio { padding: 0 6px; border-radius: 6px; border: 1px solid currentColor; font-weight: 600; }
-:is(#tasks, #desk) .prio.high { color: var(--accent); }
-:is(#tasks, #desk) .prio.low { color: var(--mid); font-weight: 400; border-color: var(--frame); }
-:is(#tasks, #desk) .kind { color: var(--mid); }
-:is(#tasks, #desk) :is(.late, .ref, .frees, .stalled, .agent, .prio, .kind) { white-space: nowrap; }
+#desk .prio { padding: 0 6px; border-radius: 6px; border: 1px solid currentColor; font-weight: 600; }
+#desk .prio.high { color: var(--accent); }
+#desk .prio.low { color: var(--mid); font-weight: 400; border-color: var(--frame); }
+#desk .kind { color: var(--mid); }
+#desk :is(.late, .ref, .frees, .stalled, .agent, .prio, .kind) { white-space: nowrap; }
 #desk article .prs { margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
 #desk article .prs a.pr { color: var(--ink); text-decoration: none; border: 1px solid var(--frame); padding: 2px 8px; }
 #desk article .prs a.pr:hover { background: var(--hover); }
@@ -554,14 +529,14 @@ body.desk footer > :not(#toast) { display: none; }
 #desk article .check .sev.high .sev-tag { color: var(--red); border-color: currentColor; }
 #desk article .check .sev.medium .sev-tag { border-color: var(--ink); }
 #desk article .check .untested { margin: 6px 0 0; font-size: 13px; overflow-wrap: anywhere; }
-:is(#tasks, #desk) .act-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 5px; border: 1px dashed currentColor; font-size: 11px; font-weight: 600; line-height: 1.5; vertical-align: 1px; }
-:is(#tasks, #desk) .waits-for { color: var(--mid); }
+#desk .act-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 5px; border: 1px dashed currentColor; font-size: 11px; font-weight: 600; line-height: 1.5; vertical-align: 1px; }
+#desk .waits-for { color: var(--mid); }
 @media (pointer: coarse) {
   #desk article .check-head a.pr { padding: 10px 10px; }
 }
-:is(#tasks, #desk) .lead { font-size: 12.5px; color: var(--mid); }
-:is(#tasks, #desk) .field[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
-:is(#tasks, #desk) .field[aria-invalid="true"] legend::after { content: " — obrigatório"; color: var(--red); font-weight: 400; }
+#desk .lead { font-size: 12.5px; color: var(--mid); }
+#desk .field[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+#desk .field[aria-invalid="true"] legend::after { content: " — obrigatório"; color: var(--red); font-weight: 400; }
 #desk .pane .next { display: block; margin-top: 18px; padding: 10px 14px; border-radius: 10px; background: var(--block); font-size: 14px; text-align: left; }
 #desk .pane .next:hover { background: var(--hover); }
 #desk .pane .next .id { font: 12.5px var(--mono); color: var(--mid); }
@@ -586,15 +561,6 @@ body.desk footer > :not(#toast) { display: none; }
   #desk .pane .back { display: inline-block; }
   #desk .row { padding: 11px 10px; }
   #desk article .head { font-size: 17px; }
-  /* the decision in reach: the acts stick to the screen's bottom while the
-     task scrolls under them (Aceitar as recomendadas, Concluir) */
-  #desk article > .acts { position: sticky; bottom: calc(-1 * max(24px, env(safe-area-inset-bottom))); z-index: 1; flex-wrap: nowrap; margin: 8px 0 0; padding: 8px 0 calc(8px + max(24px, env(safe-area-inset-bottom))); border-top: 1px solid var(--hair); background: var(--paper); }
-  #desk article > .acts .hint.told { display: none; }
-  #desk article > .acts button { padding: 6px 10px; }
-  #desk article > .acts .accept { flex: 1 1 auto; }
-  #desk article > .acts.unii { flex-wrap: wrap; }
-  #desk article > .acts.unii .hint { flex: 1 0 100%; }
-  #desk article > .acts.unii button { flex: 1 1 0; }
 }
 @media (hover: none) {
   #desk .keys, #desk article .thread .hint { display: none; }
@@ -617,8 +583,6 @@ body.desk footer > :not(#toast) { display: none; }
   [popover] { left: 12px; right: 12px; width: auto; }
   #menu { left: auto; width: 180px; }
   #timers { width: auto; }
-  #tasks { inset: 56px 8px 8px; width: auto; max-height: none; }
-  #tasks :is(.opts, .acts) button { padding: 8px 12px; }
 }
 
 /* The account page (/account): one column of sections, each a small
@@ -788,14 +752,67 @@ body.desk footer > :not(#toast) { display: none; }
    red, dashed; overdue, .late; closed without evidence, framed red), what
    makes it done and its next step, quiet, over the detail; the evidence
    that closed it, a list */
-:is(#tasks, #desk) .mark { padding: 0 6px; border-radius: 6px; border: 1px solid var(--frame); }
-:is(#tasks, #desk) .mark.order { color: var(--accent); border-color: currentColor; font-weight: 600; }
-:is(#tasks, #desk) .mark.waiting-user { color: var(--accent); border-color: currentColor; }
-:is(#tasks, #desk) .mark.blocked { color: var(--red); border: 1px dashed currentColor; }
-:is(#tasks, #desk) .mark.unproven { color: var(--red); border-color: currentColor; font-weight: 500; white-space: nowrap; }
-:is(#tasks, #desk) :is(.done-when, .next-step) { margin: 4px 0; font-size: 13px; color: var(--mid); overflow-wrap: anywhere; }
+#desk .mark { padding: 0 6px; border-radius: 6px; border: 1px solid var(--frame); }
+#desk .mark.order { color: var(--accent); border-color: currentColor; font-weight: 600; }
+#desk .mark.waiting-user { color: var(--accent); border-color: currentColor; }
+#desk .mark.blocked { color: var(--red); border: 1px dashed currentColor; }
+#desk .mark.unproven { color: var(--red); border-color: currentColor; font-weight: 500; white-space: nowrap; }
+#desk :is(.done-when, .next-step) { margin: 4px 0; font-size: 13px; color: var(--mid); overflow-wrap: anywhere; }
 #desk article .evidence { margin: 10px 0; font-size: 14px; }
 #desk article .evidence .sub { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--mid); }
 #desk article .evidence ul { margin: 0; padding-left: 18px; }
 #desk article .evidence li { overflow-wrap: anywhere; }
 #desk article .evidence.none { color: var(--mid); }
+/* The Mesa's analysis (P66, Mesa visual): under the head, one line says
+   whose move it is and what's expected (the user's in relief, framed in
+   the accent; anyone else's quiet); then two columns, what to read and
+   decide at the left, the ficha (the task's facts, each label over its
+   value) at the right, kept in sight as the task scrolls. A middle
+   width: one column, the ficha over the rest in a grid of facts; a
+   phone: one column, the ficha after the decision and the thread, the
+   acts stuck to the screen's bottom (the columns' boxes dissolved, so
+   they stick through the whole task) */
+#desk article .turn-line { margin: 8px 0 18px; padding: 10px 14px; border: 1px solid var(--frame); border-left-width: 4px; border-radius: 10px; font-size: 14.5px; line-height: 1.45; color: var(--mid); overflow-wrap: anywhere; }
+#desk article .turn-line strong { margin-right: 4px; color: var(--ink); font-weight: 600; }
+#desk article .turn-line.user { border-color: var(--accent); color: var(--ink); }
+#desk article .turn-line.user strong { color: var(--accent); }
+#desk article .turn-line.waiting, #desk article .turn-line.unii { border-style: dashed; border-left-style: solid; }
+#desk article .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 300px); gap: 28px; align-items: start; }
+#desk article .main { min-width: 0; }
+#desk article .main > :first-child { margin-top: 0; }
+#desk article .decide { margin: 14px 0 0; padding: 12px 14px 14px; border: 1px solid var(--frame); border-radius: 12px; }
+#desk article .decide > .fields:first-child { margin-top: 0; }
+#desk article .facts { position: sticky; top: 0; padding: 12px 14px; border: 1px solid var(--hair); border-radius: 12px; background: var(--block); font-size: 13px; }
+#desk article .facts .sub { margin: 0 0 8px; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--mid); }
+#desk article .facts dl { margin: 0; display: grid; gap: 9px; }
+#desk article .facts .fact { min-width: 0; }
+#desk article .facts dt { font-size: 11.5px; color: var(--mid); }
+#desk article .facts dd { margin: 1px 0 0; overflow-wrap: anywhere; line-height: 1.4; }
+#desk article .facts .ago { color: var(--mid); }
+#desk article .facts .goto { margin: 0 4px 4px 0; }
+#desk article .facts .pr-fact { display: block; margin: 0 0 4px; }
+#desk article .facts .pr-fact a.pr { color: var(--ink); text-decoration: none; }
+#desk article .facts .pr-fact code { font: 11.5px var(--mono); color: var(--mid); }
+#desk article .facts .verdict { font-weight: 600; }
+#desk article .facts .verdict.rejected { color: var(--red); }
+#desk .talk.replied { background: none; border: 1px solid var(--frame); color: var(--mid); }
+#desk .row.now { box-shadow: inset 3px 0 0 var(--accent); }
+#desk .row.now.sel { box-shadow: inset 3px 0 0 var(--accent); }
+@media (max-width: 1240px) {
+  #desk article .cols { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  #desk article .facts { position: static; order: -1; }
+  #desk article .facts dl { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px 16px; }
+}
+@media (max-width: 760px) {
+  #desk article :is(.cols, .main, .decide) { display: contents; }
+  #desk article .facts { order: 0; margin-top: 18px; }
+  #desk article .facts dl { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  #desk article .turn-line { margin: 6px 0 12px; }
+  #desk article :is(.decide, .main) > .acts { position: sticky; bottom: calc(-1 * max(24px, env(safe-area-inset-bottom))); z-index: 1; flex-wrap: nowrap; margin: 8px 0 0; padding: 8px 0 calc(8px + max(24px, env(safe-area-inset-bottom))); border-top: 1px solid var(--hair); background: var(--paper); }
+  #desk article :is(.decide, .main) > .acts .hint.told { display: none; }
+  #desk article :is(.decide, .main) > .acts button { padding: 6px 10px; }
+  #desk article :is(.decide, .main) > .acts .accept { flex: 1 1 auto; }
+  #desk article .main > .acts.unii { flex-wrap: wrap; }
+  #desk article .main > .acts.unii .hint { flex: 1 0 100%; }
+  #desk article .main > .acts.unii button { flex: 1 1 0; }
+}
