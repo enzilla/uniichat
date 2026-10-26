@@ -1,6 +1,7 @@
 // Modal
 // =====
-// A task's window on the full screen (Term.ts): the task whole (its
+// A task's window, a drawer over the input on the full screen (Term.ts;
+// modal_drawer; modal_lines draws it whole): the task whole (its
 // state, who is responsible, where it came from, ref, what it waits for
 // and frees, its detail as Markdown), what it asks (its choices and its
 // fields, each answer kept as a draft as it is given, Tasks.task_draft)
@@ -265,6 +266,49 @@ export function modal_lines(m: Modal, v: View.View, w: number): Paint.Line[] {
     [Paint.Run("Conversa" + (t.thread.length === 0 ? "" : " (" + t.thread.length + ")"), BOLD), ...(talk === "" ? [] : [Paint.Run(" · " + talk, { ...Paint.INK, c: t.talk === "user" ? Theme.ANSI.here : Theme.ANSI.effort })])],
     ...thread,
   ];
+}
+
+// the window as a drawer over the input (Term.ts), the chat still in
+// sight above it: at most max lines, w wide. Its head (id, title, and
+// what it asks, in a line), its choices and fields (as modal_lines),
+// then, as room is left, its detail (its first lines) and its thread
+// (its last message); cut, a line says how to see the rest (/p)
+export function modal_drawer(m: Modal, v: View.View, w: number, max: number): Paint.Line[] {
+  const t = modal_task(m, v);
+  if (t === null) {
+    return [[Paint.Run("A pendência " + m.task + " não está mais na lista. Esc fecha.", Paint.DIM)]];
+  }
+  const open = t.state === "open";
+  const head = Paint.runs_wrap([Paint.Run(t.id + "  ", { ...BOLD, c: Theme.ANSI.id }), Paint.Run(Paint.text_clean(t.title), BOLD)], w, false).slice(0, 2);
+  const ask = Paint.runs_wrap([Paint.Run(View.task_ask_said(t))], w, false).slice(0, 2);
+  const said = [...(t.answer === null ? [] : ["Resposta: " + t.answer]), ...(t.note === null ? [] : ["Comentário: “" + t.note + "”"])];
+  const done = said.length === 0 ? [] : Paint.runs_wrap([Paint.Run(Paint.text_clean(said.join(" · ")), { ...Paint.INK, c: Theme.ANSI.done })], w, false).slice(0, 2);
+  row(m, t);
+  const here = (k: number) => open && rows(t).length > 1 && m.row === k;
+  const asks = rows(t).flatMap((r, k) => (r.$ === "choices" ? choices_lines(m, t, here(k), w) : field_lines(t, r.f, here(k), w)));
+  const md = t.detail === "" ? [] : Paint.rows_lines(View.entry_rows(null, "unii", t.detail), w);
+  const last = t.thread.at(-1);
+  const talk = View.task_talk_said(t);
+  const thread = last === undefined ? [] : [
+    [Paint.Run("Conversa (" + t.thread.length + ")", BOLD), ...(talk === "" ? [] : [Paint.Run(" · " + talk)]), Paint.Run(" · última: " + (last.who === "user" ? "você" : "Unii"))],
+    ...Paint.runs_wrap([Paint.Run(Paint.text_clean(last.text.replace(/\*\*|__|`/g, "")))], w, false).slice(0, 2),
+  ];
+  const top = [...head, ...ask, ...done];
+  let room = Math.max(0, max - top.length);
+  const more = (n: number) => [Paint.Run("… mais " + n + (n === 1 ? " linha" : " linhas") + " · /p " + t.id + " mostra tudo", Paint.DIM)];
+  const fit = (lines: Paint.Line[]): Paint.Line[] => {
+    if (lines.length <= room) {
+      room -= lines.length;
+      return lines;
+    }
+    const kept = room <= 1 ? [] : [...lines.slice(0, room - 1), more(lines.length - room + 1)];
+    room -= kept.length;
+    return kept;
+  };
+  const a = fit(asks);
+  const d = md.length === 0 || room < 3 ? [] : fit([[], ...md.slice(0, 4), ...(md.length > 4 ? [more(md.length - 4)] : [])]);
+  const c = thread.length === 0 || room < 3 ? [] : fit([[], ...thread]);
+  return [...top, ...a, ...d, ...c];
 }
 
 // the task's choices: a head (marked if the keys answer it), each choice

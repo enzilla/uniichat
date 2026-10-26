@@ -1071,6 +1071,28 @@ export function task_late_said(t: Task, blocked: Set<string>, now: number): stri
 // a task's kind and its limit, as the views say it ("aprovação de PR,
 // prazo 24 h"); "" for none
 export const KIND_SAID: Record<Deps.TaskKind, string> = { pr: "aprovação de PR", decision: "decisão", test: "teste", action: "ação sua", restart: "reinício", info: "informação" };
+// what a task asks of the user, in one line (the drawer's and the
+// list's, under its title): what to answer or do to conclude it
+const ASK_KIND: Record<Deps.TaskKind, string> = { pr: "Revise o PR e conclua com o seu parecer.", decision: "Decida e conclua.", test: "Teste e conclua com o resultado.", action: "Faça e marque como concluída.", restart: "Reinicie e marque como concluída.", info: "Leia e conclua." };
+export function task_ask_said(t: Task): string {
+  if (t.state !== "open") {
+    return t.state === "done" ? "Concluída." : "Descartada.";
+  }
+  if (t.assignee !== "user") {
+    return "Está com " + (t.assignee === "unii" ? "o Unii" : t.assignee) + ": você só acompanha, cobra ou libera para fechar.";
+  }
+  const asks = (t.fields ?? []).filter((f) => f.required).length;
+  const n = t.choices.length;
+  if (asks > 0) {
+    return "Responda " + (asks === 1 ? "à pergunta" : "às " + asks + " perguntas") + (n > 0 ? " e escolha uma opção." : " e conclua.");
+  }
+  if (n > 0) {
+    return "Escolha uma das " + n + " opções.";
+  }
+  const k = Deps.kind_of(t);
+  return k === null ? "Conclua quando estiver feito, ou descarte." : ASK_KIND[k];
+}
+
 export function task_kind_said(t: Task): string {
   const k = Deps.kind_of(t);
   return k === null ? "" : KIND_SAID[k] + (Number.isFinite(Deps.LATE_BY[k]) ? ", prazo " + Deps.LATE_BY[k] / 3600e3 + " h" : ", sem prazo");

@@ -116,6 +116,10 @@ const P = {
   back  : null as { a: number; top: number } | null,
   after : false,
   at    : "",
+  // the drawer over the box: the task in it (null: shut); asked: the
+  // tasks seen, so one asked anew opens it (null: none seen yet)
+  drawer: null as string | null,
+  asked : null as Set<string> | null,
 };
 
 // the Mesa and the list side by side, above this width (style.css)
@@ -261,7 +265,7 @@ function chat(): void {
     }
   };
   document.onclick = click;
-  for (const root of [$("#tasks"), $("#desk")]) {
+  for (const root of [$("#tasks"), $("#desk"), $("#drawer")]) {
     root.addEventListener("change", task_draft);
     root.addEventListener("keydown", (ev) => {
       const el = ev.target as HTMLElement;
@@ -288,6 +292,7 @@ function chat(): void {
     });
   }
   $("#tasks").addEventListener("toggle", thread_toggle, true);
+  document.addEventListener("keydown", drawer_keys);
   desk_wire();
   // a phone's keyboard up or down: the box's last line stays in sight, if
   // the caret is there; the page's bottom, if at it
@@ -469,7 +474,7 @@ function act(a: View.Act): void {
 // menu's row (Html.ts), unless it ends a selection dragged in its element
 function click(ev: MouseEvent): void {
   const target = ev.target as HTMLElement;
-  const el = target.closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], .choices > button");
+  const el = target.closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], [data-drawer], [data-drawer-close], .choices > button");
   const sel = getSelection();
   // a picture opens in the page (Viewer.ts); with a key held, as a link
   const pic = Viewer.viewer_pic(target);
@@ -507,6 +512,17 @@ function click(ev: MouseEvent): void {
     desk_back();
     return;
   }
+  if (el.dataset.drawer !== undefined) {
+    drawer_open(el.dataset.drawer);
+    if ($("#tasks").matches(":popover-open")) {
+      $("#tasks").hidePopover();
+    }
+    return;
+  }
+  if (el.dataset.drawerClose !== undefined) {
+    drawer_shut();
+    return;
+  }
   el.closest<HTMLElement>(".choices")?.hidePopover();
   const { act: a, copy: text, go: path } = el.dataset;
   const menu = el.closest("#menu") !== null;
@@ -522,7 +538,7 @@ function click(ev: MouseEvent): void {
     if (made.$ === "TaskSay" && made.text !== "") {
       act(made);
     } else if (made.$ === "TaskSay") {
-      task_say(made.task, el.closest<HTMLElement>("#tasks, #desk") ?? $("#tasks"));
+      task_say(made.task, el.closest<HTMLElement>("#tasks, #desk, #drawer") ?? $("#tasks"));
     } else if (made.$ === "TaskAccept") {
       task_accept(el, made.task);
     } else if (made.$ === "Task" && made.state === "done" && task_missing(el)) {
@@ -845,6 +861,81 @@ function tasks_bar(): void {
   }
 }
 
+// Drawer
+// ======
+// A task answered over the box, the chat in sight above it (as the
+// Mesa's pane, its parts the list's: Html.drawer_html): opened by a
+// task's title in the list, or by itself as Unii asks something new
+// (a task of the user's with choices or fields), unless one is open or
+// something is being typed; shut by ✕ or Esc, or as the task leaves
+// the list or is resolved. Never on the Mesa
+
+let DRAWN: { of: unknown; id: string | null; html: string[] } = { of: null, id: null, html: [] };
+function drawer_draw(): void {
+  drawer_asks();
+  const el = $("#drawer");
+  const t = P.drawer === null ? undefined : v.tasks.find((x) => x.id === P.drawer);
+  if (t === undefined || t.state !== "open") {
+    P.drawer = null;
+  }
+  if (P.drawer === null || t === undefined || P.mode === "desk") {
+    el.hidden = true;
+    return;
+  }
+  if (DRAWN.of !== v.tasks || DRAWN.id !== t.id) {
+    DRAWN = { of: v.tasks, id: t.id, html: Html.drawer_html(t, v.tasks) };
+  }
+  const was = keep_take(el);
+  markup(el, DRAWN.html);
+  keep_put(el, was);
+  el.hidden = false;
+}
+
+// a question asked anew (a task of the user's, open, with choices or
+// fields) opens the drawer, unless it shows one or the box has text
+function drawer_asks(): void {
+  const asks = v.tasks.filter((t) => t.state === "open" && t.assignee === "user" && (t.choices.length > 0 || (t.fields ?? []).length > 0));
+  if (P.asked === null) {
+    if (v.up) {
+      P.asked = new Set(v.tasks.map((t) => t.id));
+    }
+    return;
+  }
+  for (const t of asks) {
+    if (P.asked.has(t.id)) {
+      continue;
+    }
+    P.asked.add(t.id);
+    if (P.drawer === null && Box.box_blank()) {
+      P.drawer = t.id;
+    }
+  }
+}
+
+function drawer_open(id: string): void {
+  P.drawer = id;
+  if (P.mode === "desk") {
+    desk_mode("chat");
+  }
+  draw(true);
+  requestAnimationFrame(() => $("#drawer").querySelector<HTMLElement>(".opts button, input, textarea, button:not(.shut)")?.focus({ preventScroll: true }));
+}
+
+function drawer_shut(): void {
+  P.drawer = null;
+  draw(true);
+  Box.box_focus();
+}
+
+// Esc shuts the drawer (but over a menu, a popover or the picture)
+function drawer_keys(ev: KeyboardEvent): void {
+  if (ev.key !== "Escape" || ev.defaultPrevented || $("#drawer").hidden || document.querySelector("[popover]:popover-open, dialog[open]") !== null) {
+    return;
+  }
+  ev.preventDefault();
+  drawer_shut();
+}
+
 // Mesa
 // ====
 // The pending list as a screen (Html.desk_html), the Conversa's
@@ -928,7 +1019,13 @@ function desk_choose(): void {
   }
   P.chose = true;
   const was = sessionStorage.getItem(kept("mode"));
-  const mode = was === "desk" || was === "chat" ? was : View.desk_turn(v.tasks) ? "desk" : "chat";
+  const mode = was === "desk" ? "desk" : "chat";
+  // the user's turn: the first such task in the drawer, the chat in sight
+  // (the Mesa, a screen of its own, only by its button or m)
+  const first = View.desk_list(v.tasks).find((g) => g.group === "now")?.tasks[0];
+  if (mode === "chat" && first !== undefined && View.desk_turn(v.tasks)) {
+    P.drawer = first.id;
+  }
   if (mode !== P.mode && PAGES.includes(location.pathname) === false && location.pathname !== PIPE && location.pathname !== TREE) {
     desk_mode(mode, false);
   }
@@ -1663,6 +1760,7 @@ function bars(): void {
     $("#timers").hidePopover();
   }
   tasks_bar();
+  drawer_draw();
   const turn = View.desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
   turn_show(turn);
   $(".mode").hidden = false;

@@ -3676,8 +3676,9 @@ function tasks_html(tasks) {
 function task_when(iso) {
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
-function task_head(t) {
-  return `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
+function task_head(t, open = false) {
+  const title = open ? `<button class="title" type="button" data-drawer="${esc(t.id)}" title="Abrir na gaveta">${esc(t.title)}</button>` : `<span class="title">${esc(t.title)}</span>`;
+  return `<p class="head"><span class="id">${esc(t.id)}</span>${title}</p>`;
 }
 function task_origin(t) {
   const said = origin_said(t);
@@ -3723,7 +3724,7 @@ function task_open_html(t, tasks, desk, now = Date.now(), turn = null) {
   const talk = said === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(said)}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
   const tag = desk ? "article" : "li";
-  const head = `${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
+  const head = `${task_head(t, !desk)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
   if (!mine) {
     const asked = t.talk === "unii";
     const why = `chase-why-${desk ? "desk" : "list"}-${esc(t.id)}`;
@@ -3748,6 +3749,11 @@ function task_open_html(t, tasks, desk, now = Date.now(), turn = null) {
   const acts = `<div class="acts">${told}${accept}${task_button(t, "done", "Concluir", "done")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
   return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
 }
+function drawer_html(t, tasks) {
+  const item = t.state !== "open" ? task_closed_html(t, false) : blocked_ids(tasks).has(t.id) ? task_waiting_html(t, tasks, false) : task_open_html(t, tasks, false);
+  const body = item.replace(/^<li /, "<div ").replace(/<\/li>$/, "</div>").replace(/<button class="title" type="button" data-drawer="[^"]*" title="[^"]*">([^<]*)<\/button>/, `<span class="title">$1</span>`);
+  return [`<p class="bar"><span class="lead">Pendência</span><span class="keys"><kbd>Esc</kbd> fecha</span><button class="shut" type="button" data-drawer-close aria-label="Fechar a gaveta">✕</button></p>`, body];
+}
 function task_prs_html(t) {
   const verified = new Set((t.prs ?? []).map((p) => p.url));
   const cards = (t.prs ?? []).length === 0 ? "" : `<section class="checks" aria-label="Verificação">${t.prs.map(check_html).join("")}</section>`;
@@ -3771,7 +3777,7 @@ function task_closed_html(t, desk) {
   const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii será avisado em até 1 min"]];
   const acts = `<div class="acts">${task_button(t, "open", "Reabrir", "reopen")}</div>`;
   if (!desk) {
-    return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${acts}</li>`;
+    return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t, true)}${task_meta(t, how)}${acts}</li>`;
   }
   return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
 }
@@ -3786,7 +3792,7 @@ function task_waiting_html(t, tasks, desk) {
     ...agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]
   ];
   if (!desk) {
-    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [esc(task_waits_named(tasks, t)), ...tail])}</li>`;
+    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t, true)}${task_meta(t, [esc(task_waits_named(tasks, t)), ...tail])}</li>`;
   }
   const link = (id) => `<button class="goto" data-desk="${esc(id)}">${esc(id_whose(tasks, id))}</button>`;
   const why = `<p class="waits">Só pode ser resolvida depois de: ${and_said(waits2.map(link))}.</p>`;
@@ -5052,7 +5058,9 @@ var P = {
   gave: null,
   back: null,
   after: false,
-  at: ""
+  at: "",
+  drawer: null,
+  asked: null
 };
 var NARROW = matchMedia("(max-width: 760px)");
 function $2(sel) {
@@ -5163,7 +5171,7 @@ function chat() {
     }
   };
   document.onclick = click;
-  for (const root of [$2("#tasks"), $2("#desk")]) {
+  for (const root of [$2("#tasks"), $2("#desk"), $2("#drawer")]) {
     root.addEventListener("change", task_draft);
     root.addEventListener("keydown", (ev) => {
       const el = ev.target;
@@ -5187,6 +5195,7 @@ function chat() {
     });
   }
   $2("#tasks").addEventListener("toggle", thread_toggle, true);
+  document.addEventListener("keydown", drawer_keys);
   desk_wire();
   visualViewport.onresize = () => {
     if (box_focused() && box_caret()[0] === box_text().length) {
@@ -5329,7 +5338,7 @@ function act(a) {
 }
 function click(ev) {
   const target = ev.target;
-  const el = target.closest("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], .choices > button");
+  const el = target.closest("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], [data-drawer], [data-drawer-close], .choices > button");
   const sel = getSelection();
   const pic = viewer_pic(target);
   if (pic !== null && !(ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) && (sel === null || sel.isCollapsed)) {
@@ -5363,6 +5372,17 @@ function click(ev) {
     desk_back();
     return;
   }
+  if (el.dataset.drawer !== undefined) {
+    drawer_open(el.dataset.drawer);
+    if ($2("#tasks").matches(":popover-open")) {
+      $2("#tasks").hidePopover();
+    }
+    return;
+  }
+  if (el.dataset.drawerClose !== undefined) {
+    drawer_shut();
+    return;
+  }
   el.closest(".choices")?.hidePopover();
   const { act: a, copy: text, go: path } = el.dataset;
   const menu = el.closest("#menu") !== null;
@@ -5378,7 +5398,7 @@ function click(ev) {
     if (made.$ === "TaskSay" && made.text !== "") {
       act(made);
     } else if (made.$ === "TaskSay") {
-      task_say(made.task, el.closest("#tasks, #desk") ?? $2("#tasks"));
+      task_say(made.task, el.closest("#tasks, #desk, #drawer") ?? $2("#tasks"));
     } else if (made.$ === "TaskAccept") {
       task_accept2(el, made.task);
     } else if (made.$ === "Task" && made.state === "done" && task_missing(el)) {
@@ -5637,6 +5657,64 @@ function tasks_bar() {
     $2("#tasks").hidePopover();
   }
 }
+var DRAWN = { of: null, id: null, html: [] };
+function drawer_draw() {
+  drawer_asks();
+  const el = $2("#drawer");
+  const t = P.drawer === null ? undefined : v.tasks.find((x) => x.id === P.drawer);
+  if (t === undefined || t.state !== "open") {
+    P.drawer = null;
+  }
+  if (P.drawer === null || t === undefined || P.mode === "desk") {
+    el.hidden = true;
+    return;
+  }
+  if (DRAWN.of !== v.tasks || DRAWN.id !== t.id) {
+    DRAWN = { of: v.tasks, id: t.id, html: drawer_html(t, v.tasks) };
+  }
+  const was = keep_take(el);
+  markup(el, DRAWN.html);
+  keep_put(el, was);
+  el.hidden = false;
+}
+function drawer_asks() {
+  const asks = v.tasks.filter((t) => t.state === "open" && t.assignee === "user" && (t.choices.length > 0 || (t.fields ?? []).length > 0));
+  if (P.asked === null) {
+    if (v.up) {
+      P.asked = new Set(v.tasks.map((t) => t.id));
+    }
+    return;
+  }
+  for (const t of asks) {
+    if (P.asked.has(t.id)) {
+      continue;
+    }
+    P.asked.add(t.id);
+    if (P.drawer === null && box_blank()) {
+      P.drawer = t.id;
+    }
+  }
+}
+function drawer_open(id) {
+  P.drawer = id;
+  if (P.mode === "desk") {
+    desk_mode("chat");
+  }
+  draw2(true);
+  requestAnimationFrame(() => $2("#drawer").querySelector(".opts button, input, textarea, button:not(.shut)")?.focus({ preventScroll: true }));
+}
+function drawer_shut() {
+  P.drawer = null;
+  draw2(true);
+  box_focus();
+}
+function drawer_keys(ev) {
+  if (ev.key !== "Escape" || ev.defaultPrevented || $2("#drawer").hidden || document.querySelector("[popover]:popover-open, dialog[open]") !== null) {
+    return;
+  }
+  ev.preventDefault();
+  drawer_shut();
+}
 function desk_wire() {
   const q = $2("#desk .q");
   const ref = $2("#desk .ref");
@@ -5693,7 +5771,11 @@ function desk_choose() {
   }
   P.chose = true;
   const was = sessionStorage.getItem(kept("mode"));
-  const mode = was === "desk" || was === "chat" ? was : desk_turn(v.tasks) ? "desk" : "chat";
+  const mode = was === "desk" ? "desk" : "chat";
+  const first = desk_list(v.tasks).find((g) => g.group === "now")?.tasks[0];
+  if (mode === "chat" && first !== undefined && desk_turn(v.tasks)) {
+    P.drawer = first.id;
+  }
   if (mode !== P.mode && PAGES.includes(location.pathname) === false && location.pathname !== PIPE2 && location.pathname !== TREE) {
     desk_mode(mode, false);
   }
@@ -6297,6 +6379,7 @@ function bars() {
     $2("#timers").hidePopover();
   }
   tasks_bar();
+  drawer_draw();
   const turn = desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
   turn_show(turn);
   $2(".mode").hidden = false;

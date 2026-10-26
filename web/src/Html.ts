@@ -233,8 +233,11 @@ function task_when(iso: string): string {
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-function task_head(t: Task): string {
-  return `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
+// a task's head: its id and title (in the list beside the chat, a
+// button that opens it in the drawer over the box)
+function task_head(t: Task, open = false): string {
+  const title = open ? `<button class="title" type="button" data-drawer="${esc(t.id)}" title="Abrir na gaveta">${esc(t.title)}</button>` : `<span class="title">${esc(t.title)}</span>`;
+  return `<p class="head"><span class="id">${esc(t.id)}</span>${title}</p>`;
 }
 
 // where a task came from, a badge (a link to its source, if it has one)
@@ -292,7 +295,7 @@ function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(),
   const talk = said === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(said)}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
   const tag = desk ? "article" : "li";
-  const head = `${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
+  const head = `${task_head(t, !desk)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
   // a task of Unii's (P6): only "Cobrar agora" (a message in its thread,
   // a turn) and "Pode fechar" (done; Unii told as of any resolution)
   if (!mine) {
@@ -324,6 +327,14 @@ function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(),
   const told = `<span class="hint told">${orders ? `As opções marcadas “${esc(View.ACT_SAID)}” avisam o Unii na hora; as demais, em até 1 min.` : "O Unii é avisado sozinho em até 1 min."}</span>`;
   const acts = `<div class="acts">${told}${accept}${task_button(t, "done", "Concluir", "done")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
   return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
+}
+
+// the drawer over the box (main.ts drawer_draw): its bar (what it is,
+// Esc, ✕), then the task as the list has it, its title plain
+export function drawer_html(t: Task, tasks: Task[]): string[] {
+  const item = t.state !== "open" ? task_closed_html(t, false) : Deps.blocked_ids(tasks).has(t.id) ? task_waiting_html(t, tasks, false) : task_open_html(t, tasks, false);
+  const body = item.replace(/^<li /, "<div ").replace(/<\/li>$/, "</div>").replace(/<button class="title" type="button" data-drawer="[^"]*" title="[^"]*">([^<]*)<\/button>/, `<span class="title">$1</span>`);
+  return [`<p class="bar"><span class="lead">Pendência</span><span class="keys"><kbd>Esc</kbd> fecha</span><button class="shut" type="button" data-drawer-close aria-label="Fechar a gaveta">✕</button></p>`, body];
 }
 
 // the pull requests a task points to: those verified (prs, R5) each a
@@ -360,7 +371,7 @@ function task_closed_html(t: Task, desk: boolean): string {
   const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii será avisado em até 1 min"])];
   const acts = `<div class="acts">${task_button(t, "open", "Reabrir", "reopen")}</div>`;
   if (!desk) {
-    return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${acts}</li>`;
+    return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t, true)}${task_meta(t, how)}${acts}</li>`;
   }
   return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
 }
@@ -379,7 +390,7 @@ function task_waiting_html(t: Task, tasks: Task[], desk: boolean): string {
     ...(agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]),
   ];
   if (!desk) {
-    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [esc(View.task_waits_named(tasks, t)), ...tail])}</li>`;
+    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t, true)}${task_meta(t, [esc(View.task_waits_named(tasks, t)), ...tail])}</li>`;
   }
   const link = (id: string) => `<button class="goto" data-desk="${esc(id)}">${esc(View.id_whose(tasks, id))}</button>`;
   const why = `<p class="waits">Só pode ser resolvida depois de: ${View.and_said(waits.map(link))}.</p>`;

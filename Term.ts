@@ -547,6 +547,13 @@ function term_modal(t: Term, m: Modal.Modal, key: string): boolean {
   return true;
 }
 
+// the drawer of a task's window, w wide, at most max lines: a rule
+// naming it and its keys, then the window (Modal.modal_drawer)
+function term_drawer_lines(t: Term, m: Modal.Modal, w: number, max: number): Paint.Line[] {
+  const head = Paint.rule_text("Pendência · Esc fecha", w, Paint.DIM);
+  return [head, ...Modal.modal_drawer(m, t.v, w, max - 1)];
+}
+
 // Ctrl+P: the keys to the pending list, or back to the input
 function term_focus(t: Term): void {
   const p = t.panel;
@@ -1424,12 +1431,15 @@ function term_frame(t: Term, p: Panel.Panel): void {
   const input = t.scr.off ? null : Screen.screen_input(t.scr, fw, Math.max(1, Math.floor(h / 3)), hint);
   const under = t.scr.off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", fw, OFFLINE)];
   const tasks = Panel.panel_width(w) === 0 ? term_tasks_line(t.v, fw) : [];
-  const menu  = t.chooser !== null ? term_chooser_lines(t, fw) : term_menu_lines(t, fw);
-  const foot  = term_inset([...menu, Paint.rule_line(t.v, fw), ...(input?.lines ?? []), ...under, ...tasks, Paint.tabs_line(t.v, fw)]);
+  const rest  = [Paint.rule_line(t.v, fw), ...(input?.lines ?? []), ...under, ...tasks, Paint.tabs_line(t.v, fw)];
+  // a task's window: a drawer over the input, the chat above it (at most
+  // half the screen, the rest of the footer kept)
+  const menu  = m !== null ? term_drawer_lines(t, m, fw, Math.max(4, Math.floor(h / 2) - rest.length)) : t.chooser !== null ? term_chooser_lines(t, fw) : term_menu_lines(t, fw);
+  const foot  = term_inset([...menu, ...rest]);
   // ponytail: the whole chat laid out at each paint (a frame apart while
   // it streams); bounded by the memory's view, cache by its parts if a
   // long one lags
-  const body  = m !== null ? term_inset([[], ...Modal.modal_lines(m, t.v, term_inner())]) : term_lines([...View.view_body(t.v), ...View.view_tail(t.v)]);
+  const body  = term_lines([...View.view_body(t.v), ...View.view_tail(t.v)]);
   const lines = Panel.panel_frame(p, t.v, body, foot, w, h);
   const at    = input === null || off ? null : { row: h - foot.length + menu.length + 1 + input.at.row, col: input.at.col + MARGIN };
   Screen.screen_frame(t.scr, lines, at);

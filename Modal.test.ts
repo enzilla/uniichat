@@ -160,3 +160,21 @@ test("the pending list opens a task's window by Enter, o or a click on its title
   const [row, hit] = [...p.hits].find(([, h]) => h.id === "P2" && h.box > 0)!;
   expect(Panel.panel_mouse(p, v, "Mouse:0:" + (hit.box + 4) + ":" + row + ":M")).toEqual({ $: "open", task: "P2" });
 });
+
+test("as a drawer it says what it asks in a line and fits its room: the choices first, the detail and the thread as room is left", () => {
+  const v = view();
+  const one = Modal.modal_drawer(Modal.modal_new("P1"), v, 70, 12);
+  expect(one.length).toBeLessThanOrEqual(12);
+  expect(text(one)).toContain("P1  Qual ambiente usar?");
+  expect(text(one)).toContain("Escolha uma das 2 opções.");
+  expect(text(one)).toContain("1  hom");
+  expect(text(one)).toContain("teste de carga");
+  const four = Modal.modal_drawer(Modal.modal_new("P4"), v, 70, 40);
+  expect(text(four)).toContain("Responda às 2 perguntas e conclua.");
+  expect(text(four)).toContain("Conversa (2)");
+  expect(text(four)).toContain("Depois das");
+  const small = Modal.modal_drawer(Modal.modal_new("P4"), v, 70, 8);
+  expect(small.length).toBeLessThanOrEqual(8);
+  expect(text(small)).toContain("/p P4 mostra tudo");
+  expect(text(small)).not.toContain("Conversa");
+});
