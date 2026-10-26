@@ -944,7 +944,7 @@ export function task_turn_said(t: Task, tasks: Task[], now: number, turn: Turn |
   }
   if (t.talk === "unii") {
     const ago = ago_said(task_talk_since(t), now);
-    return { cls: "unii", lead: "Aguardando o Unii", text: "Você escreveu na conversa" + (ago === "" ? "" : " " + ago) + " e o Unii ainda não respondeu" + (turn === null ? "" : " (" + turn_why(turn) + ")") + ". Nada a fazer até ele responder." };
+    return { cls: "unii", lead: "Aguardando o Unii", text: "Você escreveu na conversa" + (ago === "" ? "" : " " + ago) + " e o Unii ainda não respondeu" + (turn === null ? "" : " (" + turn_why(turn) + ")") + ". A resposta chega aqui quando ele responder nesta conversa ou quando o turno dele terminar; se o servidor reiniciar sem turno a retomar, ela volta marcada “Unii não respondeu”. Nada a fazer até lá." };
   }
   // waiting for something outside the list (P85): a wait, not the user's move
   if (Deps.outside_wait(t)) {
@@ -960,7 +960,8 @@ export function task_turn_said(t: Task, tasks: Task[], now: number, turn: Turn |
       return { cls: "user", lead: "Sua vez", text: missed + "O Unii aguarda você: " + (t.status_why ?? "algo seu") + ". Responda na conversa desta pendência." };
     }
     const left = task_fields_left(t);
-    const fill = left.length === 0 ? "" : "preencha " + (left.length === 1 ? "o campo obrigatório “" + left[0].label + "”" : left.length + " campos obrigatórios") + " e ";
+    const one = left.length === 1 ? left[0] : undefined;
+    const fill = left.length === 0 ? "" : "preencha " + (one !== undefined ? "o campo obrigatório “" + one.label + "”" : left.length + " campos obrigatórios") + " e ";
     const rec = task_rec(t);
     const pick = t.choices.length === 0 ? "conclua ou descarte" : t.choices.length === 1 ? "conclua como “" + t.choices[0] + "” ou descarte" : "escolha uma das " + t.choices.length + " opções" + (rec === null ? "" : " (recomendada: “" + rec + "”)");
     const late = task_late_said(t, blocked, now);

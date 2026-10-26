@@ -133,6 +133,9 @@ const PID        = config.DIR + "/server.pid";
 const CHAT       = config.DIR + "/chat";
 // a failed turn's note's start (Chat.failed; Chat.talked reads its why)
 const NO_REPLY   = "No reply: ";
+// why a task's thread was given back as the server started with no turn
+// to come (Chat.orphans)
+export const RESTARTED = "o servidor reiniciou antes da resposta";
 // a turn's head
 const HEAD       = "Turn: the user's new message:\n\n";
 // a goal's check (Chat.check): its own system prompt, asked after the
@@ -279,8 +282,12 @@ export namespace Chat {
     }
     Memory.pump(mem);
     Chat.progress(chat);
+    // Unii's turn cut by the stop, resumed: its end answers the threads
+    // that wait for Unii (Chat.talked)
+    const cut = mem.work.includes(TURN);
     Chat.resume(chat, mem.work).finally(() => Chat.change(chat)).catch((err) => console.error("unii: resuming the chat: " + (err?.message ?? err)));
-    Chat.back(chat);
+    const back = Chat.back(chat);
+    Chat.orphans(chat, cut || back);
     // AGENTES.md as the server starts: an agent the server before left at
     // work, and not resumed, is said cut (after the boot, not in its way)
     setTimeout(() => Chat.agents_md(chat), 0);
@@ -297,10 +304,10 @@ export namespace Chat {
   // server starts: said in the chat (after, as it was before), and what
   // Unii gave to resume, a message that starts its turn, as a timer's
   // does, so work goes on with no prompt of the user's
-  export function back(chat: Chat): void {
+  export function back(chat: Chat): boolean {
     const mark = Restart.mark_take(chat.mem.dir);
     if (mark === null) {
-      return;
+      return false;
     }
     Chat.note(chat, Restart.said_after(mark));
     // the order it executed (a task of kind restart the user picked "Sim,
@@ -320,6 +327,27 @@ export namespace Chat {
       }
     }
     Chat.hold(chat, () => Chat.take(chat, { ...Chat.push(chat, null, "work", Restart.resume_said(mark)), origin: "timer" }));
+    return true;
+  }
+
+  // the server starts with no turn to come (none cut to resume, no
+  // restart's message to take, none running or waiting: coming false):
+  // a task whose thread waits for Unii (the user wrote there, and the
+  // server stopped before a turn ended) would wait for whatever turn
+  // came next, if any; it's given back at once as a turn with no reply
+  // is (Tasks.tasks_talked, RESTARTED): "Unii não respondeu" in the
+  // views, the move whose it was, and Unii's next turn told the user's
+  // message is still unanswered (Tasks.task_line). With a turn to come,
+  // its end does it (Chat.talked). The tasks given back
+  export function orphans(chat: Chat, coming: boolean): Tasks.Task[] {
+    if (coming || chat.busy || chat.wait.length > 0) {
+      return [];
+    }
+    const s = Tasks.tasks_load(chat.mem.dir);
+    if (!s.tasks.some((t) => t.talk === "unii")) {
+      return [];
+    }
+    return Tasks.tasks_talked(s, null, Date.now(), RESTARTED);
   }
 
   // the process restarted, as the restart tool asked (Restart.DELAY on,

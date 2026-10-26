@@ -129,7 +129,7 @@ test("web: the list by group, the one shown marked; its detail whole, with field
   expect(d).toContain('data-keep="say"');
   expect(d).toContain(">Concluir</button>");
   // whose move it is, said first; the ficha beside, in its own column
-  expect(d).toContain('<p class="turn-line unii"><strong>Aguardando o Unii</strong> Você escreveu na conversa agora e o Unii ainda não respondeu. Nada a fazer até ele responder.</p>');
+  expect(d).toContain('<p class="turn-line unii"><strong>Aguardando o Unii</strong> Você escreveu na conversa agora e o Unii ainda não respondeu. A resposta chega aqui quando ele responder nesta conversa ou quando o turno dele terminar; se o servidor reiniciar sem turno a retomar, ela volta marcada “Unii não respondeu”. Nada a fazer até lá.</p>');
   expect(d).toContain('<div class="cols"><div class="main">');
   expect(d).toContain('<aside class="facts" aria-label="Ficha da pendência P4"><p class="sub">Ficha</p><dl>');
   expect(d).toContain("<dt>Frente</dt><dd><span class=\"ref\">uniichat</span></dd>");

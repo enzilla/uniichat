@@ -32,7 +32,12 @@ Features
   without resolving it (your message is a message of the chat, marked
   `[Pendência P7: …]`; it shows "aguardando o Unii", then "sua vez" if
   the next step is yours, or "Unii respondeu" on one of Unii's; "Unii
-  não respondeu" if the turn ended with no reply). A task that waits for
+  não respondeu" if the turn ended with no reply). "Aguardando o Unii"
+  says how long and why (a turn running, a usage limit, none), and that
+  the reply comes when Unii answers there or its turn ends; a server
+  that starts with no turn to resume gives such a task back at once,
+  "Unii não respondeu (o servidor reiniciou antes da resposta)", so it
+  never waits for a turn that may not come. A task that waits for
   something outside the list ("aguarda: CI do #42") is a wait, not your
   move: out of Agora, no push, not counted, never late, till the wait
   is removed.
