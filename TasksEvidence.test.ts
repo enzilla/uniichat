@@ -667,3 +667,31 @@ test("a restart read the other way round (SmoothDove): now only with a plain sig
     expect([now, T.restart_now(now)]).toEqual([now, true]);
   }
 });
+
+test("a restart with a doubt, an ordinal or a loose digit (PeachCow): a doubt or a loose digit stays open; an ordinal or a count before a noun is now", () => {
+  // R1: a doubt beats a word of now
+  for (const later of ["Reinicie agora, quem sabe", "Reinicie agora, talvez", "Talvez reinicie", "Reinicie agora, quiçá", "Restart now, maybe", "Perhaps restart now", "Reinicie quem sabe"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // R2: "segunda" before a counted noun is no day; "a uma," followed by a word of now is no hour
+  for (const now of ["Reinicie a segunda instância", "Reinicie a segunda instância agora", "Reinicie a primeira instância", "Reinicie a uma, agora", "Reinicie a 1, agora", "Reinicie a uma, já"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  for (const later of ["Reinicie a segunda", "Reinicie na segunda", "Reinicie segunda-feira", "Reinicie a uma, depois", "Reinicie a uma.", "Reinicie à uma, agora", "Reinicie a uma"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // R3: a digit is plain only as a count
+  for (const later of ["Reinicie o 2º", "Reinicie o 2", "Reinicie 2", "Reinicie a 3"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  for (const now of ["Reinicie a 3 instâncias", "Reinicie a 1 instância", "Reinicie a 2 instâncias", "Restart the 2 instances", "Reinicie o 8788", "Reinicie o 2º agora"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // the cases kept: a hard wait, a wait denied, the hour by its accent
+  for (const later of ["Reinicie às 22h", "Reinicie depois", "Reinicie à uma", "Reinicie a 1h", "Reinicie a uma e meia", "Reinicie de manhã"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  for (const now of ["Reinicie sem esperar", "Reinicie agora", "Reinicie, não espere", "Pode reiniciar", "Sim, reinicie"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+});

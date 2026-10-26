@@ -1047,8 +1047,15 @@ export function restart_now(answer: string | null): boolean {
   if (RESTART_NOW.test(b)) {
     return true;
   }
-  return b.split(/[^a-z0-9']+/).filter((w) => w !== "").every((w) => RESTART_PLAIN.has(w) || /^(?:reinici|restart)/.test(w) || /^\d{1,2}$/.test(w));
+  // a number is plain only as a count ("a 3 instâncias"): a digit on its
+  // own ("o 2º", "Reinicie 2") may be a date or an order: open (PeachCow)
+  const words = b.split(/[^a-z0-9']+/).filter((w) => w !== "");
+  return words.every((w, k) => RESTART_PLAIN.has(w) || /^(?:reinici|restart)/.test(w) || (/^\d{1,2}$/.test(w) && RESTART_COUNTED.has(words[k + 1] ?? "")));
 }
+
+// the nouns a count goes with (already without accents, lower): "a 3
+// instâncias", "a segunda instância", "the 2 instances"
+const RESTART_COUNTED = new Set(["instancia", "instancias", "instance", "instances", "vez", "vezes", "time", "times", "servidor", "servidores", "server", "servers", "servico", "servicos", "worker", "workers", "processo", "processos", "process", "processes"]);
 
 // a wait denied (already without accents, lower): "sem esperar", "não
 // espere", "nem aguarde", "don't wait", "without waiting". Limits: "Reinicie
@@ -1075,6 +1082,9 @@ const RESTART_PLAIN = new Set([
   "e", "and", "avise", "avisa", "avisar", "me", "notify", "tell", "let", "know",
   "o", "a", "os", "as", "the", "it", "this", "isso", "ele", "serve", "servidor", "server", "service", "servico", "unii", "chat", "8788",
   "instancia", "instancias", "instance", "instances", "um", "uma", "dois", "duas", "tres", "one", "two", "three", "tudo", "all", "both", "ambos", "ambas", "de", "novo", "again",
+  // an ordinal before a counted noun ("a segunda instância"): RESTART_WAIT
+  // reads "segunda" as a day unless such a noun follows it
+  "primeira", "primeiro", "segunda", "segundo", "terceira", "terceiro", "first", "second", "third",
 ]);
 
 // what puts off a restart asked, even beside "agora" (already without
@@ -1095,15 +1105,17 @@ const RESTART_WAIT: RegExp[] = [
   /\b(?:termin\w*|acab\w*|conclu\w*|finaliz\w*|finish\w*|complet\w*|esper\w*|aguard\w*|wait\w*)\b/,
   // a day: "na sexta", "segunda-feira", "dia 27", "27/10", "no fim de
   // semana", "monday", "weekend"
-  /\b(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|feira|semana|mes|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|week|month)\b|\bdia (?:\d|primeiro|um|dois|tres)|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)\b|\bon the\b/,
+  /\bsegunda(?! (?:instancia|instancias|vez|vezes|servidor|servico|worker|processo)\b)|\b(?:terca|quarta|quinta|sexta|sabado|domingo|feira|semana|mes|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|week|month)\b|\bdia (?:\d|primeiro|um|dois|tres)|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)\b|\bon the\b/,
   // a time in words: "ao meio-dia", "à meia-noite", "às dez", "às três e
   // meia", "a uma" at the end, "a 1h", "a 1 hora", "at noon". "a uma
   // instância", "a 2 instâncias" are counts, no hour ("à uma":
   // RESTART_AT_HOUR). A limit: "as" is also the article ("Reinicie as
   // duas instâncias" stays open: the safe side)
-  /\bmei[oa][- ](?:dia|noite)\b|\ba (?:uma|\d{1,2})(?= ?h\b| ?hora| e meia|\s*[,.;:!?]|\s*$)|\bas (?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)\b|\b(?:noon|midnight|o'?clock)\b|\bat (?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
+  /\bmei[oa][- ](?:dia|noite)\b|\ba (?:uma|\d{1,2})(?= ?h\b| ?hora| e meia|\s*[,.;:!?](?!\s*(?:agora|ja|now|imediatamente|immediately)\b)|\s*$)|\bas (?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)\b|\b(?:noon|midnight|o'?clock)\b|\bat (?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
   // a condition: "se puder", "se der", "se possível", "if you can"
   /\bse (?:puder|pude\w*|der|possivel|conseguir|for possivel)\b|\bif (?:you can|possible)\b/,
+  // a doubt: "agora, quem sabe", "talvez", "quiçá", "maybe" (PeachCow)
+  /\b(?:quem sabe|talvez|quica|porventura|maybe|perhaps|possibly)\b/,
 ];
 
 export const RESTART_DETAIL = "Política (P8): o Unii reinicia sozinho quando nenhum agente está rodando, avisando antes e depois. Esta pendência só existe porque há agentes rodando agora, e o reinício os interrompe.";
