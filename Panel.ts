@@ -33,6 +33,7 @@ export type Panel = {
   lines  : number;
   extra  : Paint.Line[];
   hits   : Map<number, { id: string; box: number }>;
+  cold   : boolean; // "Antigas" unfolded (View.task_cold)
 };
 
 // what a key in the list asks of Term.ts: an act, a text put in the input
@@ -72,7 +73,7 @@ const KEYS_OFF = ["Ctrl+P: pendências"];
 // =====
 
 export function panel_new(): Panel {
-  return { focus: false, sel: null, scroll: 0, most: 0, lines: 0, extra: [], hits: new Map() };
+  return { focus: false, sel: null, scroll: 0, most: 0, lines: 0, extra: [], hits: new Map(), cold: false };
 }
 
 // the column's width for a screen w wide (0: none)
@@ -88,30 +89,48 @@ export function panel_extra(p: Panel, lines: Paint.Line[]): void {
 
 // the tasks the keys move along: the open ones the user can resolve now,
 // then those closed lately (those that wait for others can't be)
-function panel_items(v: View.View): Task[] {
+function panel_items(v: View.View, p: { cold: boolean } = { cold: false }): Task[] {
   const { open, closed } = View.view_tasks(v);
-  const [mine, others] = panel_split(open);
-  return [...mine, ...others, ...closed];
+  const [mine, others, cold] = panel_split(open);
+  return [...mine, ...others, ...(p.cold ? cold : []), ...closed];
 }
 
 // the open tasks: the user's, then the others' (Unii's, an agent's),
-// each list under its own heading
-function panel_split(open: Task[]): [Task[], Task[]] {
-  return [open.filter((t) => t.assignee === "user"), open.filter((t) => t.assignee !== "user")];
+// each list under its own heading; then the old ones (View.task_cold),
+// folded under "Antigas"
+function panel_split(open: Task[], now = CLOCK()): [Task[], Task[], Task[]] {
+  const fresh = open.filter((t) => !View.task_cold(t, now));
+  return [fresh.filter((t) => t.assignee === "user"), fresh.filter((t) => t.assignee !== "user"), open.filter((t) => View.task_cold(t, now))];
 }
 
-// all the keys move along: those tasks, then the agents at work (each
-// "@" and its name)
-function panel_ids(v: View.View): string[] {
-  return [...panel_items(v).map((t) => t.id), ...v.agents.map((name) => AGENT + name)];
+// the time a task's age is told by (tests set theirs)
+let CLOCK = () => Date.now();
+export function panel_clock(f: () => number): void {
+  CLOCK = f;
+}
+
+// "Antigas" as an item the keys reach (Enter or space unfolds or folds it)
+const COLD = "#antigas";
+
+// all the keys move along: those tasks ("Antigas" before the old ones),
+// then the agents at work (each "@" and its name)
+function panel_ids(v: View.View, p: { cold: boolean } = { cold: false }): string[] {
+  const items = panel_items(v, p);
+  const cold = panel_split(View.view_tasks(v).open)[2];
+  const at = items.findIndex((t) => t.state !== "open" || View.task_cold(t, CLOCK()));
+  const ids = items.map((t) => t.id);
+  if (cold.length > 0) {
+    ids.splice(at < 0 ? ids.length : at, 0, COLD);
+  }
+  return [...ids, ...v.agents.map((name) => AGENT + name)];
 }
 
 // the item picked, kept to one still listed (none: the first); its task,
 // if it is one
 function panel_pick(p: Panel, v: View.View): Task | null {
-  const ids = panel_ids(v);
+  const ids = panel_ids(v, p);
   p.sel = p.sel !== null && ids.includes(p.sel) ? p.sel : ids[0] ?? null;
-  return panel_items(v).find((t) => t.id === p.sel) ?? null;
+  return panel_items(v, p).find((t) => t.id === p.sel) ?? null;
 }
 
 // the questions Unii asked since seen: the open tasks of the user's with
@@ -129,8 +148,8 @@ export function panel_asks(v: View.View, seen: Set<string>): Task[] {
 // move; undefined: not the list's)
 export function panel_key(p: Panel, v: View.View, key: string): Out | null | undefined {
   const t = panel_pick(p, v);
-  const items = panel_items(v);
-  const ids = panel_ids(v);
+  const items = panel_items(v, p);
+  const ids = panel_ids(v, p);
   const at = t === null ? -1 : items.indexOf(t);
   const here = p.sel === null ? -1 : ids.indexOf(p.sel);
   switch (key) {
@@ -147,6 +166,13 @@ export function panel_key(p: Panel, v: View.View, key: string): Out | null | und
     case "a": {
       return { $: "act", act: { $: "TasksTell" } };
     }
+  }
+  if (p.sel === COLD) {
+    if (key === "Enter" || key === " " || key === "o") {
+      p.cold = !p.cold;
+      return null;
+    }
+    return undefined;
   }
   if (p.sel?.startsWith(AGENT)) {
     return key === "Enter" || key === " " ? { $: "act", act: { $: "Goto", name: p.sel.slice(AGENT.length) } } : undefined;
@@ -207,7 +233,7 @@ export function panel_mouse(p: Panel, v: View.View, key: string): Out | null {
   }
   p.sel = hit.id;
   p.focus = true;
-  return Number(col) <= hit.box || hit.id.startsWith(AGENT) ? panel_key(p, v, " ") ?? null : { $: "open", task: hit.id };
+  return Number(col) <= hit.box || hit.id.startsWith(AGENT) || hit.id === COLD ? panel_key(p, v, " ") ?? null : { $: "open", task: hit.id };
 }
 
 // the chat scrolled by n lines (up: more), within what there is
@@ -253,7 +279,7 @@ function panel_lines(p: Panel, v: View.View, w: number, h: number, x: number): P
   const head  = [Paint.Run("Pendências", BOLD), Paint.Run(open.length === 0 ? "" : " (" + open.length + ")", Paint.DIM)];
   const body: { line: Paint.Line; id?: string; box?: boolean }[] = [];
   const add   = (t: Task, more: string[]) => task_lines(v, t, t.id === sel?.id ? (p.focus ? "▸" : "›") : " ", more, w).forEach((line, k) => body.push({ line, id: t.id, box: k === 0 }));
-  const [mine, others] = panel_split(open);
+  const [mine, others, cold] = panel_split(open);
   const group = (title: string, ts: Task[], first: boolean) => {
     if (ts.length === 0) {
       return;
@@ -263,6 +289,13 @@ function panel_lines(p: Panel, v: View.View, w: number, h: number, x: number): P
   };
   group("Suas", mine, true);
   group("Com o Unii", others, mine.length === 0);
+  if (cold.length > 0) {
+    const mark = sel.id === COLD ? (p.focus ? "▸" : "›") : " ";
+    body.push({ line: blank }, { line: [Paint.Run(mark + " " + (p.cold ? "▾" : "▸") + " ", BOLD), Paint.Run("Antigas", BOLD), Paint.Run(" (" + cold.length + ")" + (p.cold ? " · sem mudança há 7 dias" : " · Enter mostra"), Paint.DIM)], id: COLD });
+    if (p.cold) {
+      cold.forEach((t) => add(t, ["sem mudança há " + Math.floor((CLOCK() - Date.parse(t.changed)) / 86400e3) + " dias"]));
+    }
+  }
   if (open.length === 0) {
     body.push({ line: [Paint.Run("Nenhuma pendência aberta.", Paint.DIM)] });
   }

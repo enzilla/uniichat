@@ -2384,6 +2384,14 @@ function view_act(v, act) {
     }
   }
 }
+var COLD = 7 * 86400000;
+function task_cold(t, now = Date.now()) {
+  if (t.state !== "open") {
+    return false;
+  }
+  const last = Math.max(Date.parse(t.changed), ...(t.thread ?? []).map((x) => Date.parse(x.at)).filter((n) => Number.isFinite(n)));
+  return now - last >= COLD;
+}
 function task_waits_said(t, waits2) {
   return "A pendência " + t.id + " aguarda " + waits2.join(", ") + ": resolva " + (waits2.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
 }
@@ -2469,6 +2477,7 @@ var DESK = [
   ["now", "Agora"],
   ["unii", "Aguardando o Unii"],
   ["others", "Em andamento"],
+  ["old", "Antigas (sem mudança há 7 dias)"],
   ["waiting", "Aguardando outras pendências"],
   ["closed", "Resolvidas recentemente"]
 ];
@@ -2505,12 +2514,16 @@ function desk_match(t, q, ref) {
   const hay = desk_fold([t.id, t.title, t.detail, t.ref ?? "", t.assignee, ...(t.fields ?? []).map((f) => f.label), ...(t.thread ?? []).map((m) => m.text)].join(" "));
   return words.every((w) => hay.includes(w));
 }
-function desk_list(tasks, q = "", ref = "") {
+function desk_list(tasks, q = "", ref = "", now = null) {
   const blocked2 = blocked_ids(tasks);
   const shown = tasks.filter((t) => desk_match(t, q, ref));
   const order = now_order(tasks);
+  const of_group = (t) => {
+    const g = desk_group(t, blocked2);
+    return now !== null && (g === "now" || g === "unii" || g === "others") && task_cold(t, now) ? "old" : g;
+  };
   return DESK.map(([group, label]) => {
-    const of = shown.filter((t) => desk_group(t, blocked2) === group);
+    const of = shown.filter((t) => of_group(t) === group);
     return { group, label, tasks: group === "now" ? [...of].sort(order) : of };
   }).filter((g) => g.tasks.length > 0);
 }
@@ -3708,15 +3721,17 @@ function timers_html(timers) {
     return `<li data-id="${esc(t.id)}"><span class="when">${esc(timer_when(t))}</span><span class="text">${esc(t.text)}</span>${cancel}</li>`;
   });
 }
-function tasks_html(tasks) {
+function tasks_html(tasks, at = null) {
   const blocked2 = blocked_ids(tasks);
   const opened = tasks.filter((t) => t.state === "open");
-  const groups = tasks_by_assignee(opened.filter((t) => !blocked2.has(t.id)));
+  const free = opened.filter((t) => !blocked2.has(t.id));
+  const cold = at === null ? [] : free.filter((t) => task_cold(t, at));
+  const groups = tasks_by_assignee(free.filter((t) => !cold.includes(t)));
   const open = (t) => task_brief_html(t, tasks);
   const heading = (a, ts) => `<li class="group" data-assignee="${esc(a)}">${esc(assignee_said(ts[0]).replace(/^c/, "C"))} <span class="n">(${ts.length})</span></li>`;
   const titled = groups.length > 1 || groups.length === 1 && groups[0][0] !== "user";
   const now = groups.flatMap(([a, ts]) => [...titled ? [heading(a, ts)] : [], ...ts.map(open)]);
-  return { open: groups.flatMap(([, ts]) => ts.map(open)), now, waiting: opened.filter((t) => blocked2.has(t.id)).map((t) => task_waiting_html(t, tasks, false)), closed: tasks.filter((t) => t.state !== "open").map((t) => task_closed_html(t, false)) };
+  return { open: [...groups.flatMap(([, ts]) => ts.map(open)), ...cold.map(open)], now, old: cold.map(open), waiting: opened.filter((t) => blocked2.has(t.id)).map((t) => task_waiting_html(t, tasks, false)), closed: tasks.filter((t) => t.state !== "open").map((t) => task_closed_html(t, false)) };
 }
 function task_brief_html(t, tasks) {
   const mine = t.assignee === "user";
@@ -3878,7 +3893,7 @@ function thread_read_html(t) {
   return thread.length === 0 ? "" : `<section class="thread read"><p class="sub">Conversa (${thread.length})</p><ol>${thread.map(thread_msg_html).join("")}</ol></section>`;
 }
 function desk_html(tasks, q, ref, sel, now = Date.now(), opts = {}) {
-  const groups = desk_list(tasks, q, ref);
+  const groups = desk_list(tasks, q, ref, opts.cold === true ? now : null);
   const ids = groups.flatMap((g) => g.tasks.map((t2) => t2.id));
   const blocked2 = blocked_ids(tasks);
   const turn = opts.turn ?? null;
@@ -5692,12 +5707,16 @@ function turn_show(n) {
   const nav = navigator;
   (n === 0 ? nav.clearAppBadge?.() : nav.setAppBadge?.(n))?.catch(() => {});
 }
-var TASKS = { of: null, html: { open: [], now: [], waiting: [], closed: [] } };
+var TASKS = { of: null, day: 0, html: { open: [], now: [], old: [], waiting: [], closed: [] } };
 function tasks_bar() {
-  if (TASKS.of !== v.tasks) {
-    TASKS = { of: v.tasks, html: tasks_html(v.tasks) };
+  const hour = Math.floor(Date.now() / 3600000);
+  if (TASKS.of !== v.tasks || TASKS.day !== hour) {
+    TASKS = { of: v.tasks, day: hour, html: tasks_html(v.tasks, Date.now()) };
   }
-  const { open, now, waiting, closed: closed2 } = TASKS.html;
+  const { open, now, old, waiting, closed: closed2 } = TASKS.html;
+  markup($2("#tasks .old ul"), old);
+  $2("#tasks .old").hidden = old.length === 0;
+  $2("#tasks .old summary").textContent = "Antigas (" + old.length + ") · sem mudança há 7 dias";
   const untold = view_untold(v).length;
   document.body.classList.toggle("tasking", v.tasks.length > 0);
   $2(".tasks").hidden = v.tasks.length === 0;
@@ -5835,7 +5854,7 @@ function desk_choose() {
   P.chose = true;
   const was = sessionStorage.getItem(kept("mode"));
   const mode = was === "desk" ? "desk" : "chat";
-  const first = desk_list(v.tasks).find((g) => g.group === "now")?.tasks[0];
+  const first = desk_list(v.tasks, "", "", Date.now()).find((g) => g.group === "now")?.tasks[0];
   if (mode === "chat" && first !== undefined && desk_turn(v.tasks)) {
     P.drawer = first.id;
   }
@@ -5857,7 +5876,7 @@ function desk_draw() {
   const turn = turn_of(v);
   const said = JSON.stringify(turn) + Math.floor(Date.now() / 60000);
   if (DESKED === null || DESKED.of !== v.tasks || DESKED.q !== P.q || DESKED.ref !== P.ref || DESKED.sel !== P.sel || DESKED.said !== said) {
-    const groups = desk_list(v.tasks, P.q, P.ref);
+    const groups = desk_list(v.tasks, P.q, P.ref, Date.now());
     const ids2 = groups.flatMap((g) => g.tasks.map((t) => t.id));
     if (P.sel === null && !NARROW.matches && ids2.length > 0) {
       P.sel = ids2[0];
@@ -5866,7 +5885,7 @@ function desk_draw() {
       P.order = { sel: P.sel, ids: ids2 };
     }
     const order = P.order.sel === P.sel ? P.order.ids : [];
-    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, said, html: desk_html(v.tasks, P.q, P.ref, P.sel, Date.now(), { order, turn }) };
+    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, said, html: desk_html(v.tasks, P.q, P.ref, P.sel, Date.now(), { order, turn, cold: true }) };
   }
   const { list: list2, detail, ids } = DESKED.html;
   P.ids = ids;
@@ -6451,7 +6470,7 @@ function bars() {
       $2("#doing").innerHTML = html;
     }
   }
-  const turn = desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
+  const turn = desk_list(v.tasks, "", "", Date.now()).find((g) => g.group === "now")?.tasks.length ?? 0;
   turn_show(turn);
   $2(".mode").hidden = false;
   $2(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;

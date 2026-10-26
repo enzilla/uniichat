@@ -17,6 +17,7 @@ import * as View from "./View.ts";
 
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-modal-");
 const NOW  = Date.parse("2026-10-23T12:00:00Z");
+Panel.panel_clock(() => NOW);
 
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 

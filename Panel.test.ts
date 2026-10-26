@@ -14,6 +14,7 @@ import * as View from "./View.ts";
 
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-panel-");
 const NOW  = Date.parse("2026-10-23T12:00:00Z");
+Panel.panel_clock(() => NOW);
 
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 
@@ -150,4 +151,28 @@ test("Unii's questions: the user's open tasks with choices, each once; not one t
   const seen = new Set<string>();
   expect(Panel.panel_asks(v, seen).map((t) => t.id)).toEqual(["P3"]);
   expect(Panel.panel_asks(v, seen)).toEqual([]);
+});
+
+test("an open task with no change in 7 days goes down to Antigas, folded; Enter on it unfolds; any change brings it back", () => {
+  T.tasks_forget();
+  const s = T.tasks_load(fs.mkdtempSync(os.tmpdir() + "/unii-cold-"));
+  const now = NOW;
+  T.task_new(s, { title: "Nova" }, "main", now);
+  T.task_new(s, { title: "Velha" }, "main", now - 8 * 86400e3);
+  const v = View.view_new();
+  v.tasks = T.tasks_view(s, now);
+  const p = Panel.panel_new();
+  const text = (lines: Paint.Line[]) => lines.map((l) => l.map((r) => r.x).join("")).join("\n");
+  const frame = () => text(Panel.panel_frame(p, v, [], [], 120, 30));
+  expect(View.task_cold(v.tasks.find((t) => t.id === "P2")!, now)).toBe(true);
+  expect(frame()).toContain("Antigas (1)");
+  expect(frame()).not.toContain("P2 Velha");
+  Panel.panel_key(p, v, "Down");
+  expect(p.sel).toBe("#antigas");
+  Panel.panel_key(p, v, "Enter");
+  expect(frame()).toContain("P2 Velha");
+  T.task_say(s, "P2", "ainda vale?", now);
+  v.tasks = T.tasks_view(s, now);
+  expect(View.task_cold(v.tasks.find((t) => t.id === "P2")!, now)).toBe(false);
+  expect(frame()).not.toContain("Antigas");
 });

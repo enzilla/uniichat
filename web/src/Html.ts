@@ -225,15 +225,18 @@ export function timers_html(timers: Timer.Timer[]): string[] {
 // headings, as the list shows them; open: the items alone, counted); a
 // task not the user's has no Concluir in relief. Where it came from
 // (origin), a quiet badge, a link to its source if it has one
-export function tasks_html(tasks: Task[]): { open: string[]; now: string[]; waiting: string[]; closed: string[] } {
+export function tasks_html(tasks: Task[], at: number | null = null): { open: string[]; now: string[]; old: string[]; waiting: string[]; closed: string[] } {
   const blocked = Deps.blocked_ids(tasks);
   const opened = tasks.filter((t) => t.state === "open");
-  const groups = View.tasks_by_assignee(opened.filter((t) => !blocked.has(t.id)));
+  // the old ones (View.task_cold) under "Antigas", folded
+  const free = opened.filter((t) => !blocked.has(t.id));
+  const cold = at === null ? [] : free.filter((t) => View.task_cold(t, at));
+  const groups = View.tasks_by_assignee(free.filter((t) => !cold.includes(t)));
   const open = (t: Task) => task_brief_html(t, tasks);
   const heading = (a: string, ts: Task[]) => `<li class="group" data-assignee="${esc(a)}">${esc(View.assignee_said(ts[0]).replace(/^c/, "C"))} <span class="n">(${ts.length})</span></li>`;
   const titled = groups.length > 1 || (groups.length === 1 && groups[0][0] !== "user");
   const now = groups.flatMap(([a, ts]) => [...(titled ? [heading(a, ts)] : []), ...ts.map(open)]);
-  return { open: groups.flatMap(([, ts]) => ts.map(open)), now, waiting: opened.filter((t) => blocked.has(t.id)).map((t) => task_waiting_html(t, tasks, false)), closed: tasks.filter((t) => t.state !== "open").map((t) => task_closed_html(t, false)) };
+  return { open: [...groups.flatMap(([, ts]) => ts.map(open)), ...cold.map(open)], now, old: cold.map(open), waiting: opened.filter((t) => blocked.has(t.id)).map((t) => task_waiting_html(t, tasks, false)), closed: tasks.filter((t) => t.state !== "open").map((t) => task_closed_html(t, false)) };
 }
 
 // an open task in the list beside the chat, in brief: its title (it
@@ -459,9 +462,9 @@ function thread_read_html(t: Task): string {
 // "Próxima" goes on from where it was (View.desk_next); turn: Unii's
 // turn as the view knows it (View.turn_of), to say why a task waits
 // for Unii
-export type DeskOpts = { order?: string[]; turn?: View.Turn | null };
+export type DeskOpts = { order?: string[]; turn?: View.Turn | null; cold?: boolean }; // cold: the old ones go to "Antigas" (View.task_cold)
 export function desk_html(tasks: Task[], q: string, ref: string, sel: string | null, now = Date.now(), opts: DeskOpts = {}): { list: string[]; detail: string[]; ids: string[] } {
-  const groups = View.desk_list(tasks, q, ref);
+  const groups = View.desk_list(tasks, q, ref, opts.cold === true ? now : null);
   const ids = groups.flatMap((g) => g.tasks.map((t) => t.id));
   const blocked = Deps.blocked_ids(tasks);
   const turn = opts.turn ?? null;

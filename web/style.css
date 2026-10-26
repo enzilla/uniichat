@@ -493,7 +493,10 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 :is(#tasks, #desk, #drawer) .acts.unii .chase:disabled { background: var(--block); color: var(--mid); opacity: 1; cursor: default; }
 :is(#tasks, #desk, #drawer) .note { width: 100%; margin-top: 6px; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); }
 #tasks .tell { margin: 8px 0 0; text-align: center; background: var(--block); font-size: 13.5px; }
-#tasks .closed, #tasks .waiting { margin-top: 10px; }
+#tasks .closed, #tasks .waiting, #tasks .old { margin-top: 10px; }
+#tasks .old summary { padding: 4px 0; }
+#tasks .old li .title { color: var(--mid); }
+#desk .group.old, #desk .row.old .title { color: var(--mid); }
 #tasks .waiting summary { padding: 4px 0; }
 :is(#tasks, #desk, #drawer) li.waiting .title { color: var(--mid); }
 :is(#tasks, #desk, #drawer) .frees { padding: 0 6px; border-radius: 6px; background: var(--ink); color: var(--paper); font-weight: 500; }

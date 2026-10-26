@@ -644,6 +644,19 @@ export function view_act(v: View, act: Act): Client[] {
 // the open tasks the user can resolve now (those that free others
 // first, then the user's), those that wait for others (TaskDeps.ts),
 // and those closed lately, as the server sent them (Tasks.tasks_view)
+// an open task with no change in COLD (its state, an edit, a message
+// in its thread) is old: it goes down to "Antigas", folded, in the
+// lists (Panel.ts, Html.ts); any change brings it back. Never closed
+// ones (those go to the archive, Tasks.tasks_archive)
+export const COLD = 7 * 86400e3;
+export function task_cold(t: Task, now = Date.now()): boolean {
+  if (t.state !== "open") {
+    return false;
+  }
+  const last = Math.max(Date.parse(t.changed), ...(t.thread ?? []).map((x) => Date.parse(x.at)).filter((n) => Number.isFinite(n)));
+  return now - last >= COLD;
+}
+
 export function view_tasks(v: View): { open: Task[]; waiting: Task[]; closed: Task[] } {
   const blocked = Deps.blocked_ids(v.tasks);
   const open = v.tasks.filter((t) => t.state === "open");
@@ -946,11 +959,12 @@ export function tasks_by_assignee(open: Task[]): [string, Task[]][] {
 // the user wrote in its thread and Unii hasn't answered; "others",
 // someone else's (Unii's, an agent's) at work; "waiting", waiting for
 // other open tasks (TaskDeps.ts); "closed", resolved lately
-export type Desk = "now" | "unii" | "others" | "waiting" | "closed";
+export type Desk = "now" | "unii" | "others" | "old" | "waiting" | "closed";
 export const DESK: [Desk, string][] = [
   ["now", "Agora"],
   ["unii", "Aguardando o Unii"],
   ["others", "Em andamento"],
+  ["old", "Antigas (sem mudança há 7 dias)"],
   ["waiting", "Aguardando outras pendências"],
   ["closed", "Resolvidas recentemente"],
 ];
@@ -1003,12 +1017,18 @@ export function desk_match(t: Task, q: string, ref: string): boolean {
 // the Mesa's list: each group with tasks in the search, in DESK's
 // order, its tasks as the server sorts them; "now" as P3 asks
 // (TaskDeps.now_order: priority, then how many it frees, then the one to act on longest: ready_at)
-export function desk_list(tasks: Task[], q = "", ref = ""): { group: Desk; label: string; tasks: Task[] }[] {
+export function desk_list(tasks: Task[], q = "", ref = "", now: number | null = null): { group: Desk; label: string; tasks: Task[] }[] {
   const blocked = Deps.blocked_ids(tasks);
   const shown = tasks.filter((t) => desk_match(t, q, ref));
   const order = Deps.now_order(tasks);
+  // the old ones (task_cold, as of now; null: none) out of "now", "unii"
+  // and "others", in "old"
+  const of_group = (t: Task): Desk => {
+    const g = desk_group(t, blocked);
+    return now !== null && (g === "now" || g === "unii" || g === "others") && task_cold(t, now) ? "old" : g;
+  };
   return DESK.map(([group, label]) => {
-    const of = shown.filter((t) => desk_group(t, blocked) === group);
+    const of = shown.filter((t) => of_group(t) === group);
     return { group, label, tasks: group === "now" ? [...of].sort(order) : of };
   }).filter((g) => g.tasks.length > 0);
 }

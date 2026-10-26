@@ -832,12 +832,17 @@ function turn_show(n: number): void {
 // style.css), its items made again only as the list changes (a state)
 // (those that wait for others: out of the count, a summary that opens
 // to them)
-let TASKS: { of: unknown; html: { open: string[]; now: string[]; waiting: string[]; closed: string[] } } = { of: null, html: { open: [], now: [], waiting: [], closed: [] } };
+let TASKS: { of: unknown; day: number; html: { open: string[]; now: string[]; old: string[]; waiting: string[]; closed: string[] } } = { of: null, day: 0, html: { open: [], now: [], old: [], waiting: [], closed: [] } };
 function tasks_bar(): void {
-  if (TASKS.of !== v.tasks) {
-    TASKS = { of: v.tasks, html: Html.tasks_html(v.tasks) };
+  // made again as the list changes, and each hour (a task grows old)
+  const hour = Math.floor(Date.now() / 3600e3);
+  if (TASKS.of !== v.tasks || TASKS.day !== hour) {
+    TASKS = { of: v.tasks, day: hour, html: Html.tasks_html(v.tasks, Date.now()) };
   }
-  const { open, now, waiting, closed } = TASKS.html;
+  const { open, now, old, waiting, closed } = TASKS.html;
+  markup($("#tasks .old ul"), old);
+  $("#tasks .old").hidden = old.length === 0;
+  $("#tasks .old summary").textContent = "Antigas (" + old.length + ") · sem mudança há 7 dias";
   const untold = View.view_untold(v).length;
   document.body.classList.toggle("tasking", v.tasks.length > 0);
   $(".tasks").hidden = v.tasks.length === 0;
@@ -1022,7 +1027,7 @@ function desk_choose(): void {
   const mode = was === "desk" ? "desk" : "chat";
   // the user's turn: the first such task in the drawer, the chat in sight
   // (the Mesa, a screen of its own, only by its button or m)
-  const first = View.desk_list(v.tasks).find((g) => g.group === "now")?.tasks[0];
+  const first = View.desk_list(v.tasks, "", "", Date.now()).find((g) => g.group === "now")?.tasks[0];
   if (mode === "chat" && first !== undefined && View.desk_turn(v.tasks)) {
     P.drawer = first.id;
   }
@@ -1049,7 +1054,7 @@ function desk_draw(): void {
   const turn = View.turn_of(v);
   const said = JSON.stringify(turn) + Math.floor(Date.now() / 60e3);
   if (DESKED === null || DESKED.of !== v.tasks || DESKED.q !== P.q || DESKED.ref !== P.ref || DESKED.sel !== P.sel || DESKED.said !== said) {
-    const groups = View.desk_list(v.tasks, P.q, P.ref);
+    const groups = View.desk_list(v.tasks, P.q, P.ref, Date.now());
     const ids = groups.flatMap((g) => g.tasks.map((t) => t.id));
     if (P.sel === null && !NARROW.matches && ids.length > 0) {
       P.sel = ids[0];
@@ -1059,7 +1064,7 @@ function desk_draw(): void {
       P.order = { sel: P.sel, ids };
     }
     const order = P.order.sel === P.sel ? P.order.ids : [];
-    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, said, html: Html.desk_html(v.tasks, P.q, P.ref, P.sel, Date.now(), { order, turn }) };
+    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, said, html: Html.desk_html(v.tasks, P.q, P.ref, P.sel, Date.now(), { order, turn, cold: true }) };
   }
   const { list, detail, ids } = DESKED.html;
   P.ids = ids;
@@ -1769,7 +1774,7 @@ function bars(): void {
       $("#doing").innerHTML = html;
     }
   }
-  const turn = View.desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
+  const turn = View.desk_list(v.tasks, "", "", Date.now()).find((g) => g.group === "now")?.tasks.length ?? 0;
   turn_show(turn);
   $(".mode").hidden = false;
   $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
