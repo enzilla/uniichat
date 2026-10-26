@@ -655,6 +655,7 @@ export namespace ClaudeSub {
       if (msg.type !== "result") {
         continue;
       }
+      ClaudeSub.spent(ask, msg);
       const ok = msg.subtype === "success" && !msg.is_error;
       const why = msg.subtype === "success" ? msg.result : msg.errors.join("; ");
       if ((!ok && (hit || over || info?.status === "rejected")) || (over && sent.length > 0)) {
@@ -686,6 +687,16 @@ export namespace ClaudeSub {
         return;
       }
     }
+  }
+
+  // what a call spent, logged, one line (a turn's, a subagent's, a
+  // summary's): tokens in, written to and read from the cache, out, the
+  // steps (requests) and the API's price of it, so where a plan's usage
+  // goes can be read in the server's log
+  export function spent(ask: Ask, msg: any): void {
+    const u = msg.usage ?? {};
+    const what = ask.agent === true ? "agent" : ask.patient === true ? "summary" : "turn";
+    console.error("claude-sub spent: " + what + " " + ask.model + " in=" + (u.input_tokens ?? 0) + " cache_w=" + (u.cache_creation_input_tokens ?? 0) + " cache_r=" + (u.cache_read_input_tokens ?? 0) + " out=" + (u.output_tokens ?? 0) + " steps=" + (msg.num_turns ?? 0) + " usd=" + Number(msg.total_cost_usd ?? 0).toFixed(3));
   }
 
   // the results in a message Claude Code sent itself, each as logged
