@@ -63,7 +63,7 @@ export type Screen = {
 // =========
 
 // the editing keys, as /help lists them
-export const EDITING = "Arrows, Home, End, Ctrl+A, E, U, K, W, Alt+B, F, D, as in a shell; Shift+Enter or Ctrl+J, a new line; Up and Down past the ends, the messages sent.";
+export const EDITING = "Arrows, Home, End, Ctrl+A, E, U, K, W, Alt+B, F, D, as in a shell; Alt+Enter, Shift+Enter or Ctrl+J, a new line; Up and Down past the ends, the messages sent.";
 
 const PASTE_ON  = "\x1b[200~";
 const PASTE_OFF = "\x1b[201~";
@@ -443,6 +443,7 @@ export function ed_key(ed: Ed, key: string): boolean {
     return true;
   }
   switch (key) {
+    case "Alt+Enter":
     case "Shift+Enter":
     case "Ctrl+J": {
       ed_type(ed, "\n");

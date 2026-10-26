@@ -226,6 +226,12 @@ function chat(): void {
   // never the Enter that ends a composition (Japanese, Chinese: Safari
   // ends it first, so only its keyCode, 229, says so)
   BOX.onkeydown = (ev) => {
+    // Alt+Enter: a new line, on any screen (as Shift+Enter on a desk)
+    if (ev.key === "Enter" && ev.altKey && !ev.isComposing) {
+      ev.preventDefault();
+      Box.box_insert("\n");
+      return;
+    }
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && DESK.matches) {
       ev.preventDefault();
       submit();
@@ -259,9 +265,25 @@ function chat(): void {
     root.addEventListener("change", task_draft);
     root.addEventListener("keydown", (ev) => {
       const el = ev.target as HTMLElement;
-      if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
-        ev.preventDefault();
+      if (!el.matches("textarea") || ev.key !== "Enter" || ev.isComposing || ev.keyCode === 229) {
+        return;
+      }
+      // (a phone's keyboard has no Alt: its Enter stays a new line)
+      if (!DESK.matches && !(ev.ctrlKey || ev.metaKey)) {
+        return;
+      }
+      // in a task's boxes, as in the message's: Enter sends (a message
+      // about it) or keeps (a field's answer, the draft saved as it
+      // leaves), Alt+Enter or Shift+Enter a new line
+      ev.preventDefault();
+      const box = el as HTMLTextAreaElement;
+      if (ev.altKey || ev.shiftKey) {
+        box.setRangeText("\n", box.selectionStart, box.selectionEnd, "end");
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+      } else if (el.matches("textarea.say")) {
         task_say(el.closest<HTMLElement>("[data-task]")!.dataset.task!, root);
+      } else {
+        box.blur();
       }
     });
   }

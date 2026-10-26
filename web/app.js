@@ -3892,7 +3892,7 @@ function thread_html(t, desk = false) {
   const send = `<button class="say-send"${act_html({ $: "TaskSay", task: t.id, text: "" })}>Enviar</button>`;
   const msgs = thread.length === 0 ? "" : `<ol>${thread.map(thread_msg_html).join("")}</ol>`;
   if (desk) {
-    return `<section class="thread"><p class="sub">${esc(said)}</p>${msgs}${box}<div class="acts"><span class="hint">Ctrl+Enter envia</span>${send}</div></section>`;
+    return `<section class="thread"><p class="sub">${esc(said)}</p>${msgs}${box}<div class="acts"><span class="hint">Enter envia · Alt+Enter quebra a linha</span>${send}</div></section>`;
   }
   const open = thread.length > 0 && t.talk !== null ? " open" : "";
   return `<details class="thread" data-keep="thread"${open}><summary>${esc(said)}</summary>${msgs}${box}<div class="acts">${send}</div></details>`;
@@ -5128,6 +5128,12 @@ function chat() {
   box_new(BOX2, { input: typed, files: attach });
   BOX2.addEventListener("blur", () => draw2(false));
   BOX2.onkeydown = (ev) => {
+    if (ev.key === "Enter" && ev.altKey && !ev.isComposing) {
+      ev.preventDefault();
+      box_insert(`
+`);
+      return;
+    }
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && DESK2.matches) {
       ev.preventDefault();
       submit();
@@ -5161,9 +5167,22 @@ function chat() {
     root.addEventListener("change", task_draft);
     root.addEventListener("keydown", (ev) => {
       const el = ev.target;
-      if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
-        ev.preventDefault();
+      if (!el.matches("textarea") || ev.key !== "Enter" || ev.isComposing || ev.keyCode === 229) {
+        return;
+      }
+      if (!DESK2.matches && !(ev.ctrlKey || ev.metaKey)) {
+        return;
+      }
+      ev.preventDefault();
+      const box = el;
+      if (ev.altKey || ev.shiftKey) {
+        box.setRangeText(`
+`, box.selectionStart, box.selectionEnd, "end");
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+      } else if (el.matches("textarea.say")) {
         task_say(el.closest("[data-task]").dataset.task, root);
+      } else {
+        box.blur();
       }
     });
   }
