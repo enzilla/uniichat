@@ -1069,7 +1069,14 @@ export function restart_now(answer: string | null): boolean {
   }
   // "sem esperar", "não espere": the restart asked now, its words of
   // waiting said only to deny them (read as "agora")
-  const b = a.replace(RESTART_NO_WAIT, " agora ");
+  // "não depende de mais nada", "sem depender": a doubt denied, read as
+  // "agora" too, unless a "se", "if" or "caso" comes before it in the
+  // same clause (a condition: "se não depende", "se isso não depende de
+  // nada", "if it doesn't depend on anything") (SillyHippo, LunarMelon)
+  const c = a.replace(RESTART_NO_WAIT, " agora ").replace(RESTART_NO_DOUBT, (m: string, at: number, s: string) => (RESTART_IF.test(clause_before(s, at)) ? m : " agora "));
+  // "Reinicie agora e depois decide": a "depois" after the restart asked
+  // now, about another thing, is no wait for it (SillyHippo)
+  const b = restart_then(c);
   if (!/\b(?:reinici\w*|restart\w*)\b/.test(b)) {
     return false;
   }
@@ -1096,6 +1103,106 @@ const RESTART_COUNTED = new Set(["instancia", "instancias", "instance", "instanc
 // esperar não" reads its trailing "não" as a refusal (both stay open: the
 // safe side)
 const RESTART_NO_WAIT = /\b(?:sem (?:esperar|aguardar|demora|demorar)|(?:nao|nem) (?:espere|esperar|espera|aguarde|aguardar|aguarda)|don'?t wait|do not wait|without waiting|no wait(?:ing)?)\b/g;
+
+// a doubt denied (already without accents, lower): "não depende", "nem
+// depende de nada", "sem depender de mais ninguém", "doesn't depend on
+// anything". The "se" before it is caught to keep a condition ("se não
+// depende de nada") as it was: a wait. A condition is found by RESTART_IF
+// in the clause before it (clause_before), not only right before it.
+// Denied by its subject too (StormyFlamingo): "não dependo de ninguém",
+// "nada depende disso", "ninguém depende", "nenhum agente depende do
+// serve" ("nenhum" and up to two words, none a connector: "nenhum
+// problema, mas depende" stays a doubt), "isso depende de nada", "nothing
+// depends on it", "no agent depends on it". "tudo depende", "depende de
+// mim" stay doubts.
+// By design (ThinCamel, Verif. 12): the rule needs "reinicie"/"restart"
+// in the sentence, so "não dependo de ninguém" alone is false (open);
+// "Reinicie agora, não dependo de ninguém" is true
+const RESTART_NO_DOUBT = new RegExp(
+  [
+    "\\b(?:(?:nao|nem) depend(?:e|em|o|emos)|sem depender|(?:doesn'?t|does not|don'?t|do not) depend)\\b(?: (?:de|on) (?:mais )?(?:nada|ninguem|anything|anyone))?",
+    "\\b(?:nada|ninguem|nenhuma?(?: (?!(?:mas|porem|e|ou)\\b)[a-z0-9']+){0,2}?) depend(?:e|em)\\b",
+    "\\b(?:nothing|nobody|no one|no(?: (?!(?:but|and|or)\\b)[a-z0-9']+){1,2}?) depends?\\b",
+    "\\bdepend(?:e|em|s)? (?:de|on) (?:mais )?(?:nada|ninguem|nothing|nobody)\\b",
+  ].join("|"),
+  "g",
+);
+
+// a word of condition (already without accents, lower): "se", "if",
+// "caso". Read only in the clause before a doubt denied (clause_before):
+// "Reinicie, se isso não depende de nada", "Restart now if it doesn't
+// depend on anything", "Reinicie caso não dependa": a condition, a wait
+// (LunarMelon, M1). A limit: "se" as a pronoun ("Reinicie, faz-se agora,
+// não depende" has a stop before it, so it's not read; "o que se faz não
+// depende" is) and "caso" as a noun ("nesse caso não depende") read as a
+// condition too: the order stays open, the safe side
+const RESTART_IF = /\b(?:se|if|caso)\b/;
+
+// the clause before a position: from the last stop (, ; . ! ? :) or line
+// start up to it. A condition after a stop ("Se der. Reinicie agora, não
+// depende") is held by RESTART_WAIT on the whole answer instead
+function clause_before(s: string, at: number): string {
+  const head = s.slice(0, at);
+  const stop = Math.max(...[",", ";", ".", "!", "?", ":"].map((x) => head.lastIndexOf(x)));
+  return head.slice(stop + 1);
+}
+
+// an event to wait for (already without accents, lower): "ao terminar",
+// "os agentes acabarem", "concluir o PR", "aguarde", "espere" (RESTART_WAIT,
+// RESTART_THEN_WAIT)
+const RESTART_WAIT_EVENT = /\b(?:termin\w*|acab\w*|conclu\w*|finaliz\w*|finish\w*|complet\w*|esper\w*|aguard\w*|wait\w*)\b/;
+
+// a condition (already without accents, lower): "se puder", "se der", "se
+// possível", "if you can" (RESTART_WAIT, RESTART_THEN_WAIT)
+const RESTART_WAIT_IF = /\bse (?:puder|pude\w*|der|possivel|conseguir|for possivel)\b|\bif (?:you can|possible)\b/;
+
+// the connector of a later act after a restart asked now: "e depois",
+// ", depois", ". Em seguida", "and afterwards", "and after that"
+const RESTART_THEN = /^(.*?\b(?:reinici\w*|restart\w*)\b.*?\b(?:agora|ja|now|imediatamente|immediately|asap|right away)\b.*?)(?:\s*[,;.!]\s*(?:(?:e|and) )?|\s+(?:e|and) )(?:depois|em seguida|afterwards|after that)\b(.*)$/;
+
+// what may follow "depois" to tie it to the restart itself ("depois dos
+// agentes", "depois que terminar", "after the PR"): a wait, kept
+const RESTART_THEN_TIED = new Set(["de", "do", "da", "dos", "das", "que", "disso", "disto", "dele", "dela", "deles", "delas", "daquilo", "daqui", "of", "the", "that", "this", "it"]);
+
+// a restart asked now, then another act: "Reinicie agora e depois decide",
+// "Restart now and afterwards tell me". The "depois" and what follows it
+// are cut off when: a word of now comes after the restart's verb and
+// before "depois"; "depois" is joined by "e" or a stop; a word follows it
+// that doesn't tie it to the restart (RESTART_THEN_TIED); and no verb of
+// restarting follows it ("e depois reinicie de novo" keeps the wait: the
+// safe side). The rest is still read as a whole: a wait before "depois"
+// ("Reinicie agora à tarde e depois avise") still holds. A limit: the
+// hour by its accent (RESTART_AT_HOUR) is read in the whole answer, so
+// "Reinicie agora e depois, à uma, revise" stays open (the safe side)
+function restart_then(a: string): string {
+  const m = RESTART_THEN.exec(a);
+  if (m === null) {
+    return a;
+  }
+  const tail = m[2]!;
+  const words = tail.split(/[^a-z0-9']+/).filter((w) => w !== "");
+  if (words.length === 0 || RESTART_THEN_TIED.has(words[0]!) || /\b(?:reinici|restart)/.test(tail) || RESTART_THEN_WAIT.some((w) => w.test(tail))) {
+    return a;
+  }
+  return m[1]!;
+}
+
+// what in the act after "depois" may still be a wait for the restart, so
+// "depois" is not cut off (LunarMelon, B2): an event ("depois aguarde os
+// agentes", "depois só quando acabar", "depois espere o PR"), a condition
+// ("depois, se der, avise", "if you can") or a word of when ("quando",
+// "assim que", "só se", "until"). Any other act ("depois decide",
+// "depois avise", "depois revise o log") is cut off: the restart is now.
+// A limit (B3, the safe side): a time or a day in that act ("e depois me
+// conte amanhã") is not looked at here but by RESTART_WAIT on what is
+// left, so it still keeps the order open only if it sits before "depois";
+// and a wait meant for the other act ("e depois espere o deploy para
+// avisar") keeps it open too, as the words can't tell whose wait it is
+const RESTART_THEN_WAIT: RegExp[] = [
+  RESTART_WAIT_EVENT,
+  RESTART_WAIT_IF,
+  /\b(?:quando|assim que|logo que|so se|somente se|enquanto|ate|when|once|until|as soon)\b/,
+];
 
 // a plain sign of now (already without accents, lower). "já já" is a
 // soon, not a now: RESTART_WAIT takes it first
@@ -1137,8 +1244,7 @@ const RESTART_WAIT: RegExp[] = [
   // a time: "às 22h", "22:30", "22 h", "at 10", "em 1 hora", "em uma hora", "in an hour"
   /\bas \d|\b\d{1,2} ?h\b|\b\d{1,2}h\d{2}\b|\b\d{1,2}:\d{2}\b|\bat \d|\bem (?:\d+|um|uma|meia|duas|dois|tres|alguns|algumas|poucos|poucas)\b|\bin (?:\d+|an?|one|two|few)\b/,
   /\b(?:hora|horas|minuto|minutos|min|hour|hours|minute|minutes)\b/,
-  // an event: "ao terminar", "os agentes acabarem", "concluir o PR"
-  /\b(?:termin\w*|acab\w*|conclu\w*|finaliz\w*|finish\w*|complet\w*|esper\w*|aguard\w*|wait\w*)\b/,
+  RESTART_WAIT_EVENT,
   // a day: "na sexta", "segunda-feira", "dia 27", "27/10", "no fim de
   // semana", "monday", "weekend"
   /\bsegunda(?! (?:instancia|instancias|vez|vezes|servidor|servico|worker|processo)\b)|\b(?:terca|quarta|quinta|sexta|sabado|domingo|feira|semana|mes|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|week|month)\b|\bdia (?:\d|primeiro|um|dois|tres)|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)\b|\bon the\b/,
@@ -1148,8 +1254,7 @@ const RESTART_WAIT: RegExp[] = [
   // RESTART_AT_HOUR). A limit: "as" is also the article ("Reinicie as
   // duas instâncias" stays open: the safe side)
   /\bmei[oa][- ](?:dia|noite)\b|\ba (?:uma|\d{1,2})(?= ?h\b| ?hora| e meia|\s*[,.;:!?](?!\s*(?:agora|ja|now|imediatamente|immediately)\b)|\s*$)|\bas (?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)\b|\b(?:noon|midnight|o'?clock)\b|\bat (?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
-  // a condition: "se puder", "se der", "se possível", "if you can"
-  /\bse (?:puder|pude\w*|der|possivel|conseguir|for possivel)\b|\bif (?:you can|possible)\b/,
+  RESTART_WAIT_IF,
   // a doubt: "agora, quem sabe", "talvez", "quiçá", "sei lá", "depende",
   // "provavelmente", "maybe", "who knows" (PeachCow, PaperWaffle). The
   // blanks between words are already one space (restart_now)

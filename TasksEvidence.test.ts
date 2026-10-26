@@ -713,3 +713,58 @@ test("a restart with blanks inside a doubt, more doubts, or an ordinal before \"
   expect(T.restart_now("Reinicie")).toBe(true);
   expect(T.restart_now("Reinicie a 100 instâncias")).toBe(false);
 });
+
+test("a restart with a doubt denied, or a later act after a restart asked now (SillyHippo)", () => {
+  // B1: "depende" denied is no doubt
+  for (const now of ["Reinicie agora, não depende de mais nada", "Reinicie agora, não depende de nada", "Reinicie, não depende de ninguém", "Reinicie agora, sem depender de nada", "Reinicie sem depender de mais nada", "Reinicie, nem depende", "Restart now, it doesn't depend on anything", "Não depende de nada: reinicie"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // a doubt, a condition or a refusal still holds
+  for (const later of ["Reinicie agora, depende", "Reinicie se não depende de nada", "Reinicie quando não depender de nada", "Não reinicie, não depende de mim", "Reinicie agora, depende do GrandDove", "Não depende de mim, quem sabe reinicie"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // B2: "agora" before "depois", "depois" about another act: now
+  for (const now of ["Reinicie agora e depois decide", "Reinicie agora e depois avise", "Reinicie agora, depois me conte", "Reinicie já. Depois revise o log", "Reinicie imediatamente e em seguida avise", "Pode reiniciar agora, e depois decidimos o resto", "Restart now and afterwards tell me", "Restart now and after that check the log"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // "depois" tied to the restart, "depois" first, a restart after it, a
+  // wait before it, "ou depois", a doubt in it: still open
+  for (const later of ["Reinicie depois", "Reinicie depois e avise", "Reinicie depois dos agentes", "Reinicie já, mas depois dos agentes", "Reinicie agora, depois de terminar o PR", "Reinicie agora e depois que o GrandDove acabar", "Reinicie agora e depois reinicie de novo", "Reinicie agora à tarde e depois avise", "Reinicie agora ou depois", "Reinicie agora, depois", "Reinicie agora não e depois avise", "Agora pare. Reinicie depois e avise", "Agora não, reinicie depois", "Reinicie agora, talvez, e depois avise", "Reinicie já já e depois avise", "Reinicie a uma, depois", "Reinicie já, não depois", "Reinicie na segunda e depois avise", "Reinicie mais uma vez e depois avise", "Termine o PR agora e depois reinicie", "Restart now and afterwards restart again", "Restart later and afterwards tell me"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+});
+
+test("a doubt denied under a condition, or a wait in the act after \"depois\" (LunarMelon)", () => {
+  // M1: "se", "if", "caso" before the doubt denied, in the same clause: a condition
+  for (const later of ["Reinicie, se isso não depende de nada", "Reinicie agora, se isso não depende de nada", "Reinicie se o serve não depende de mais ninguém", "Restart now if it doesn't depend on anything", "Restart if it does not depend on anyone", "Reinicie agora caso isso não depende de nada", "Se isso não depende de nada, reinicie"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // a condition in another clause, or none: the doubt denied is still now
+  for (const now of ["Reinicie agora, não depende de mais nada", "Reinicie agora, isso não depende de nada", "Restart now, it doesn't depend on anything", "Reinicie já; o serve não depende de ninguém"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // B2: an event, a condition or a word of when after "depois" keeps it open
+  for (const later of ["Reinicie agora e depois aguarde os agentes", "Reinicie agora e depois só quando acabar", "Reinicie agora e depois, se der, avise", "Reinicie agora e depois espere o PR", "Reinicie agora, depois assim que puder avise", "Reinicie já e em seguida aguarde", "Restart now and afterwards wait for the agents", "Restart now and afterwards, if you can, tell me", "Restart now and after that only when it ends"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // any other act after "depois" is cut off: now
+  for (const now of ["Reinicie agora e depois decide", "Reinicie agora, não depende de mais nada", "Reinicie agora e depois avise", "Reinicie já. Depois revise o log", "Restart now and afterwards tell me"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+});
+
+test("a doubt denied by its subject: nada, ninguém, nenhum, \"depende de nada\" (StormyFlamingo)", () => {
+  for (const now of ["Reinicie agora, nada depende disso", "Reinicie agora, não dependo de ninguém", "Reinicie agora, isso depende de nada", "Reinicie agora, nenhum agente depende do serve", "Reinicie, ninguém depende do serve", "Reinicie agora, nenhum dos agentes depende disso", "Reinicie agora, não dependemos de nada", "Reinicie já; nada depende do 8788", "Nada depende disso: reinicie", "Restart now, nothing depends on it", "Restart now, no agent depends on it", "Restart now, no one depends on it"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // a condition before it, a wait, a refusal, a doubt kept, "tudo depende",
+  // a connector between "nenhum" and "depende": still open
+  for (const later of ["Reinicie, se nada depende disso", "Reinicie agora se nenhum agente depende do serve", "Restart now if nothing depends on it", "Reinicie agora caso ninguém dependa", "Reinicie agora caso ninguém depende", "Reinicie agora, tudo depende disso", "Reinicie agora, depende de mim", "Reinicie agora, nenhum problema, mas depende", "Reinicie agora, nenhum problema mas depende", "Reinicie se puder, nada depende disso", "Reinicie quando nada depender disso", "Reinicie agora, nada depende disso, talvez", "Reinicie às 22h, nada depende disso", "Reinicie depois, nada depende disso", "Não reinicie, nada depende disso", "Reinicie agora, isso depende de nada? Depende do GrandDove", "Reinicie agora, nada depende disso e depois aguarde os agentes", "Reinicie agora, desde que não dependa de nada"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+});
+
+test("a denied doubt needs the restart ask in the sentence (ThinCamel, Verif. 12)", () => {
+  expect(T.restart_now("não dependo de ninguém")).toBe(false);
+  expect(T.restart_now("Reinicie agora, não dependo de ninguém")).toBe(true);
+});
