@@ -1086,7 +1086,10 @@ const RESTART_NO_WAIT = /\b(?:sem (?:esperar|aguardar|demora|demorar)|(?:nao|nem
 // serve" ("nenhum" and up to two words, none a connector: "nenhum
 // problema, mas depende" stays a doubt), "isso depende de nada", "nothing
 // depends on it", "no agent depends on it". "tudo depende", "depende de
-// mim" stay doubts
+// mim" stay doubts.
+// By design (ThinCamel, Verif. 12): the rule needs "reinicie"/"restart"
+// in the sentence, so "não dependo de ninguém" alone is false (open);
+// "Reinicie agora, não dependo de ninguém" is true
 const RESTART_NO_DOUBT = new RegExp(
   [
     "\\b(?:(?:nao|nem) depend(?:e|em|o|emos)|sem depender|(?:doesn'?t|does not|don'?t|do not) depend)\\b(?: (?:de|on) (?:mais )?(?:nada|ninguem|anything|anyone))?",

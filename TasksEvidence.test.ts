@@ -763,3 +763,8 @@ test("a doubt denied by its subject: nada, ninguém, nenhum, \"depende de nada\"
     expect([later, T.restart_now(later)]).toEqual([later, false]);
   }
 });
+
+test("a denied doubt needs the restart ask in the sentence (ThinCamel, Verif. 12)", () => {
+  expect(T.restart_now("não dependo de ninguém")).toBe(false);
+  expect(T.restart_now("Reinicie agora, não dependo de ninguém")).toBe(true);
+});
