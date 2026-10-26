@@ -46,4 +46,5 @@ if (!fs.existsSync(exe)) {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
+run(["bun", "run", "web"]); // the page the binary serves, from web/src (never a stale one)
 run(["bun", "build", "--compile", "--target=" + target, "Cli.ts", exe, "--outfile", out]);

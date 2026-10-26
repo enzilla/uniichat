@@ -786,7 +786,7 @@ function row_cells(line) {
 }
 
 // Pick.ts
-var VENDORS = ["claude-api", "openai-api", "openai-sub", "claude-sub"];
+var VENDORS = ["claude-api", "openai-api", "openai-sub", "claude-sub", "cursor-sub"];
 var OPUS = { label: "opus-5.5", id: "claude-opus-5-5", speeds: ["slow", "fast"] };
 var SONNET = { label: "sonnet-5.5", id: "claude-sonnet-5-5", speeds: ["slow"] };
 var HAIKU = { label: "haiku-5.5", id: "claude-haiku-5-5", speeds: ["slow"] };
@@ -800,7 +800,16 @@ var MODELS = {
   "claude-api": [OPUS, SONNET, HAIKU],
   "openai-api": OPENAI,
   "openai-sub": PLAN,
-  "claude-sub": [{ ...OPUS, speeds: ["slow"] }, SONNET, HAIKU]
+  "claude-sub": [{ ...OPUS, speeds: ["slow"] }, SONNET, HAIKU],
+  "cursor-sub": [
+    OPUS,
+    SONNET,
+    { label: "fable-5.1", id: "claude-fable-5-1", speeds: ["slow"] },
+    { label: "gpt-5.6-sol", id: "gpt-5.6-sol", speeds: ["slow", "fast"] },
+    { label: "grok-4.7", id: "grok-4.7", speeds: ["slow", "fast"] },
+    { label: "gemini-3.8-flash", id: "gemini-3.8-flash", speeds: ["slow"] },
+    { label: "composer-2.5", id: "composer-2.5", speeds: ["slow", "fast"] }
+  ]
 };
 var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 var SPEEDS = ["slow", "fast", "ultrafast"];
