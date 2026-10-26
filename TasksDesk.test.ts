@@ -170,7 +170,8 @@ test("terminal: /mesa by group, a project's only, or why none", () => {
   const md = View.desk_md(v);
   expect(md).toContain("**Agora (2)**\n\n- **P1** Mesclar o PR · num-3182\n- **P5** Configurar o Slack · slack · com o Unii");
   expect(md).toContain("**Aguardando outras pendências (1)**\n\n- **P3** Mesclar o #18 · num-3182 · aguarda P2");
-  expect(md).toContain("- **P2** Trocar o require · num-3182 · com o Unii · libera 1");
+  // (the evidence round: Unii's, made days before the clock, past its due)
+  expect(md).toMatch(/- \*\*P2\*\* Trocar o require · num-3182 · com o Unii · \*\*prazo vencido há \d+ [hd]\*\* · libera 1/);
   expect(md).toContain("- **P6** Já feito · uniichat · concluída");
   expect(View.desk_md(v, "uniichat")).toBe("**Aguardando o Unii (1)**\n\n- **P4** Reiniciar o serve\n\n**Resolvidas recentemente (1)**\n\n- **P6** Já feito · concluída\n\n`/p P7` detalha · `/conversa P7 mensagem` conversa · `/ok P7` conclui · `/mesa projeto` filtra por projeto");
   expect(View.desk_md(v, "nada")).toBe("Nenhuma pendência do projeto “nada”. Projetos: num-3182, slack, uniichat.");

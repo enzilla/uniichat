@@ -783,3 +783,19 @@ body.desk footer > :not(#toast) { display: none; }
   #account .pipe-metrics { grid-template-columns: 1fr; gap: 2px; }
   #account .pipe-metrics dd { margin-bottom: 8px; }
 }
+/* the evidence round: each task's marks (an order received, in the
+   accent; waiting for the user, framed in the accent; blocked, framed
+   red, dashed; overdue, .late; closed without evidence, framed red), what
+   makes it done and its next step, quiet, over the detail; the evidence
+   that closed it, a list */
+:is(#tasks, #desk) .mark { padding: 0 6px; border-radius: 6px; border: 1px solid var(--frame); }
+:is(#tasks, #desk) .mark.order { color: var(--accent); border-color: currentColor; font-weight: 600; }
+:is(#tasks, #desk) .mark.waiting-user { color: var(--accent); border-color: currentColor; }
+:is(#tasks, #desk) .mark.blocked { color: var(--red); border: 1px dashed currentColor; }
+:is(#tasks, #desk) .mark.unproven { color: var(--red); border-color: currentColor; font-weight: 500; white-space: nowrap; }
+:is(#tasks, #desk) :is(.done-when, .next-step) { margin: 4px 0; font-size: 13px; color: var(--mid); overflow-wrap: anywhere; }
+#desk article .evidence { margin: 10px 0; font-size: 14px; }
+#desk article .evidence .sub { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--mid); }
+#desk article .evidence ul { margin: 0; padding-left: 18px; }
+#desk article .evidence li { overflow-wrap: anywhere; }
+#desk article .evidence.none { color: var(--mid); }

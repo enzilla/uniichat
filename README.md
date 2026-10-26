@@ -44,6 +44,23 @@ Features
   field empty marks it and sends nothing. The site opens on the Mesa when a task is your move, else on the
   Conversa; a tab opened before the server restarted with a new site
   reloads itself.
+  No task closes without a concrete, documented solution: Unii closes
+  one only with **evidence** the server checks (a Slack message sent,
+  by channel and ts; a PR merged, read live with `gh`; a commit and its
+  tests, the commit read live; a Terraform Cloud run applied; a file
+  that exists; a reason in words only to drop one); the user's own
+  resolution is its evidence. Each task says what makes it done
+  (`done_when`); one of Unii's, its next step and when it's due
+  (`next_step`, `next_due`), "prazo vencido" past it (in the views, in
+  Unii's block, and one push, "Pendência P48 do Unii está parada além do
+  prazo"; with no `next_due`, `task_stall` hours after it last moved, 4
+  by default). A choice of Unii's (acts: unii) picked by the user is an
+  **order received**: open, Unii's, closed only with evidence of the
+  execution (the user may cancel it). A task may be **blocked** (why,
+  what unblocks it) or **waiting for you** (in your Agora). One closed
+  before this, without evidence, reads "sem evidência": Unii may prove
+  it, or it's opened again; nothing is erased. A reply of Unii's that
+  promises something for later with no task of its own gets a note.
   Terminal: `/mesa [projeto]`, `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
   `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
   `/descartar`, `/reabrir`, `/avisar`.
@@ -115,6 +132,8 @@ Settings page). Each may also be set as `UNII_<KEY>`, which wins. Besides
 - `after`: a shell command run after each turn.
 - `claude_sub`, `claude`, `chatgpt`: where the plans' sign-ins are kept.
 - `apple`, `apns`: the iOS app's (ios/) App ID and push key id.
+- `task_stall`: hours a task of Unii's may stand still, with no
+  `next_due`, before it's overdue (4 by default; read at the start).
 
 The prompts: `~/.unii/prompt.md` (every turn; subagents get it too)
 and `~/.unii/compact.md` (every summary, nothing else) replace the

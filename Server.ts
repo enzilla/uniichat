@@ -37,6 +37,7 @@ import { write_whole } from "./Write.ts";
 import * as Timer from "./Timer.ts";
 import * as TaskPush from "./TaskPush.ts";
 import * as Tasks from "./Tasks.ts";
+import * as Deps from "./TaskDeps.ts";
 import * as Restart from "./Restart.ts";
 import * as Pipeline from "./Pipeline.ts";
 import { PROMPTS, SEARCHES, Tools, type Agent, type Live } from "./Tools.ts";
@@ -156,6 +157,10 @@ const WAKE       = 60000;
 
 // how often the pending list is looked at for pushes (TaskPush.ts), ms
 const TASK_PUSH  = 15000;
+
+// how long a task of Unii's stands still before it's overdue, by the
+// setting (config task_stall, hours: TaskDeps.due_at)
+Deps.stall_set(config.TASK_STALL_HOURS * 3600e3);
 
 // the acts with a body (Chat.post)
 const BODIES     = ["say", "import", "voice"];
@@ -298,6 +303,15 @@ export namespace Chat {
       return;
     }
     Chat.note(chat, Restart.said_after(mark));
+    // the order it executed (a task of kind restart the user picked "Sim,
+    // reinicie" in): closed, the serve back its evidence (Tasks.ts)
+    if (mark.task !== null) {
+      const s = Tasks.tasks_load(chat.mem.dir);
+      const t = Tasks.task_find(s, mark.task);
+      if (t !== null && Tasks.task_ordered(t)) {
+        Tasks.task_close_system(s, t.id, [{ type: "restart", at: new Date().toISOString(), summary: "pedido às " + mark.at + "; o serve voltou (pid " + process.pid + ")" }], Date.now());
+      }
+    }
     Chat.hold(chat, () => Chat.take(chat, { ...Chat.push(chat, null, "work", Restart.resume_said(mark)), origin: "timer" }));
   }
 
@@ -433,6 +447,7 @@ export namespace Chat {
 
   export async function turn(chat: Chat): Promise<void> {
     chat.busy = true;
+    const began = Date.now();
     try {
       let go = true;
       while (go && chat.wait.length > 0) {
@@ -451,6 +466,7 @@ export namespace Chat {
       chat.busy = false;
       Chat.live(chat, null, []);
       Chat.talked(chat);
+      Chat.promised(chat, began);
       Chat.after(chat);
       Chat.change(chat);
     }
@@ -734,6 +750,22 @@ export namespace Chat {
     // the turn failed (Chat.failed's note last): its why in the thread too
     const why = last !== null && last.kind === "note" && last.text.startsWith(NO_REPLY) ? last.text.slice(NO_REPLY.length).replace(/\. Send a message to try again\.$/, "") : null;
     Tasks.tasks_talked(s, last !== null && last.kind === "unii" ? last.text : null, Date.now(), why);
+  }
+
+  // a turn ended whose last reply promises something for later ("vou
+  // revisar", "em seguida") with no task of Unii's made or moved in it:
+  // a note in the chat (Unii reads it next turn, the user sees it), so a
+  // promise doesn't end in limbo (the evidence round: Tasks.promises_in)
+  export function promised(chat: Chat, began: number): void {
+    const last = Memory.message(chat.mem, chat.mem.count - 1);
+    if (last === null || last.kind !== "unii") {
+      return;
+    }
+    const said = Tasks.promises_in(last.text);
+    if (said.length === 0 || Tasks.tasks_moved_since(Tasks.tasks_load(chat.mem.dir), began)) {
+      return;
+    }
+    Chat.note(chat, Tasks.promises_said(said));
   }
 
   // a turn's reply goes to no phone nor browser: only the pending list's
@@ -1319,8 +1351,9 @@ export namespace Chat {
           return { error: t };
         }
         const was = t ?? Tasks.task_find(s, msg.task);
-        // a choice that's an order to Unii (acts, R5) tells it at once
-        const go = msg.go === true || msg.go === "true" || (t !== null && t.state === "done" && Tasks.task_act(t) === "unii");
+        // a choice that's an order to Unii (acts, R5) tells it at once: an
+        // order received, open till Unii closes it with evidence
+        const go = msg.go === true || msg.go === "true" || (t !== null && Tasks.task_ordered(t) && !t.told);
         if (t !== null || (go && was !== null && !was.told)) {
           Chat.resolved(chat, [was!], go);
         }

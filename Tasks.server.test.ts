@@ -415,7 +415,9 @@ test("acts: picking an option of Unii's starts its turn at once, said as an orde
   expect(await act({ $: "task", task: r.id, state: "done", answer: Tasks.RESTART_YES })).toEqual({});
   await idle();
   expect(ASKED.length).toBe(before + 1);
-  expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain("[Pendências] Pendência " + r.id + " concluída pelo usuário: “Reiniciar com agentes rodando?”. Resposta: Sim, reinicie. Essa opção é uma ordem: cabe ao Unii executá-la.");
+  // (the evidence round: an order received, not closed; Unii's now)
+  expect(ASKED.at(-1)!.blocks.at(-1)!.text).toContain("[Pendências] Pendência " + r.id + " recebida como ordem do usuário: “Reiniciar com agentes rodando?”. Resposta: Sim, reinicie. Essa opção é uma ordem: cabe ao Unii executá-la; a pendência fica com o Unii e só fecha com a evidência da execução.");
+  expect(Tasks.task_find(s, r.id)).toMatchObject({ state: "open", assignee: "unii", order: { answer: Tasks.RESTART_YES }, evidence: [] });
   expect(chat.tell).toBeUndefined();
   const l = Tasks.task_new(s, { title: "Reiniciar depois?", kind: "restart" }, "main", Date.now()) as Tasks.Task;
   const mid = ASKED.length;

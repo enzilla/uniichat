@@ -98,6 +98,17 @@ const MADE = config_make(FILE);
 export const STARTED: Record<string, string> = Object.fromEntries(SETTINGS.map((s) => [s.key, config_value(FILE, s.key)]));
 
 export const SITE    = config_value(FILE, "site").replace(/\/$/, "");
+
+// how long a task of Unii's may stand still with no next_due before
+// it's overdue (the evidence round, TaskDeps.due_at), in hours: config
+// task_stall or UNII_TASK_STALL; 4 by default (not a number above 0:
+// the default)
+export const TASK_STALL_HOURS = config_hours(config_get("task_stall", "4"), 4);
+
+function config_hours(x: string, def: number): number {
+  const n = Number(String(x).trim().replace(",", "."));
+  return Number.isFinite(n) && n > 0 && n <= 24 * 30 ? n : def;
+}
 export const OFFER: Offer = MADE.offer;
 
 export let   AFTER      = MADE.after;
