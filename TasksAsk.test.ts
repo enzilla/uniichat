@@ -89,6 +89,62 @@ test("what isn't asked of the user: none (B1)", () => {
   expect(asks("Pergunto se você quer que eu mescle.")).toEqual(["Pergunto se você quer que eu mescle."]);
 });
 
+test("a request negated just before it asks nothing (P87 #2, B1)", () => {
+  expect(asks("Não depende de ordem sua.")).toEqual([]);
+  expect(asks("Isso não depende de você.")).toEqual([]);
+  expect(asks("Nenhum agente depende de ordem.")).toEqual([]);
+  expect(asks("Ele nem depende de você.")).toEqual([]);
+  expect(asks("Não cabe a você decidir.")).toEqual([]);
+  // the negation of another clause, or further before, doesn't cancel it
+  expect(asks("Não mesclei porque aguardo sua ordem.")).toEqual(["Não mesclei porque aguardo sua ordem."]);
+  expect(asks("Não, você decide.")).toEqual(["Não, você decide."]);
+  expect(asks("Isso não depende de ordem sua, mas preciso da sua decisão sobre o prazo.")).toEqual(["Isso não depende de ordem sua, mas preciso da sua decisão sobre o prazo."]);
+  // what asks still does
+  expect(asks("O merge e as tags dependem de ordem.")).toEqual(["O merge e as tags dependem de ordem."]);
+  expect(asks("Depende de você.")).toEqual(["Depende de você."]);
+});
+
+test("short confirmations, \"Me avise\", whose call it is, and the user's name ask (P87 #2, B2)", () => {
+  const one = (x: string, names: string[] = []) => expect(T.questions_in(x, new Set(), names)).toEqual([x]);
+  one("Ok?");
+  one("Vale?");
+  one("Pode ser?");
+  one("Me avise.");
+  one("Me avise quando puder.");
+  one("Quem decide é você.");
+  one("Cabe a você decidir.");
+  one("Depende da ordem do Guilherme.", ["Guilherme"]);
+  one("Aguardando resposta do Guilherme.", ["Guilherme"]);
+  expect(asks("Mesclo agora. Ok?")).toEqual(["Ok?"]);
+  // the user's name unknown (no owner_name): another's, as before
+  expect(asks("Depende da ordem do Guilherme.")).toEqual([]);
+  // another's still not, with the user's name known
+  const none = (x: string) => expect(T.questions_in(x, new Set(), ["Guilherme"])).toEqual([]);
+  none("O deploy depende de ordem do Enzo.");
+  none("Depende da ordem do Enzo, não do Guilherme.");
+  none("Aguardando resposta do Enzo");
+  none("O Enzo me avisou.");
+  // the false positives fixed before stay fixed
+  none("O Enzo quer que eu mescle?");
+  none("Alguém sabe por que falhou?");
+  none("Não testado: hom?");
+  none("depende de ordem do Enzo");
+});
+
+test("known limits, kept as documented (P87 #2, B3 and B4)", () => {
+  // B3: "Rodei x? ok.": two words and "?", read as a question
+  expect(asks("Rodei x? ok.")).toEqual(["Rodei x?"]);
+  // B4: question_tasked: a word in common with an unrelated task of the
+  // user's made in the turn spares a question
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ask-"));
+  const s = T.tasks_load(dir);
+  const now = Date.now();
+  T.task_new(s, { title: "Revisar o hospitalar#700", origin: "chat" }, "main", now + 10);
+  expect(T.question_tasked(s, "Quer que eu mescle o hospitalar?", now)).toBe(true);
+  T.tasks_forget();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("a question tied by id to an open task of the user's is that task's", () => {
   expect(asks("A P86 segue aberta: mesclo os três como admin?", ["P86"])).toEqual([]);
   // the id of a task not open (or not the user's): still a question

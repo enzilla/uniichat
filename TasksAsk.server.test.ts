@@ -65,7 +65,7 @@ test("a turn ending in a question to the user with no task of theirs: the serve 
   await turn("Os três estão aprovados, sem ressalvas. Quer que eu mescle como admin e crie as tags?");
   const made = asked();
   expect(made).toHaveLength(1);
-  const t = made[0];
+  const t = made[0]!;
   expect([t.assignee, t.origin, t.kind, t.by]).toEqual(["user", "chat", "decision", "trava"]);
   expect(t.detail).toContain("“Quer que eu mescle como admin e crie as tags?”");
   expect(last().kind).toBe("note");
@@ -74,7 +74,7 @@ test("a turn ending in a question to the user with no task of theirs: the serve 
   // the next question, while that one is open: added to it, no other
   await turn("Aguardo sua ordem para aplicar o #1127.");
   expect(asked()).toHaveLength(1);
-  expect(asked()[0].detail).toContain("“Aguardo sua ordem para aplicar o #1127.”");
+  expect(asked()[0]!.detail).toContain("“Aguardo sua ordem para aplicar o #1127.”");
   Tasks.task_resolve(Tasks.tasks_load(dir), t.id, "dropped", null, null, Date.now());
 });
 
@@ -97,7 +97,7 @@ test("with a task of the user's made in the turn, or no question, nothing", asyn
   });
   expect(asked()).toHaveLength(1);
   expect(last().text).toStartWith("Pergunta sem pendência: o Unii perguntou “E o deploy, faço hoje?”");
-  Tasks.task_resolve(Tasks.tasks_load(dir), asked()[0].id, "dropped", null, null, Date.now());
+  Tasks.task_resolve(Tasks.tasks_load(dir), asked()[0]!.id, "dropped", null, null, Date.now());
   // no question; a question in code or quoted; one Unii answers itself
   count = chat.mem.count;
   await turn("Mesclei os três e criei as tags.");
@@ -114,7 +114,7 @@ test("a task of the user's about something else, made in the turn, doesn't spare
   expect(asked()).toHaveLength(1);
   expect(last().kind).toBe("note");
   expect(last().text).toStartWith("Pergunta sem pendência: o Unii perguntou “Quer que eu mescle o hospitalar?”");
-  Tasks.task_resolve(Tasks.tasks_load(dir), asked()[0].id, "dropped", null, null, Date.now());
+  Tasks.task_resolve(Tasks.tasks_load(dir), asked()[0]!.id, "dropped", null, null, Date.now());
   for (const t of Tasks.tasks_load(dir).tasks.filter((x) => x.state === "open" && x.title === "Assinar o ritsu.lock")) {
     Tasks.task_resolve(Tasks.tasks_load(dir), t.id, "dropped", null, null, Date.now());
   }
@@ -129,6 +129,29 @@ test("a reply in a task's thread (the user wrote there) is that task's: nothing"
   expect(chat.mem.count).toBe(count + 1);
   expect(asked()).toHaveLength(0);
   expect(Tasks.tasks_load(dir).tasks.find((x) => x.id === t.id)!.thread.at(-1)!.text).toBe("Resumo: CI verde, verificação limpa. Mesclo?");
+});
+
+test("the user's name (config owner_name): a request on their order is theirs (P87 #2)", async () => {
+  const names = config.OWNER_NAMES as string[];
+  const had = names.splice(0);
+  try {
+    let count = chat.mem.count;
+    await turn("Depende da ordem do Guilherme.");
+    expect(chat.mem.count).toBe(count + 1);
+    expect(asked()).toHaveLength(0);
+    names.push("Guilherme");
+    await turn("Depende da ordem do Guilherme.");
+    expect(asked()).toHaveLength(1);
+    expect(last().text).toStartWith("Pergunta sem pendência: o Unii perguntou “Depende da ordem do Guilherme.”");
+    Tasks.task_resolve(Tasks.tasks_load(dir), asked()[0]!.id, "dropped", null, null, Date.now());
+    // negated: nothing
+    count = chat.mem.count;
+    await turn("Isso não depende de você.");
+    expect(chat.mem.count).toBe(count + 1);
+    expect(asked()).toHaveLength(0);
+  } finally {
+    names.splice(0, names.length, ...had);
+  }
 });
 
 test("a turn halted (a note last): nothing", async () => {

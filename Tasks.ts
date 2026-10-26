@@ -2465,8 +2465,12 @@ export function promises_said(said: string[]): string {
 //   decide", "preciso que você decida", "falta só a sua aprovação",
 //   "depende de ordem (sua)", "se quiser, posso …", "quando quiser,
 //   aplico", "pode confirmar o merge", "let me know", "should I"
-//   (ASK_WORDS, ASK_START); one about another's ("depende de ordem do
-//   Enzo", "aguardando resposta do Enzo") doesn't;
+//   (ASK_WORDS, ASK_START), or a short confirmation ("Ok?", "Vale?":
+//   ASK_CONFIRM); one about another's ("depende de ordem do Enzo",
+//   "aguardando resposta do Enzo") doesn't, nor one negated just before
+//   it ("Não depende de ordem sua.", "Nenhum agente depende de ordem.":
+//   ASK_NEGATION), but one on the order of the user's name (config
+//   owner_name: "Depende da ordem do Guilherme.") does;
 // - but one reporting a question ("Enzo perguntou: …?", "Perguntei ao
 //   Enzo se quer que eu mescle": ASK_REPORTED) only if it asks in words
 //   too ("…, depende de ordem");
@@ -2483,7 +2487,10 @@ export function promises_said(said: string[]): string {
 // trailing pages, at most 8), so a question in an earlier message of the
 // turn, followed by tools, isn't; at most 3 questions per reply go in the
 // task, the rest left out (the reply is in the chat still); a word in
-// common with an unrelated task made in the turn spares a question.
+// common with an unrelated task made in the turn spares a question (B4:
+// "Revisar o hospitalar#700" spares "Quer que eu mescle o hospitalar?");
+// a short phrase with "?" that isn't a question counts (B3: "Rodei x?
+// ok." asks "Rodei x?").
 
 // marks that a question is put to the user (no accents, lower, whole)
 const ASK_YOU = /\b(?:voce|voces|vc|vcs|senhor|quer|queira|queres|prefere|prefira|posso|podemos|devo|devemos|deseja|desejas|confirma|confirme|autoriza|autorize|aprova|aprove|concorda|topa|pode|poderia|consegue|sigo|seguimos|mesclo|aplico|reinicio|fecho|envio|mando|abro|crio|faco|publico|respondo|ignoro|descarto|aguardo|seu|sua|seus|suas|te|lhe|contigo|you|your|shall|should i|can i|may i|que tal)\b/;
@@ -2519,7 +2526,7 @@ const ASK_WORDS = new RegExp([
   "\\baguard(?:o|ando|amos)(?: a| o)? (?:sua|seu|tua|teu|suas|seus) ",
   "\\baguard(?:o|ando|amos)(?: a| o| uma| um)? " + ASK_WANT + "\\b" + ASK_NOT_OTHERS,
   "\\bfico no aguardo\\b",
-  "\\bme (?:diga|diz|avise|avisa|fale|fala|confirme|confirma|responda|responde|mande|manda|passe|passa) ",
+  "\\bme (?:diga|diz|avise|avisa|fale|fala|confirme|confirma|responda|responde|mande|manda|passe|passa)\\b",
   "\\b(?:diga|digam|confirme|responda|escolha|decida|informe|indique)(?: me)? (?:se|qual|quais|quando|como|o que|onde|quanto)\\b",
   "(?:^|[,;:] ?|\\b(?:entao|mas|e|aqui) )(?:voce|vc) (?:que )?(?:decide|escolhe|manda|define)\\b",
   "\\b(?:a )?(?:decisao|escolha) (?:e|fica) (?:sua|tua)\\b|\\ba (?:seu|teu) criterio\\b",
@@ -2528,10 +2535,20 @@ const ASK_WORDS = new RegExp([
   "\\bfalta(?:m)?(?: so| apenas| somente)?(?: a| o| as| os)? (?:sua|seu|suas|seus|tua|teu) ",
   "\\b(?:depende|dependem)(?: so| apenas)? (?:de|da|do) (?:uma |sua |tua )?" + ASK_WANT + "\\b" + ASK_NOT_OTHERS,
   "\\b(?:depende|dependem) de voce\\b",
+  "\\bquem (?:decide|escolhe|define|manda|aprova|autoriza) (?:e|sera|vai ser) (?:voce|vc)\\b",
+  "\\bcabe(?: so| apenas)? a (?:voce|vc|ti)\\b",
   "\\bse (?:voce )?(?:quiser|preferir|autorizar|mandar|aprovar|concordar)\\b[^.!?\\n]{0,40}\\b(?:posso|vou|faco|mesclo|sigo|abro|crio|aplico|reinicio|publico|envio|rodo|fecho|monto|preparo|deixo|mando|ajusto|corrijo)\\b",
   "\\bquando (?:voce |vc )?(?:quiser|preferir|puder|mandar|autorizar|liberar|der (?:o )?(?:ok|aval|sinal))\\b",
   "\\blet me know\\b|\\bshould i\\b|\\bwant me to\\b|\\bdo you want\\b",
 ].join("|"));
+// ... each found, to see what comes before it
+const ASK_WORDS_ALL = new RegExp(ASK_WORDS.source, "g");
+// a negation just before a request (in its clause, at most 2 words
+// before it): "Não depende de ordem sua.", "Isso não depende de você.",
+// "Nenhum agente depende de ordem." ask nothing
+const ASK_NEGATION = /\b(?:nao|nem|nunca|jamais|nenhum|nenhuma|nada|ninguem|not|no|never|nobody|nothing)\b/;
+// a confirmation asked in a word or two ("Ok?", "Vale?", "Pode ser?")
+const ASK_CONFIRM = /^(?:e\s+)?(?:ok|okay|vale|certo|beleza|blz|fechado|combinado|bora|pode ser|tudo bem|tudo certo|ta bom|ta certo|ta ok|de acordo|faz sentido|sim ou nao|right|alright|sounds good)\s*\?+$/;
 // a request as the sentence starts: "Pode confirmar o merge", "Confirme"
 const ASK_START = /^(?:por favor,? )?(?:(?:voce |vc )?(?:pode|poderia|podes|consegue|conseguiria) (?:me )?(?:confirmar|aprovar|autorizar|decidir|escolher|responder|dizer|avisar|mandar|dar|olhar|revisar|validar|assinar|aplicar|mesclar|rodar|testar|reiniciar|liberar|ver|checar)\b|(?:confirme|aprove|autorize|escolha|decida|responda|assine|diga)\b)/;
 
@@ -2549,12 +2566,43 @@ function ask_fold(x: string): string {
   return x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
+// whether a sentence (folded) asks in words (ASK_WORDS), one request in
+// it not negated just before (ASK_NEGATION)
+function ask_in_words(s: string): boolean {
+  for (const m of s.matchAll(ASK_WORDS_ALL)) {
+    let at = m.index;
+    while (at < s.length && !/[a-z0-9]/.test(s[at] ?? "")) {
+      at++;
+    }
+    const clause = s.slice(0, at).split(/[,;:()]/).pop() ?? "";
+    const before = (clause.match(/[a-z0-9]+/g) ?? []).slice(-2).join(" ");
+    if (!ASK_NEGATION.test(before)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// a sentence (folded) with the user's names (`names`, as said: "do
+// Guilherme") as the user ("sua"): "Depende da ordem do Guilherme." is
+// a request to the user, "depende de ordem do Enzo" isn't
+function ask_owner(s: string, names: string[]): string {
+  let out = s;
+  for (const name of names) {
+    const n = ask_fold(name).trim().replace(/[^a-z0-9 ]/g, "");
+    if (n.length >= 2) {
+      out = out.replace(new RegExp("\\b(?:d[oa]s?|de) " + n.replace(/ +/g, " +") + "\\b", "g"), "sua");
+    }
+  }
+  return out;
+}
+
 // whether a sentence (`raw`, as written) asks the user something; `more`:
-// more is said after it in its paragraph
-function ask_one(raw: string, more: boolean): boolean {
-  const s = ask_fold(raw);
+// more is said after it in its paragraph; `names`: the user's
+function ask_one(raw: string, more: boolean, names: string[] = []): boolean {
+  const s = ask_owner(ask_fold(raw), names);
   if (ASK_REPORTED.test(s)) {
-    return ASK_WORDS.test(s);
+    return ask_in_words(s);
   }
   // its last clause: "A P86 segue aberta: mesclo?" asks "mesclo?"
   const cut = raw.lastIndexOf(": ");
@@ -2564,7 +2612,7 @@ function ask_one(raw: string, more: boolean): boolean {
     return false;
   }
   if (/\?\s*$/.test(c)) {
-    if (ASK_BARE.test(c) || ASK_CHOICE.test(c)) {
+    if (ASK_BARE.test(c) || ASK_CHOICE.test(c) || ASK_CONFIRM.test(c)) {
       return true;
     }
     if (ASK_RHETORIC.test(c) && more) {
@@ -2576,12 +2624,13 @@ function ask_one(raw: string, more: boolean): boolean {
       }
     }
   }
-  return ASK_OFFER.test(s) || ASK_WORDS.test(s) || ASK_START.test(c);
+  return ASK_OFFER.test(s) || ask_in_words(s) || ASK_START.test(c);
 }
 
 // the questions to the user in a text (each a sentence, at most 3), but
-// those tied by id to a task in `open_ids` (the user's open ones)
-export function questions_in(text: string, open_ids: Set<string> = new Set()): string[] {
+// those tied by id to a task in `open_ids` (the user's open ones);
+// `names`: the user's, as the chat calls them (config owner_name)
+export function questions_in(text: string, open_ids: Set<string> = new Set(), names: string[] = []): string[] {
   const out: string[] = [];
   for (const para of ask_plain(text).split(/\n\s*\n/)) {
     const ids = para.match(/\bP\d{1,15}\b/g) ?? [];
@@ -2592,7 +2641,7 @@ export function questions_in(text: string, open_ids: Set<string> = new Set()): s
       .map((m) => m[0].replace(/^[\s\-*•\d.)]+/, "").trim())
       .filter((raw) => ask_fold(raw).length >= 2);
     for (const [i, raw] of sentences.entries()) {
-      if (!ask_one(raw, i < sentences.length - 1)) {
+      if (!ask_one(raw, i < sentences.length - 1, names)) {
         continue;
       }
       const said = text_line(raw, 200);

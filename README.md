@@ -88,7 +88,14 @@ Features
   about something else doesn't count. Limits: only the turn's last reply is
   read (a question in an earlier message of the turn, followed by tools,
   isn't seen); at most 3 questions of a reply go in the task; a rhetorical
-  question said last, or a request in other words, may be misread.
+  question said last, or a request in other words, may be misread; a
+  short phrase with "?" that isn't a question counts ("Rodei x? ok."
+  asks "Rodei x?"); a word in common with a task of yours made in the
+  turn about something else spares a question ("Revisar o hospitalar#700"
+  spares "Quer que eu mescle o hospitalar?"). A request negated just
+  before it ("Não depende de ordem sua.", "Nenhum agente depende de
+  ordem.") asks nothing; one on the order of your name ("Depende da ordem
+  do Guilherme.") asks you only with `owner_name` set.
   Terminal: `/mesa [projeto]`, `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
   `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
   `/descartar`, `/reabrir`, `/avisar`.
@@ -162,6 +169,9 @@ Settings page). Each may also be set as `UNII_<KEY>`, which wins. Besides
 - `apple`, `apns`: the iOS app's (ios/) App ID and push key id.
 - `task_stall`: hours a task of Unii's may stand still, with no
   `next_due`, before it's overdue (4 by default; read at the start).
+- `owner_name`: your names as the chat calls you, comma-separated
+  ("Guilherme"), so "depende da ordem do Guilherme" is a question to you
+  (none by default; read at the start).
 
 The prompts: `~/.unii/prompt.md` (every turn; subagents get it too)
 and `~/.unii/compact.md` (every summary, nothing else) replace the

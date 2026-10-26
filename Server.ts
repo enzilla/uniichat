@@ -834,7 +834,7 @@ export namespace Chat {
     }
     const s = Tasks.tasks_load(chat.mem.dir);
     const open = new Set(s.tasks.filter((t) => t.state === "open" && t.assignee === "user").map((t) => t.id));
-    const said = Tasks.questions_in(reply, open).filter((q) => !Tasks.question_tasked(s, q, began));
+    const said = Tasks.questions_in(reply, open, config.OWNER_NAMES).filter((q) => !Tasks.question_tasked(s, q, began));
     if (said.length === 0) {
       return;
     }
