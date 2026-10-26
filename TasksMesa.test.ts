@@ -327,7 +327,7 @@ test("terminal words: a quote left open or text stuck after the closing one is r
   expect(View.task_args(v, "P1 obs=“curva sem fechar", true)).toBe(open);
   expect(View.task_args(v, "P1 obs=\"", true)).toBe(open);
   expect(View.task_args(v, "P1 obs=\"a\"b", true)).toBe(stuck);
-  expect(View.task_args(v, "P1 obs=\"a b\"c d", true)).toBe(open);
+  expect(View.task_args(v, "P1 obs=\"a b\"c d", true)).toBe(stuck);
   expect(View.task_args(v, "P1 3=“a”b", true)).toContain("O valor de “3” tem texto colado");
   // closed ones still pass, also empty and at the end
   const ok = View.task_args(v, "P1 obs=\"\" amb=hom fim", true);
@@ -387,4 +387,19 @@ test("web: fields and thread drawn escaped, drafts checked, whose turn shown; Un
   expect(html).toContain('class="task user talk-user"');
   T.task_say(s, "P1", "e?", NOW);
   expect(Html.tasks_html(T.tasks_view(s, NOW)).open[0]).toContain('<span class="talk unii">aguardando o Unii</span>');
+});
+
+test("a failed turn's why goes to the thread waiting for Unii; a reply of Unii's wins over it; an empty why reads as none", () => {
+  const s = T.tasks_load(dir);
+  add(s, { title: "Mesclar" });
+  T.task_say(s, "P1", "Posso?", NOW);
+  T.tasks_talked(s, null, NOW, "no API key: set ANTHROPIC_API_KEY");
+  expect(T.task_find(s, "P1")!.thread.at(-1)!.text).toBe("O Unii não conseguiu responder (no API key: set ANTHROPIC_API_KEY). Escreva de novo aqui para tentar outra vez.");
+  expect(T.task_find(s, "P1")!.talk).toBe("user");
+  T.task_say(s, "P1", "E agora?", NOW);
+  T.tasks_talked(s, "Pode.", NOW, "down");
+  expect(T.task_find(s, "P1")!.thread.at(-1)!.text).toBe("Pode.");
+  T.task_say(s, "P1", "Ok", NOW);
+  T.tasks_talked(s, null, NOW, "  ");
+  expect(T.task_find(s, "P1")!.thread.at(-1)!.text).toBe("O Unii não respondeu aqui; veja a conversa principal.");
 });

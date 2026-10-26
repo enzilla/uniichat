@@ -36,7 +36,10 @@ import { INSTALL, INSTALL_PS1 } from "./Update.ts";
 import { move_over, write_whole } from "./Write.ts";
 import * as Tailnet from "./Tailnet.ts";
 import * as Timer from "./Timer.ts";
+import * as TaskPush from "./TaskPush.ts";
 import * as Tasks from "./Tasks.ts";
+import * as Restart from "./Restart.ts";
+import * as Pipeline from "./Pipeline.ts";
 import { PROMPTS, SEARCHES, Tools, type Agent, type Live } from "./Tools.ts";
 import { FRAME, IMAGES, live_push, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
@@ -116,6 +119,7 @@ type Chat = {
   held  : Array<() => void> | null;
   limits: Record<string, Parked>;
   fell  : Map<string, string>;
+  tell  : ReturnType<typeof setTimeout> | undefined; // its wait to tell the user's resolutions (Chat.tell_soon), while one runs
 };
 
 // Constants
@@ -134,6 +138,8 @@ const WIN        = process.platform === "win32";
 const PID        = config.DIR + "/server.pid";
 // where the chat is
 const CHAT       = config.DIR + "/chat";
+// a failed turn's note's start (Chat.failed; Chat.talked reads its why)
+const NO_REPLY   = "No reply: ";
 // a turn's head
 const HEAD       = "Turn: the user's new message:\n\n";
 // a goal's check (Chat.check): its own system prompt, asked after the
@@ -161,6 +167,9 @@ const TIMER_TEXT = 200;
 const RING       = 60000;
 const WAKE       = 60000;
 
+// how often the pending list is looked at for pushes (TaskPush.ts), ms
+const TASK_PUSH  = 15000;
+
 // the acts with a body (Chat.post)
 const BODIES     = ["say", "import", "voice"];
 
@@ -175,6 +184,9 @@ const PIECE      = 2 ** 16;
 
 // the paths of the owner's, but /api/'s (the rest: the site's files)
 const OWN        = ["/ws", "/tree", "/export"];
+
+// the most an inbox post holds (Main.inbox)
+const INBOX_BODY = 16 * 1024;
 
 // the chat's first message, ending in the installer of the terminal
 // (Term.ts), and its line
@@ -199,14 +211,34 @@ const WEB: Record<string, string> = {
   "/sw.js"          : sw_js,
 };
 
-// the settings page, drawn by the site's page
+// the settings page and the pipeline's panel, drawn by the site's page
 WEB["/settings"] = WEB["/"];
+WEB["/pipeline"] = WEB["/"];
+
+// the site's build, in each state: a page opened on another one (the
+// server restarted with a new site) reloads (main.ts), as it would
+// misread what changed ("": unread, none reloads)
+export const WEB_BUILD = web_build();
+function web_build(): string {
+  try {
+    return Bun.hash(fs.readFileSync(app_js)).toString(36) + "." + Bun.hash(fs.readFileSync(style_css)).toString(36);
+  } catch {
+    return "";
+  }
+}
 
 // Chat
 // ====
 
 // the server's timer for the chat's first schedule due (Chat.timed)
 let bell: ReturnType<typeof setTimeout> | undefined;
+
+// the user's resolutions of the pending list reach Unii on their own
+// (P1, 25/10/2026): the first one untold starts a wait of TELL.ms, and
+// all those resolved by its end go in one "[Pendências]" message
+// (Chat.tell_soon); the wait is each chat's own (chat.tell), so one
+// chat's never holds back, nor tells, another's
+export const TELL: { ms: number } = { ms: 60000 };
 
 export namespace Chat {
 
@@ -223,12 +255,14 @@ export namespace Chat {
       timed  : () => Chat.timed(chat),
       pick   : () => chat.pick,
       halt   : () => chat.halt.signal,
+      restart : (how) => Chat.restart(how),
+      agents  : () => Chat.agents_md(chat),
     });
     const pick = Pick.load(mem.pick, config.OFFER, config.PICK);
     const chat: Chat = {
       mem, tools, pick, socks: new Set(), acts: new Map(), busy: false, call: null, model: "", check: null, asked: false, open: 0, sent: [], wait: [],
       halt: new AbortController(), live: [], calls: {}, eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null,
-      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(),
+      writes: Promise.resolve(), held: null, limits: {}, fell: new Map(), tell: undefined,
     };
     // a saved pick (a profile, by name) not offered gave way: told once
     const shown = (p: Pick) => p.profile ?? Pick.label(p);
@@ -246,10 +280,54 @@ export namespace Chat {
     mem.wait.add(() => Chat.progress(chat));
     chat.batch = Chat.resumed(chat);
     Chat.timed(chat);
+    // resolutions left untold by the server before (it stopped while
+    // one waited): told as any other
+    if (Tasks.tasks_untold(Tasks.tasks_load(mem.dir)).some((t) => !t.freed)) {
+      Chat.tell_soon(chat, false);
+    }
     Memory.pump(mem);
     Chat.progress(chat);
     Chat.resume(chat, mem.work).finally(() => Chat.change(chat)).catch((err) => console.error("unii: resuming the chat: " + (err?.message ?? err)));
+    Chat.back(chat);
+    // AGENTES.md as the server starts: an agent the server before left at
+    // work, and not resumed, is said cut (after the boot, not in its way)
+    setTimeout(() => Chat.agents_md(chat), 0);
     return chat;
+  }
+
+  // AGENTES.md written again (Pipeline.agents_md): as an agent starts
+  // (Tools.run) or ends (Chat.report), and as the server starts
+  export function agents_md(chat: Chat): void {
+    Pipeline.agents_md(Tasks.tasks_load(chat.mem.dir), chat.mem.dir, new Set(Tools.working(chat.tools).map((a) => a.name)));
+  }
+
+  // a restart Unii asked (the restart tool, Restart.ts) taken as the
+  // server starts: said in the chat (after, as it was before), and what
+  // Unii gave to resume, a message that starts its turn, as a timer's
+  // does, so work goes on with no prompt of the user's
+  export function back(chat: Chat): void {
+    const mark = Restart.mark_take(chat.mem.dir);
+    if (mark === null) {
+      return;
+    }
+    Chat.note(chat, Restart.said_after(mark));
+    Chat.hold(chat, () => Chat.take(chat, { ...Chat.push(chat, null, "work", Restart.resume_said(mark)), origin: "timer" }));
+  }
+
+  // the process restarted, as the restart tool asked (Restart.DELAY on,
+  // so its answer and the chat's note reach the views): a command run
+  // apart from it (UNII_RESTART), or its exit, systemd starting it again
+  export function restart(how: Restart.How): void {
+    setTimeout(() => {
+      if (how === "exit") {
+        console.log("unii: restarting, as Unii asked (the restart tool): exiting for systemd to start it again");
+        process.exit(0);
+      }
+      if (how !== null) {
+        console.log("unii: restarting, as Unii asked (the restart tool): " + how.cmd);
+        Bun.spawn(["setsid", "-f", "sh", "-c", how.cmd], { stdio: ["ignore", "ignore", "ignore"] });
+      }
+    }, Restart.DELAY);
   }
 
   // what a call of the chat starts with: its system prompt, the user
@@ -386,7 +464,6 @@ export namespace Chat {
       chat.busy = false;
       Chat.live(chat, null, []);
       Chat.tasks_talked(chat);
-      Chat.phone(chat);
       Chat.after(chat);
       Chat.change(chat);
     }
@@ -531,7 +608,7 @@ export namespace Chat {
 
   // a failed turn's why, as a note
   export function failed(chat: Chat, why: string): void {
-    Chat.note(chat, "No reply: " + why.replace(/\.$/, "") + ". Send a message to try again.");
+    Chat.note(chat, NO_REPLY + why.replace(/\.$/, "") + ". Send a message to try again.");
   }
 
   // a note in the chat, why work ended as it did
@@ -697,6 +774,9 @@ export namespace Chat {
         Chat.take(chat, msg);
       }
       Chat.change(chat);
+      // its last words logged (held as they came, before this): AGENTES.md
+      // says how it ended
+      Chat.agents_md(chat);
     });
   }
 
@@ -710,15 +790,33 @@ export namespace Chat {
       return;
     }
     const last = Memory.message(chat.mem, chat.mem.count - 1);
-    Tasks.tasks_talked(s, last !== null && last.kind === "unii" ? last.text : null, Date.now());
+    // the turn failed (Chat.failed's note last): its why in the thread too
+    const why = last !== null && last.kind === "note" && last.text.startsWith(NO_REPLY) ? last.text.slice(NO_REPLY.length).replace(/\. Send a message to try again\.$/, "") : null;
+    Tasks.tasks_talked(s, last !== null && last.kind === "unii" ? last.text : null, Date.now(), why);
   }
 
-  // a turn's last message, Unii's reply or why there was none, to the
-  // owner's phones and browsers (Push.notify)
-  export function phone(chat: Chat): void {
-    const last = Memory.message(chat.mem, chat.mem.count - 1);
-    if (last !== null && (last.kind === "unii" || last.kind === "note")) {
-      Push.notify(Owner.open(), last.text);
+  // a turn's reply goes to no phone nor browser: only the pending list's
+  // pushes do (task_push), so the user is called only when a task needs them
+
+  // the pending list looked at (TaskPush.ts): tasks made or freed for the
+  // user, together, and the day's late ones, pushed to the owner's phones
+  // (once) and browsers (tried again, only those it didn't go to: a tap
+  // opens the Mesa, sw.js); never throws
+  export async function task_push(chat: Chat, now = Date.now(), wait?: (ms: number) => Promise<unknown>): Promise<TaskPush.Notice[]> {
+    const done = new Map<TaskPush.Notice, Set<string>>();
+    try {
+      return await TaskPush.look(chat.mem.dir, Tasks.tasks_load(chat.mem.dir).tasks, now, (n, try_) => {
+        const db = Owner.open();
+        if (try_ === 0) {
+          Push.phones(db, n.text);
+        }
+        const to = done.get(n) ?? new Set<string>();
+        done.set(n, to);
+        return Push.deliver(db, n.text, { kind: "tasks", tasks: n.count, ids: n.ids }, to);
+      }, wait);
+    } catch (err: any) {
+      console.error("unii: the pending list's pushes failed: " + (err?.stack ?? err));
+      return [];
     }
   }
 
@@ -1061,7 +1159,7 @@ export namespace Chat {
     const tasks = Tasks.tasks_view(Tasks.tasks_load(chat.mem.dir), Date.now());
     const skills = Tools.opened(chat.tools).flatMap(([device, d]) => d.skills.map((s) => ({ name: s.name, description: s.description, device })));
     const talk = chat.mem.talk === null ? null : { from: chat.mem.talk, used: Math.min(1, Memory.talk_size(chat.mem) / TALK) };
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, skills, talk };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, runs, labels, pick: chat.pick, ...config.OFFER, importing, limits: chat.limits, timers, mcp, tasks, skills, talk, web: WEB_BUILD };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1318,10 +1416,14 @@ export namespace Chat {
         if (typeof t === "string") {
           return { error: t };
         }
-        const go = msg.go === true || msg.go === "true";
         const was = t ?? Tasks.task_find(s, msg.task);
+        // a choice that's an order to Unii (acts, R5) tells it at once
+        const go = msg.go === true || msg.go === "true" || (t !== null && t.state === "done" && Tasks.task_act(t) === "unii");
         if (t !== null || (go && was !== null && !was.told)) {
           Chat.resolved(chat, [was!], go);
+        }
+        if (!go && t !== null) {
+          Chat.tell_soon(chat);
         }
         Chat.change(chat);
         return {};
@@ -1363,14 +1465,36 @@ export namespace Chat {
     return { error: "No act " + msg.$ + "." };
   }
 
-  // the user's resolutions of the pending list, in the chat: a note (Unii
-  // sees them in its next turn's block), or, go, told now by a
-  // "[Pendências]" message taken as a report is
-  export function resolved(chat: Chat, tasks: Tasks.Task[], go: boolean): void {
-    const text = tasks.map(Tasks.task_said).join("\n");
-    if (!go) {
-      return Chat.note(chat, text);
+  // the user's resolutions untold, told by one message once TELL.ms pass
+  // from the first (those told meanwhile, by a turn or "Avisar o Unii
+  // agora", not again; none left: nothing)
+  // (noted: each said by its note already; false for those left untold
+  // by a server before, whose note may not have been written)
+  export function tell_soon(chat: Chat, noted = true): void {
+    if (chat.tell !== undefined) {
+      return;
     }
+    chat.tell = setTimeout(() => {
+      chat.tell = undefined;
+      const told = Tasks.tasks_tell(Tasks.tasks_load(chat.mem.dir));
+      if (told.length > 0) {
+        Chat.resolved(chat, told, true, noted);
+      }
+    }, TELL.ms);
+    (chat.tell as any).unref?.();
+  }
+
+  // the user's resolutions of the pending list, in the chat: a note (Unii
+  // sees them in its next turn's block, or by tell_soon's message), or,
+  // go, told now by a "[Pendências]" message taken as a report is
+  // (noted: each was said by its note already, as every resolution
+  // without go is: the message names them only, not their text again,
+  // R4: Tasks.tasks_noted_said)
+  export function resolved(chat: Chat, tasks: Tasks.Task[], go: boolean, noted = false): void {
+    if (!go) {
+      return Chat.note(chat, tasks.map(Tasks.task_said).join("\n"));
+    }
+    const text = noted ? Tasks.tasks_noted_said(tasks) : tasks.map(Tasks.task_said).join("\n");
     Tasks.tasks_told(Tasks.tasks_load(chat.mem.dir), new Map(tasks.map((t) => [t.id, t.rev])));
     Chat.hold(chat, () => {
       Chat.take(chat, Chat.push(chat, null, "work", "[Pendências] " + text));
@@ -1605,6 +1729,12 @@ export namespace Main {
         const out = await Chat.apply(chat, msg, "");
         return Response.json(out, { status: out.status ?? (out.error === undefined ? 200 : 400) });
       }
+      case "/api/pipeline": {
+        // the pipeline's panel (Pipeline.ts): its fronts, the PRs read live
+        // so far (refreshing: some are being read; the page asks again)
+        const working = new Set(Tools.working(chat.tools).map((a) => a.name));
+        return Response.json(Pipeline.panel(Tasks.tasks_load(mem.dir), mem.dir, working, Date.now()));
+      }
       case "/api/imported": {
         return Response.json(Chat.done(chat));
       }
@@ -1643,6 +1773,54 @@ export namespace Main {
     return Response.json(read());
   }
 
+  // a task of the user's from outside (Tasks.task_inbox): a POST of JSON
+  // { id, task } bearing the inbox token (Owner.inbox_is), nothing else
+  // (not the owner's cookie). id: the post's own (letters, digits, . : _
+  // -), so one sent again (its answer lost) is done once, answered the
+  // same. No turn: the views are told the list changed
+  export async function inbox(chat: Chat, req: Request): Promise<Response> {
+    if (req.method !== "POST") {
+      return Response.json({ error: "POST only." }, { status: 405 });
+    }
+    if (!Owner.inbox_is(req)) {
+      return Response.json({ error: "No inbox token (unii serve inbox)." }, { status: 401 });
+    }
+    if (!/^application\/json\b/i.test(req.headers.get("content-type") ?? "")) {
+      return Response.json({ error: "Send JSON (content-type: application/json)." }, { status: 415 });
+    }
+    if (Number(req.headers.get("content-length") ?? 0) > INBOX_BODY) {
+      return Response.json({ error: "At most " + INBOX_BODY + " bytes." }, { status: 413 });
+    }
+    const text = await req.text();
+    if (Buffer.byteLength(text) > INBOX_BODY) {
+      return Response.json({ error: "At most " + INBOX_BODY + " bytes." }, { status: 413 });
+    }
+    let msg: any = null;
+    try {
+      msg = JSON.parse(text);
+    } catch {}
+    const id = typeof msg?.id === "string" && /^[A-Za-z0-9][A-Za-z0-9.:_-]{0,119}$/.test(msg.id) ? "inbox:" + msg.id : null;
+    if (id === null) {
+      return Response.json({ error: "Send { id, task }: id of letters, digits, . : _ - (at most 120)." }, { status: 400 });
+    }
+    const odd = Object.keys(msg).filter((k) => k !== "id" && k !== "task");
+    if (odd.length > 0) {
+      return Response.json({ error: "Send { id, task } only; unknown key(s): " + odd.slice(0, 5).map((k) => Tasks.text_line(k, 40)).join(", ") + "." }, { status: 400 });
+    }
+    const was = Owner.act_get(id);
+    if (was !== null) {
+      return Response.json({ ...was, again: true });
+    }
+    const got = Tasks.task_inbox(Tasks.tasks_load(chat.mem.dir), msg.task, Date.now());
+    if (typeof got === "string") {
+      return Response.json({ error: got }, { status: 400 });
+    }
+    const ans = { task: got.task.id, made: got.made };
+    Owner.act_put(id, ans);
+    Chat.change(chat);
+    return Response.json(ans, { status: got.made ? 201 : 200 });
+  }
+
   // a request. Another site's page (its browser says so: Sec-Fetch-Site)
   // only links here: it posts nothing, reaches no /api/ and opens no
   // socket, so no site acts for the owner's browser
@@ -1655,7 +1833,7 @@ export namespace Main {
     try {
       // one of the owner's tailnet nodes, with no session: given its own
       // (Tailnet.ts); a browser keeps it as its cookie
-      const adopted = await Tailnet.adopt(req, server.requestIP(req)?.address ?? null);
+      const adopted = await Tailnet.adopt(req, server?.requestIP(req)?.address ?? null);
       const res = await Main.route(req, server, p);
       if (adopted !== null && res !== undefined && req.headers.get("authorization") === null) {
         res.headers.append("set-cookie", Owner.cookie(adopted));
@@ -1671,6 +1849,9 @@ export namespace Main {
     const own = await Owner.http(req);
     if (own !== null) {
       return own;
+    }
+    if (p === "/api/inbox") {
+      return await Main.inbox(Main.chat, req);
     }
     if (!OWN.includes(p) && !p.startsWith("/image/") && !p.startsWith("/api/")) {
       return Main.file(p);
@@ -1759,6 +1940,8 @@ export namespace Main {
       });
       Tools.prune(Main.chat.tools, kept);
     }, PING / 2);
+    // the pending list's pushes, looked for every TASK_PUSH
+    setInterval(() => Main.event("the pending list's pushes", () => Chat.task_push(Main.chat)), TASK_PUSH);
     for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
       process.on(sig, () => process.exit(0));
     }

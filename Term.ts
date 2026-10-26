@@ -174,7 +174,10 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ["Pendências", [
       ["/p [P7|aguardando]", "",                       "a lista de pendências; com um id, o detalhe dela; aguardando: as que esperam outras", term_tasks],
       ["/abrir P7",         "",                        "na tela cheia: abre a pendência numa janela, com o detalhe, as opções, os campos (respondidos como rascunho) e a conversa sobre ela (lá: ↑↓ escolhe a pergunta, 1-9 responde, s ou n no sim ou não, Enter num texto o escreve; Enter conclui pedindo a justificativa, ! conclui e avisa, d descarta, r reabre, Tab escreve sobre ela, Esc fecha)", term_open_arg],
-      ["/ok P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência (com as respostas dos campos: 1=a 2=\"um texto\"); o Unii a vê no próximo turno", (t, a) => term_task(t, a, "done", false)],
+      ["/mesa [projeto]",   "",                        "a Mesa: as pendências por vez (agora, aguardando o Unii, em andamento, aguardando outras, resolvidas); com um projeto, só as dele", term_desk],
+      ["/ok P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência (com as respostas dos campos: 1=a 2=\"um texto\"); o Unii é avisado em até 1 min, ou na hora se a opção é marcada “o Unii executa”", (t, a) => term_task(t, a, "done", false)],
+      ["/aceitar P7 [comentário]", "",                 "conclui a pendência com as respostas que o Unii recomenda; se ela tem opções e nenhuma é recomendada, só preenche os campos recomendados (rascunho) e a opção fica com você: /ok P7 opção", term_accept],
+      ["/cobrar P7",        "",                        "pendência do Unii: cobra o andamento (uma mensagem na conversa dela)", term_chase],
       ["/ok! P7 [opção] [campo=valor] [comentário]", "", "conclui a pendência e avisa o Unii agora",     (t, a) => term_task(t, a, "done", true)],
       ["/rascunho P7 campo=valor", "",                 "responde campos da pendência sem concluir (salvo como rascunho)", term_draft],
       ["/conversa P7 [mensagem]", "",                  "conversa sobre a pendência sem concluir: a mensagem inicia um turno do Unii; sem mensagem, mostra a conversa", term_talk],
@@ -1053,6 +1056,12 @@ function term_tasks(t: Term, arg: string): void {
   term_rows(t, View.entry_rows(null, "note", View.tasks_md(t.v, got.task)), false);
 }
 
+// the Mesa (View.desk_md): the tasks by whose move it is; a project's
+// only, given one
+function term_desk(t: Term, arg: string): void {
+  term_rows(t, View.entry_rows(null, "note", View.desk_md(t.v, arg.trim())), false);
+}
+
 // a task resolved: done (with a choice, by its text or number), dropped,
 // opened again; each with a comment; go: Unii told now
 function term_task(t: Term, arg: string, state: "done" | "dropped" | "open", go: boolean): void {
@@ -1060,7 +1069,28 @@ function term_task(t: Term, arg: string, state: "done" | "dropped" | "open", go:
   if (typeof got === "string") {
     return term_note(t, got);
   }
-  term_act(t, { $: "Task", task: got.task.id, state, ...(got.answer === undefined ? {} : { answer: got.answer }), note: got.note, go, ...(got.fields === undefined ? {} : { fields: got.fields }) });
+  // an option that's an order to Unii (acts, R5) tells it at once, as
+  // the server does anyway: said so here too
+  const order = state === "done" && got.answer !== undefined && View.act_unii(got.task, got.answer);
+  term_act(t, { $: "Task", task: got.task.id, state, ...(got.answer === undefined ? {} : { answer: got.answer }), note: got.note, go: go || order, ...(got.fields === undefined ? {} : { fields: got.fields }) });
+}
+
+// a task concluded with the answers Unii recommends (View.task_accept)
+function term_accept(t: Term, arg: string): void {
+  const got = View.task_args(t.v, arg, false);
+  if (typeof got === "string") {
+    return term_note(t, got);
+  }
+  term_act(t, { $: "TaskAccept", task: got.task.id, ...(got.note === "" ? {} : { note: got.note }) });
+}
+
+// a task of Unii's asked after ("Cobrar agora"): a message in its thread
+function term_chase(t: Term, arg: string): void {
+  const got = View.task_args(t.v, arg, false);
+  if (typeof got === "string") {
+    return term_note(t, got);
+  }
+  term_act(t, { $: "TaskSay", task: got.task.id, text: View.CHASE });
 }
 
 // a task's fields answered (campo=valor), kept as a draft: not concluded

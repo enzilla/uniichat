@@ -55,7 +55,7 @@ test("kept in tasks.json and read again; a tasks.json without descriptions reads
   expect([old.choices, old.descriptions, old.fields[0].descriptions]).toEqual([["a", "b"], [], []]);
 });
 
-test("Unii reads them in the block; the terminal's window and the web's show them under each label", () => {
+test("Unii reads them in the block; the terminal's window and the web's Mesa show them under each label", () => {
   const s = store();
   add(s, { title: "Ambiente", choices: [{ label: "hom", description: "Ensaio, sem risco." }, "prod"], fields: [
     { id: "amb", label: "Onde", kind: "choice", choices: [{ label: "a", description: "Primeiro." }, "b"] },
@@ -67,7 +67,7 @@ test("Unii reads them in the block; the terminal's window and the web's show the
   const shown = Modal.modal_lines(Modal.modal_new("P1"), v, 80).map((l) => l.map((r) => r.x).join("")).join("\n");
   expect(shown).toContain("Ensaio, sem risco.");
   expect(shown).toContain("Primeiro.");
-  const html = Html.task_window_html(v.tasks, "P1");
+  const html = Html.desk_html(v.tasks, "", "", "P1", NOW).detail.join("");
   expect(html).toContain("<small>Ensaio, sem risco.</small>");
   expect(html).toContain("<small>Primeiro.</small>");
 });

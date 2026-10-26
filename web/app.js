@@ -498,8 +498,8 @@ var SPAN = new RegExp([
   "\\[([^\\]\\n]+)\\]\\((<" + HREF + "[^>" + CTRL + "]*>|" + HREF + "(?:[^\\s()" + CTRL + "]|\\([^\\s()" + CTRL + "]*\\))*)" + /(?:\s+"[^"\n]*")?\)/.source,
   NAME2.source,
   "\\*\\*(?!\\*)((?:" + IN + "|\\*(?!\\*))+?)\\*\\*",
-  "(?<![*\\w])\\*(?![*\\s])((?:" + IN + ")+?)\\*(?![\\w*])",
-  /(?<![^\s(])(https?:\/\/(?:[^\s<()\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\))*(?:[^\s<().,;:!?\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\)))/.source,
+  "\\*(?![*\\s])((?:" + IN + ")+?)\\*(?![\\w*])",
+  /(?:^|[\s(])(https?:\/\/(?:[^\s<()\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\))*(?:[^\s<().,;:!?\x00-\x1f\x7f]|\([^\s<()\x00-\x1f\x7f]*\)))/.source,
   /<(https?:\/\/[^\s<>\x00-\x1f\x7f]+)>/.source
 ].join("|"), "g");
 var LIST = /^ {0,3}([-*+]|\d{1,9}[.)])(?=[ \t]|$)/;
@@ -520,24 +520,45 @@ function Text(x) {
 function Name(x) {
   return { $: "Name", x };
 }
-function spans_by(s, re, mark) {
+function spans_by(s, re, mark, keep = () => true, lead = () => 0) {
   const out = [];
   let at = 0;
-  for (const m of s.matchAll(re)) {
-    const i = m.index ?? 0;
-    if (i > at) {
-      out.push(Text(s.slice(at, i)));
+  let from = 0;
+  for (;; ) {
+    re.lastIndex = from;
+    const m = re.exec(s);
+    if (m === null) {
+      break;
     }
+    const i = m.index;
+    if (!keep(s, m)) {
+      from = i + 1;
+      continue;
+    }
+    const j = i + lead(m);
+    if (j > at) {
+      out.push(Text(s.slice(at, j)));
+    }
+    from = at = i + m[0].length;
     out.push(mark(m));
-    at = i + m[0].length;
   }
+  re.lastIndex = 0;
   if (at < s.length) {
     out.push(Text(s.slice(at)));
   }
   return out;
 }
 function span_parse(s) {
-  return spans_by(s, SPAN, span_mark);
+  return spans_by(s, SPAN, span_mark, span_keep, span_lead);
+}
+function span_keep(s, m) {
+  if (m[6] === undefined || m.index === 0) {
+    return true;
+  }
+  return !/[*\w]/.test(s[m.index - 1]);
+}
+function span_lead(m) {
+  return m[7] === undefined ? 0 : m[0].length - m[7].length;
 }
 function span_mark(m) {
   if (m[1] !== undefined) {
@@ -781,7 +802,19 @@ function list_kind(l) {
   return m === null || RULE.test(l) ? null : m[1].slice(-1);
 }
 function row_cells(line) {
-  const cells = line.trim().replace(/^\||(?<!\\)\|$/g, "").split(/(?<!\\)\|/);
+  const t = line.trim();
+  const a = t.startsWith("|") ? 1 : 0;
+  const z = t.length > a && t.endsWith("|") && t[t.length - 2] !== "\\" ? t.length - 1 : t.length;
+  const u = t.slice(a, z);
+  const cells = [];
+  let from = 0;
+  for (let k = 0;k < u.length; k++) {
+    if (u[k] === "|" && (k === 0 || u[k - 1] !== "\\")) {
+      cells.push(u.slice(from, k));
+      from = k + 1;
+    }
+  }
+  cells.push(u.slice(from));
   return cells.map((c) => span_parse(c.trim().replace(/\\\|/g, "|")));
 }
 
@@ -930,6 +963,45 @@ var Pick;
 function after_of(t) {
   return Array.isArray(t.after) ? t.after : [];
 }
+var LATE = 24 * 60 * 60 * 1000;
+var KINDS = ["pr", "decision", "test", "action", "restart", "info"];
+var H = 60 * 60 * 1000;
+var LATE_BY = { pr: 24 * H, decision: 72 * H, test: 2 * H, action: 24 * H, restart: 24 * H, info: Infinity };
+var PRIORITIES = ["high", "normal", "low"];
+var PR_LINK = /(?:^|[^\w.\/@-])((?:https?:\/\/)?(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)/i;
+function kind_of(t) {
+  if (t.kind != null && KINDS.includes(t.kind)) {
+    return t.kind;
+  }
+  if (PR_LINK.test(t.title ?? "")) {
+    return "pr";
+  }
+  return /^\s*teste\b/i.test(t.title ?? "") ? "test" : null;
+}
+function late_after(t) {
+  const k = kind_of(t);
+  return k === null ? LATE : LATE_BY[k];
+}
+function ready_at(t) {
+  return typeof t.ready === "string" && !Number.isNaN(Date.parse(t.ready)) ? t.ready : t.made;
+}
+function priority_of(t) {
+  return t.priority != null && PRIORITIES.includes(t.priority) ? t.priority : "normal";
+}
+function now_order(tasks) {
+  const frees = new Map;
+  const n = (t) => {
+    if (!frees.has(t.id)) {
+      frees.set(t.id, frees_ids(tasks, t).length);
+    }
+    return frees.get(t.id);
+  };
+  const p = (t) => PRIORITIES.indexOf(priority_of(t));
+  const age = (t) => Date.parse(ready_at(t)) || 0;
+  const whose = (t) => t.assignee === undefined || t.assignee === "user" ? 0 : 1;
+  const read = (t) => kind_of(t) === "info" ? 1 : 0;
+  return (a, b) => read(a) - read(b) || p(a) - p(b) || n(b) - n(a) || whose(a) - whose(b) || age(a) - age(b) || Number(a.id.slice(1)) - Number(b.id.slice(1));
+}
 function by_id(tasks) {
   return new Map(tasks.map((t) => [t.id, t]));
 }
@@ -943,9 +1015,9 @@ function blocked_ids(tasks) {
   const ids = by_id(tasks);
   return new Set(tasks.filter((t) => blocked(tasks, t, ids)).map((t) => t.id));
 }
-function frees(tasks, t) {
+function frees_ids(tasks, t) {
   if (t.state !== "open") {
-    return 0;
+    return [];
   }
   const seen = new Set([t.id]);
   const todo = [t.id];
@@ -958,7 +1030,8 @@ function frees(tasks, t) {
       }
     }
   }
-  return seen.size - 1;
+  seen.delete(t.id);
+  return [...seen].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
 }
 
 // View.ts
@@ -1060,6 +1133,7 @@ function view_hear(v, msg) {
     case "state": {
       const { $, ...state } = msg;
       Object.assign(v, state);
+      v.tasks = Array.isArray(v.tasks) ? v.tasks.map(task_whole) : [];
       AGENT_LABELS.clear();
       Object.entries(v.labels ?? {}).forEach(([name, label]) => AGENT_LABELS.set(name, label));
       for (const page of v.pages.values()) {
@@ -1195,6 +1269,10 @@ function view_act(v, act) {
         v.notes.push("A pendência " + t.id + " não tem a opção “" + act.answer + "”.");
         return [];
       }
+      if (act.state === "dropped" && t.state === "open" && t.assignee !== "user") {
+        v.notes.push("A pendência " + t.id + " está com o Unii: use “Cobrar agora” ou “Pode fechar”.");
+        return [];
+      }
       const waits2 = waits(v.tasks, t);
       if (act.state !== "open" && t.state === "open" && waits2.length > 0) {
         v.notes.push(task_waits_said(t, waits2));
@@ -1221,6 +1299,23 @@ function view_act(v, act) {
       }
       return [{ $: "task_say", task: t.id, text }];
     }
+    case "TaskAccept": {
+      const t = v.tasks.find((x) => x.id === act.task);
+      if (t === undefined) {
+        v.notes.push("Pendência " + act.task + " não encontrada.");
+        return [];
+      }
+      if (task_accept_mode(t) === "fill") {
+        v.notes.push(task_fill_said(t));
+        return view_act(v, { $: "TaskDraft", task: t.id, fields: task_accept_fill(t, act.fields ?? t.draft ?? {}) });
+      }
+      const got = task_accept(t, act.fields ?? t.draft ?? {});
+      if (typeof got === "string") {
+        v.notes.push(got);
+        return [];
+      }
+      return view_act(v, { $: "Task", task: t.id, state: "done", ...got.answer === undefined ? {} : { answer: got.answer }, ...act.note === undefined ? {} : { note: act.note }, fields: got.fields });
+    }
     case "TasksTell": {
       return [{ $: "tasks_tell" }];
     }
@@ -1228,6 +1323,31 @@ function view_act(v, act) {
 }
 function task_waits_said(t, waits2) {
   return "A pendência " + t.id + " aguarda " + waits2.join(", ") + ": resolva " + (waits2.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
+}
+function and_said(xs) {
+  return xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " e " + xs[xs.length - 1];
+}
+function whose_short(t) {
+  return t === undefined ? "" : t.assignee === "user" ? "sua" : t.assignee === "unii" ? "do Unii" : "de " + t.assignee;
+}
+function id_whose(tasks, id) {
+  const w = whose_short(tasks.find((u) => u.id === id));
+  return w === "" ? id : id + " (" + w + ")";
+}
+var FREES_SAID = 3;
+function task_frees_named(tasks, t) {
+  const ids = frees_ids(tasks, t);
+  if (ids.length === 0) {
+    return "";
+  }
+  return "libera " + (ids.length <= FREES_SAID ? and_said(ids) : ids.slice(0, FREES_SAID - 1).join(", ") + " e mais " + (ids.length - FREES_SAID + 1));
+}
+function task_waits_named(tasks, t) {
+  const ids = waits(tasks, t);
+  return ids.length === 0 ? "" : "aguarda " + and_said(ids.map((id) => id_whose(tasks, id)));
+}
+function turn_title(title, n) {
+  return n > 0 ? "(" + n + ") " + title : title;
 }
 function tasks_count_said(open, waiting) {
   return open === 0 && waiting > 0 ? "+" + waiting : String(open);
@@ -1244,6 +1364,33 @@ function view_untold(v) {
 function task_talk_said(t) {
   return t.talk === "unii" ? "aguardando o Unii" : t.talk === "user" ? "sua vez" : "";
 }
+function turn_of(v) {
+  return { busy: v.busy, wait: v.wait, limited: Object.hasOwn(v.limits ?? {}, TURN), up: v.up };
+}
+function task_talk_since(t) {
+  const mine = (t.thread ?? []).filter((m) => m.who === "user");
+  return mine.length === 0 ? t.changed : mine[mine.length - 1].at;
+}
+function turn_why(turn) {
+  if (!turn.up) {
+    return "sem conexão com o servidor";
+  }
+  if (turn.limited) {
+    return "esperando o limite de uso do serviço de IA";
+  }
+  if (!turn.busy) {
+    return "nenhum turno em andamento (o servidor pode ter reiniciado)";
+  }
+  return turn.wait === SUMMARIES ? "compactando mensagens antigas" : turn.wait !== "" ? "esperando a resposta de " + turn.wait : "turno em andamento";
+}
+function task_talk_wait_said(t, now, turn = null) {
+  if (t.state !== "open" || t.talk !== "unii") {
+    return task_talk_said(t);
+  }
+  const ms = Math.max(0, now - Date.parse(task_talk_since(t)));
+  const ago = Number.isFinite(ms) ? " há " + (ms < 3600000 ? Math.floor(ms / 60000) + " min" : hours_said(ms)) : "";
+  return "aguardando o Unii" + ago + (turn === null ? "" : " · " + turn_why(turn));
+}
 function assignee_said(t) {
   return t.assignee === "user" ? "com você" : t.assignee === "unii" ? "com o Unii" : "com " + t.assignee;
 }
@@ -1254,6 +1401,250 @@ function origin_said(t) {
 function tasks_by_assignee(open) {
   const keys = [...new Set(["user", ...open.map((t) => t.assignee)])];
   return keys.map((k) => [k, open.filter((t) => t.assignee === k)]).filter(([, ts]) => ts.length > 0);
+}
+var DESK = [
+  ["now", "Agora"],
+  ["unii", "Aguardando o Unii"],
+  ["others", "Em andamento"],
+  ["waiting", "Aguardando outras pendências"],
+  ["closed", "Resolvidas recentemente"]
+];
+function desk_group(t, blocked2) {
+  if (t.state !== "open") {
+    return "closed";
+  }
+  if (t.talk === "unii") {
+    return "unii";
+  }
+  if (blocked2.has(t.id)) {
+    return "waiting";
+  }
+  return t.assignee === "user" || t.talk === "user" ? "now" : "others";
+}
+function desk_turn(tasks) {
+  const blocked2 = blocked_ids(tasks);
+  return tasks.some((t) => desk_group(t, blocked2) === "now");
+}
+function desk_refs(tasks) {
+  return [...new Set(tasks.flatMap((t) => t.ref === null ? [] : [t.ref]))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+function desk_fold(s) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+function desk_match(t, q, ref) {
+  if (ref !== "" && t.ref !== ref) {
+    return false;
+  }
+  const words = desk_fold(q).split(" ").filter((w) => w !== "");
+  if (words.length === 0) {
+    return true;
+  }
+  const hay = desk_fold([t.id, t.title, t.detail, t.ref ?? "", t.assignee, ...(t.fields ?? []).map((f) => f.label), ...(t.thread ?? []).map((m) => m.text)].join(" "));
+  return words.every((w) => hay.includes(w));
+}
+function desk_list(tasks, q = "", ref = "") {
+  const blocked2 = blocked_ids(tasks);
+  const shown = tasks.filter((t) => desk_match(t, q, ref));
+  const order = now_order(tasks);
+  return DESK.map(([group, label]) => {
+    const of = shown.filter((t) => desk_group(t, blocked2) === group);
+    return { group, label, tasks: group === "now" ? [...of].sort(order) : of };
+  }).filter((g) => g.tasks.length > 0);
+}
+function desk_step(ids, at, by) {
+  if (ids.length === 0) {
+    return null;
+  }
+  const k = at === null ? -1 : ids.indexOf(at);
+  if (k === -1) {
+    return by < 0 ? ids[ids.length - 1] : ids[0];
+  }
+  return ids[Math.max(0, Math.min(ids.length - 1, k + by))];
+}
+function desk_next(tasks, sel, q = "", ref = "", order = []) {
+  const groups = desk_list(tasks, q, ref);
+  const now = (groups.find((g) => g.group === "now")?.tasks ?? []).filter((t) => t.id !== sel);
+  if (now.length === 0) {
+    return null;
+  }
+  const list = sel !== null && order.includes(sel) ? order : groups.flatMap((g) => g.tasks.map((t) => t.id));
+  const k = sel === null ? -1 : list.indexOf(sel);
+  if (k >= 0) {
+    const ahead = [...list.slice(k + 1), ...list.slice(0, k)];
+    const next = ahead.map((id) => now.find((t) => t.id === id)).find((t) => t !== undefined);
+    if (next !== undefined) {
+      return next;
+    }
+  }
+  return now[0];
+}
+var TASK_LATE = LATE;
+function task_late_said(t, blocked2, now) {
+  const age = now - Date.parse(ready_at(t));
+  if (t.state !== "open" || t.assignee !== "user" || blocked2.has(t.id) || t.talk === "unii" || !(age > late_after(t))) {
+    return "";
+  }
+  return "atrasada há " + hours_said(age);
+}
+var KIND_SAID = { pr: "aprovação de PR", decision: "decisão", test: "teste", action: "ação sua", restart: "reinício", info: "informação" };
+function task_kind_said(t) {
+  const k = kind_of(t);
+  return k === null ? "" : KIND_SAID[k] + (Number.isFinite(LATE_BY[k]) ? ", prazo " + LATE_BY[k] / 3600000 + " h" : ", sem prazo");
+}
+function task_waits_for_said(t) {
+  return t.state !== "open" || (t.waits_for ?? null) === null ? "" : "aguarda: " + t.waits_for;
+}
+function act_unii(t, c) {
+  return (t.acts ?? {})[c] === "unii";
+}
+var ACT_SAID = "o Unii executa";
+var VERDICT_SAID = { approved: "aprovado", approved_with_notes: "aprovado com ressalvas", rejected: "reprovado", pending: "aguardando verificação" };
+var SEV_SAID = { high: ["alta", "altas"], medium: ["média", "médias"], low: ["baixa", "baixas"] };
+function pr_label(url) {
+  const m = /^https:\/\/github\.com\/[\w.-]+\/([\w.-]+)\/pull\/(\d+)/.exec(url);
+  return m === null ? url : m[1] + "#" + m[2];
+}
+function pr_notes_said(p) {
+  const by = ["high", "medium", "low"].map((v) => [v, p.notes.filter((n) => n.sev === v).length]).filter(([, n]) => n > 0);
+  return by.length === 0 ? "sem ressalvas" : "ressalvas: " + and_said(by.map(([v, n]) => n + " " + SEV_SAID[v][n === 1 ? 0 : 1]));
+}
+function task_priority_said(t) {
+  const p = priority_of(t);
+  return p === "high" ? "prioridade alta" : p === "low" ? "prioridade baixa" : "";
+}
+function hours_said(ms) {
+  const h = Math.floor(ms / 3600000);
+  return h < 48 ? h + " h" : Math.floor(h / 24) + " d";
+}
+var STALL = 3600000;
+function task_stalled_said(t, blocked2, now) {
+  const age = now - Date.parse(t.moved ?? t.changed ?? t.made);
+  if (t.state !== "open" || t.assignee === "user" || blocked2.has(t.id) || t.talk === "unii" || !(age >= STALL)) {
+    return { text: "", late: false };
+  }
+  return { text: "parada há " + hours_said(age), late: age > TASK_LATE };
+}
+function task_agent_said(t) {
+  const a = t.agent ?? null;
+  return a !== null ? "agente " + a : t.state === "open" && t.assignee !== "user" ? "sem agente" : "";
+}
+var REC_MARK = /\(\s*recomendad[oa]s?\s*\)/i;
+function rec_marked(c) {
+  return REC_MARK.test(c);
+}
+function task_rec(t) {
+  if (t.recommend != null && t.choices.includes(t.recommend)) {
+    return t.recommend;
+  }
+  const marked = t.choices.filter(rec_marked);
+  return marked.length === 1 ? marked[0] : null;
+}
+function field_rec(f) {
+  if (f.recommend !== undefined && f.recommend.length > 0) {
+    return f.recommend;
+  }
+  const marked = f.choices.filter(rec_marked);
+  if (f.kind === "multi") {
+    return marked.length > 0 ? marked : undefined;
+  }
+  return (f.kind === "choice" || f.kind === "yesno") && marked.length === 1 ? marked[0] : undefined;
+}
+function rec_is(rec, c) {
+  return rec === c || Array.isArray(rec) && rec.includes(c);
+}
+function task_accept_mode(t) {
+  if (t.state !== "open" || t.assignee !== "user") {
+    return null;
+  }
+  const fields = (t.fields ?? []).some((f) => field_rec(f) !== undefined);
+  if (t.choices.length === 0) {
+    return fields ? "conclude" : null;
+  }
+  return task_rec(t) !== null ? "conclude" : fields ? "fill" : null;
+}
+function task_accepts(t) {
+  return task_accept_mode(t) !== null;
+}
+function task_accept_said(t) {
+  return task_accept_mode(t) === "fill" ? "Preencher as recomendadas" : t.fields.length === 0 ? "Aceitar a recomendada" : "Aceitar as recomendadas";
+}
+function task_fill_said(t) {
+  return "Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: " + t.choices.join(" | ") + " (no terminal: /ok " + t.id + " opção).";
+}
+function value_empty(x) {
+  return x === undefined || x === null || typeof x === "string" && x.trim() === "" || Array.isArray(x) && x.length === 0;
+}
+function task_accept_fill(t, values) {
+  const fields = {};
+  for (const f of t.fields ?? []) {
+    const given = Object.hasOwn(values, f.id) ? values[f.id] : undefined;
+    const rec = field_rec(f);
+    if (!value_empty(given)) {
+      fields[f.id] = given;
+    } else if (rec !== undefined) {
+      fields[f.id] = rec;
+    }
+  }
+  return fields;
+}
+function task_accept(t, values) {
+  if (!task_accepts(t)) {
+    return "A pendência " + t.id + " não tem recomendação para aceitar.";
+  }
+  const fields = task_accept_fill(t, values);
+  if (task_accept_mode(t) === "fill") {
+    return task_fill_said(t);
+  }
+  const missing = (t.fields ?? []).filter((f) => f.required && value_empty(fields[f.id]));
+  if (missing.length > 0) {
+    return "Sem recomendação para " + (missing.length === 1 ? "o campo obrigatório " : "os campos obrigatórios ") + missing.map((f) => "“" + f.label + "”").join(", ") + ": responda " + (missing.length === 1 ? "esse campo" : "esses campos") + " e conclua.";
+  }
+  const answer = task_rec(t);
+  return { ...answer === null ? {} : { answer }, fields };
+}
+var CHASE = "Cobrança: qual é o andamento desta pendência e o próximo passo?";
+var LINKS = 8;
+function task_prs(t) {
+  const text = (t.detail ?? "") + " " + (t.origin_url ?? "");
+  const seen = new Map;
+  for (const p of t.prs ?? []) {
+    if (!seen.has(p.url) && seen.size < LINKS) {
+      seen.set(p.url, pr_label(p.url));
+    }
+  }
+  for (const m of text.matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/g)) {
+    const url = m[0];
+    if (!seen.has(url) && seen.size < LINKS) {
+      seen.set(url, m[2] + "#" + m[3]);
+    }
+  }
+  return [...seen].map(([url, label]) => ({ url, label }));
+}
+function task_whole(t) {
+  const named = typeof t?.assignee === "string" && t.assignee !== "";
+  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined && Array.isArray(t.prs) && t.acts !== undefined) {
+    return t;
+  }
+  return {
+    ...t,
+    assignee: named ? t.assignee : t?.who === "unii" ? "unii" : "user",
+    origin: t?.origin ?? null,
+    origin_url: t?.origin_url ?? null,
+    agent: t?.agent ?? null,
+    kind: t?.kind ?? null,
+    priority: t?.priority ?? "normal",
+    prs: Array.isArray(t?.prs) ? t.prs : [],
+    acts: t?.acts ?? {},
+    waits_for: t?.waits_for ?? null,
+    ready: t?.ready ?? t?.made,
+    choices: Array.isArray(t?.choices) ? t.choices : [],
+    after: Array.isArray(t?.after) ? t.after : [],
+    fields: Array.isArray(t?.fields) ? t.fields : [],
+    draft: t?.draft ?? {},
+    answers: t?.answers ?? null,
+    thread: Array.isArray(t?.thread) ? t.thread : [],
+    talk: t?.talk ?? null
+  };
 }
 function view_body(v) {
   if (v.page !== null) {
@@ -1331,12 +1722,6 @@ function view_typing(v) {
 }
 function view_pick(v) {
   return v.pick === null ? [] : view_knobs(v, v.pick, true);
-}
-function view_shown(v) {
-  if (v.page === null) {
-    return view_pick(v);
-  }
-  return v.page.pick === null ? [] : view_knobs(v, v.page.pick, false);
 }
 function view_knobs(v, pick, menus) {
   const { model, effort, speed, profile } = pick;
@@ -1542,6 +1927,62 @@ function entry_body(kind, text) {
     }
   }
 }
+var STAGE_SAID = { impl: "implementando", verif: "verificando", user: "com você", others: "com terceiros", stalled: "parada com o Unii", closed: "encerrada" };
+var PR_STATE_SAID = { OPEN: "aberto", MERGED: "mesclado", CLOSED: "fechado" };
+var CI_SAID = { ok: "CI ok", failed: "CI falhou", running: "CI rodando", none: "sem CI" };
+function span_said(ms) {
+  if (!(ms >= 60000)) {
+    return "agora";
+  }
+  if (ms < 3600000) {
+    return Math.floor(ms / 60000) + " min";
+  }
+  return hours_said(ms);
+}
+function took_said(ms) {
+  return ms >= 0 && ms < 60000 ? "menos de 1 min" : span_said(ms);
+}
+function when_said(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return "";
+  }
+  const p = (n) => String(n).padStart(2, "0");
+  return p(d.getDate()) + "/" + p(d.getMonth() + 1) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+function sevs_said(s) {
+  const by = ["high", "medium", "low"].filter((v) => s[v] > 0);
+  return by.length === 0 ? "nenhuma" : and_said(by.map((v) => s[v] + " " + SEV_SAID[v][s[v] === 1 ? 0 : 1]));
+}
+function pr_head_said(p) {
+  if (p.head === null || p.live === null || p.live.head === "") {
+    return null;
+  }
+  const same = p.live.head.startsWith(p.head) || p.head.startsWith(p.live.head);
+  return same ? { text: "head igual ao verificado (" + p.head.slice(0, 7) + ")", same } : { text: "head mudou: verificado " + p.head.slice(0, 7) + ", agora " + p.live.head.slice(0, 7), same };
+}
+function pipeline_totals(fronts) {
+  const active = fronts.filter((f) => f.stage !== "closed");
+  const cycles = fronts.flatMap((f) => f.prs.filter((p) => p.cycles > 0).map((p) => p.cycles));
+  const decide = fronts.flatMap((f) => f.decide);
+  return {
+    active: active.length,
+    user: active.filter((f) => f.stage === "user").length,
+    stalled: active.filter((f) => f.stage === "stalled").length,
+    cycles: median_of(cycles),
+    decide: median_of(decide),
+    decided: decide.length,
+    idle: active.reduce((n, f) => n + f.idle, 0)
+  };
+}
+function median_of(xs) {
+  if (xs.length === 0) {
+    return null;
+  }
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
 
 // Timer.ts
 var AHEAD = 8 * 366;
@@ -1643,26 +2084,13 @@ function images_html(names) {
   });
   return names.length === 0 ? "" : `<div class="pics">${pics.join("")}</div>`;
 }
-var MODES = [
-  ["standard", "Each message is summarized for Unii's memory. Cheapest, good for long working sessions."],
-  ["conversation", "Messages stay word-for-word in Unii's view until you switch back. Use it for discussions. It costs more per turn."]
-];
-function pick_html(fold, on, knobs, talk) {
-  const parts = knobs.map((k) => k.choices.length === 0 ? [`<span class="knob" title="${esc(k.hint)}">${esc(k.text)}</span>`] : [
+function pick_html(fold, on, knobs) {
+  const parts = knobs.map((k) => [
     `<button title="${esc(k.hint)}" data-knob="${k.move}" popovertarget="pick-${k.move}" aria-haspopup="menu">${esc(k.text)}</button>`,
     `<div id="pick-${k.move}" class="choices" popover role="menu" aria-label="${k.move[0].toUpperCase() + k.move.slice(1)}">${k.choices.map(choice_html).join("")}</div>`
   ]);
   const all = fold === null ? [] : [`<button class="all"${act_html({ $: "Fold", on })}>${esc(fold)}</button>`];
-  const mode = ([name, hint], k) => {
-    const here = talk != null === (k === 1);
-    return `<button title="${esc(hint)}" aria-pressed="${here}"${act_html({ $: "Talk", on: k === 1 })}>${name}</button>`;
-  };
-  const [now, about] = MODES[talk == null ? 0 : 1];
-  const flip = `<button class="flip" title="${esc(about)} Tap for ${MODES[talk == null ? 1 : 0][0]}."${act_html({ $: "Talk", on: talk == null })}>${now}</button>`;
-  const modes = talk === undefined ? [] : [`<span class="modes" role="group" aria-label="Memory mode">${MODES.map(mode).join("")}</span>`, flip];
-  const used = talk == null ? 0 : Math.round(talk.used * 100);
-  const rule = talk == null ? `<span class="rule"></span>` : `<span class="rule meter" style="--used:${used}%" title="Conversation: ${used}% of space used" role="meter" aria-valuenow="${used}" aria-valuemin="0" aria-valuemax="100" aria-label="Conversation space used"></span>`;
-  return [...all, ...modes, rule, ...parts.flatMap((part, i) => i === 0 ? part : [`<span class="dot">·</span>`, ...part])];
+  return [...all, `<span class="rule"></span>`, ...parts.flatMap((part, i) => i === 0 ? part : [`<span class="dot">·</span>`, ...part])];
 }
 function choice_html(c) {
   const head = c.vendor === null ? "" : `<p>${esc(c.vendor)}</p>`;
@@ -1694,49 +2122,191 @@ function tasks_html(tasks) {
   const blocked2 = blocked_ids(tasks);
   const opened = tasks.filter((t) => t.state === "open");
   const groups = tasks_by_assignee(opened.filter((t) => !blocked2.has(t.id)));
+  const open = (t) => task_open_html(t, tasks, false);
   const heading = (a, ts) => `<li class="group" data-assignee="${esc(a)}">${esc(assignee_said(ts[0]).replace(/^c/, "C"))} <span class="n">(${ts.length})</span></li>`;
   const titled = groups.length > 1 || groups.length === 1 && groups[0][0] !== "user";
-  const item = (t) => task_item(tasks, t, false);
-  const now = groups.flatMap(([a, ts]) => [...titled ? [heading(a, ts)] : [], ...ts.map(item)]);
-  return { open: groups.flatMap(([, ts]) => ts.map(item)), now, waiting: opened.filter((t) => blocked2.has(t.id)).map(item), closed: tasks.filter((t) => t.state !== "open").map(item) };
+  const now = groups.flatMap(([a, ts]) => [...titled ? [heading(a, ts)] : [], ...ts.map(open)]);
+  return { open: groups.flatMap(([, ts]) => ts.map(open)), now, waiting: opened.filter((t) => blocked2.has(t.id)).map((t) => task_waiting_html(t, tasks, false)), closed: tasks.filter((t) => t.state !== "open").map((t) => task_closed_html(t, false)) };
 }
-function task_window_html(tasks, id) {
-  const t = tasks.find((x) => x.id === id);
-  return t === undefined ? `<p class="none">A pendência ${esc(id)} não está mais na lista.</p>` : `<ul>${task_item(tasks, t, true)}</ul>`;
+function task_when(iso) {
+  return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
-function task_item(tasks, t, whole) {
-  const when = (iso) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-  const title = whole ? `<span class="title" id="task-title">${esc(t.title)}</span>` : `<button type="button" class="title" data-open="${esc(t.id)}" title="Abrir a pendência">${esc(t.title)}</button>`;
-  const head = `<p class="head"><span class="id">${esc(t.id)}</span>${title}</p>`;
+function task_head(t) {
+  return `<p class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></p>`;
+}
+function task_origin(t) {
   const said = origin_said(t);
+  if (said === "") {
+    return [];
+  }
   const url = t.origin_url !== null && /^https?:\/\//i.test(t.origin_url) ? t.origin_url : null;
-  const origin = said === "" ? [] : [url === null ? `<span class="origin" title="Origem">${esc(said)}</span>` : `<a class="origin" title="Origem" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(said)}</a>`];
-  const meta = (more) => `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more, ...origin].join(" · ")}</p>`;
-  const act = (state, text, cls2, answer) => `<button class="${cls2}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
-  const mine = t.assignee === "user";
-  const whose = (u) => u === undefined || u.assignee === "user" ? "" : " (" + assignee_said(u) + ")";
-  if (t.state !== "open") {
-    const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii ainda não viu"]];
-    return `<li class="task closed" data-task="${esc(t.id)}">${head}${meta(how)}<div class="acts">${act("open", "Reabrir", "reopen")}</div>${whole ? thread_html(t, true) : ""}</li>`;
-  }
-  if (blocked_ids(tasks).has(t.id)) {
-    const more = [`aguarda ${esc(waits(tasks, t).map((id) => id + whose(tasks.find((u) => u.id === id))).join(", "))}`, ...mine ? [] : [esc(assignee_said(t))]];
-    return `<li class="task waiting ${esc(mine ? "user" : "other " + t.assignee)}" data-task="${esc(t.id)}">${head}${meta(more)}</li>`;
-  }
-  const n = frees(tasks, t);
-  const who = [...n === 0 ? [] : [`<span class="frees">libera ${n}</span>`], ...mine ? [] : [esc(assignee_said(t))]];
-  const md = `<div class="md">${md_parse(t.detail).map(block_html).join("")}</div>`;
-  const detail = t.detail === "" ? "" : whole ? md : `<details><summary>Detalhes</summary>${md}</details>`;
-  const opt = (c, k) => `<button class="opt"${act_html({ $: "Task", task: t.id, state: "done", answer: c })}>${esc(c)}${t.descriptions?.[k] ? `<small>${esc(t.descriptions[k])}</small>` : ""}</button>`;
-  const opts = t.choices.length === 0 ? "" : `<div class="opts">${t.choices.map(opt).join("")}</div>`;
-  const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário ou justificativa (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
-  const go = `<label class="go"><input type="checkbox" data-keep="go"> Avisar o Unii agora</label>`;
-  const acts = `<div class="acts">${go}${act("done", "Concluir", mine ? "done" : "done quiet")}${act("dropped", "Descartar", "drop")}</div>`;
-  const talk = task_talk_said(t) === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(task_talk_said(t))}</span>`];
-  const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
-  return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${head}${meta([...talk, ...who, `<time>${esc(when(t.made))}</time>`])}${detail}${fields_html(t, whole)}${opts}${note}${acts}${thread_html(t, whole)}</li>`;
+  return [url === null ? `<span class="origin" title="Origem">${esc(said)}</span>` : `<a class="origin" title="Origem" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(said)}</a>`];
 }
-function fields_html(t, whole = false) {
+function task_meta(t, more) {
+  const outside = task_waits_for_said(t);
+  return `<p class="meta">${[...t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`], ...more, ...outside === "" ? [] : [`<span class="waits-for">${esc(outside)}</span>`], ...task_origin(t)].join(" · ")}</p>`;
+}
+function task_button(t, state, text, cls, answer) {
+  return `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
+}
+function task_detail(t, desk) {
+  if (t.detail === "") {
+    return "";
+  }
+  const md = `<div class="md">${md_parse(t.detail).map(block_html).join("")}</div>`;
+  return desk ? `<div class="detail">${md}</div>` : `<details><summary>Detalhes</summary>${md}</details>`;
+}
+function task_open_html(t, tasks, desk, now = Date.now(), turn = null) {
+  const frees2 = task_frees_named(tasks, t);
+  const mine = t.assignee === "user";
+  const blocked2 = blocked_ids(tasks);
+  const late = desk ? task_late_said(t, blocked2, now) : "";
+  const stalled = desk ? task_stalled_said(t, blocked2, now) : { text: "", late: false };
+  const agent = task_agent_said(t);
+  const prio = task_priority_said(t);
+  const kind = desk && mine ? task_kind_said(t) : "";
+  const who = [
+    ...prio === "" ? [] : [`<span class="prio ${esc(priority_of(t))}">${esc(prio)}</span>`],
+    ...late === "" ? [] : [`<span class="late">${esc(late)}</span>`],
+    ...kind === "" ? [] : [`<span class="kind">${esc(kind)}</span>`],
+    ...frees2 === "" ? [] : [`<span class="frees">${esc(frees2)}</span>`],
+    ...mine ? [] : [esc(assignee_said(t))],
+    ...agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`],
+    ...stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`]
+  ];
+  const said = desk ? task_talk_wait_said(t, now, turn) : task_talk_said(t);
+  const talk = said === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(said)}</span>`];
+  const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
+  const tag = desk ? "article" : "li";
+  const head = `${task_head(t)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
+  if (!mine) {
+    const asked = t.talk === "unii";
+    const why = `chase-why-${desk ? "desk" : "list"}-${esc(t.id)}`;
+    const chase = `<button class="chase"${asked ? ` disabled aria-describedby="${why}"` : ""}${act_html({ $: "TaskSay", task: t.id, text: CHASE })}>${asked ? "Cobrado: aguardando o Unii" : "Cobrar agora"}</button>`;
+    const close = task_button(t, "done", "Pode fechar", "close");
+    const hint = asked ? `<span class="hint" id="${why}">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>` : `<span class="hint">Com o Unii. Você pode cobrar o andamento ou liberá-lo para fechar.</span>`;
+    const acts2 = `<div class="acts unii">${hint}${chase}${close}</div>`;
+    return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${acts2}${thread_html(t, desk)}</${tag}>`;
+  }
+  const rec = task_rec(t);
+  const opt = (c, k) => {
+    const on = rec_is(rec, c);
+    const tagged = (on && !rec_marked(c) ? ` <span class="rec-tag">recomendada</span>` : "") + (act_unii(t, c) ? ` <span class="act-tag">${esc(ACT_SAID)}</span>` : "");
+    const means = t.descriptions?.[k] ? `<small>${esc(t.descriptions[k])}</small>` : "";
+    return `<button class="opt${on ? " rec" : ""}"${act_html({ $: "Task", task: t.id, state: "done", answer: c })}>${esc(c)}${tagged}${means}</button>`;
+  };
+  const opts = t.choices.length === 0 ? "" : `<div class="opts" role="group" aria-label="Concluir como"><span class="lead">Concluir como:</span>${t.choices.map(opt).join("")}</div>`;
+  const note = `<input class="note" type="text" maxlength="1000" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(t.id)}" data-keep="note">`;
+  const accept = task_accepts(t) ? `<button class="accept" aria-keyshortcuts="a" title="Atalho: a"${act_html({ $: "TaskAccept", task: t.id })}>${esc(task_accept_said(t))}</button>` : "";
+  const orders = t.choices.some((c) => act_unii(t, c));
+  const told = `<span class="hint told">${orders ? `As opções marcadas “${esc(ACT_SAID)}” avisam o Unii na hora; as demais, em até 1 min.` : "O Unii é avisado sozinho em até 1 min."}</span>`;
+  const acts = `<div class="acts">${told}${accept}${task_button(t, "done", "Concluir", "done")}${task_button(t, "dropped", "Descartar", "drop")}</div>`;
+  return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${fields_html(t)}${note}${opts}${acts}${thread_html(t, desk)}</${tag}>`;
+}
+function task_prs_html(t) {
+  const verified = new Set((t.prs ?? []).map((p) => p.url));
+  const cards = (t.prs ?? []).length === 0 ? "" : `<section class="checks" aria-label="Verificação">${t.prs.map(check_html).join("")}</section>`;
+  const prs = task_prs(t).filter((p) => !verified.has(p.url));
+  if (prs.length === 0) {
+    return cards;
+  }
+  return cards + task_links_html(prs);
+}
+function check_html(p) {
+  const notes = p.notes.length === 0 ? "" : `<ul class="notes">${p.notes.map((n) => `<li class="sev ${esc(n.sev)}"><span class="sev-tag">${esc(SEV_SAID[n.sev][0])}</span> ${esc(n.text)}</li>`).join("")}</ul>`;
+  const untested = p.untested.length === 0 ? "" : `<p class="untested"><span class="lead">Não testado:</span> ${esc(p.untested.join("; "))}</p>`;
+  const by = p.verifier === null ? "" : ` por ${esc(p.verifier)}`;
+  return `<div class="check ${esc(p.verdict)}"><p class="check-head"><a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(pr_label(p.url))}</a> <span class="lead">head</span> <code class="head">${esc(p.head.slice(0, 12))}</code> <span class="verdict">${esc(VERDICT_SAID[p.verdict])}${by}</span> <span class="count">${esc(pr_notes_said(p))}</span></p>${notes}${untested}</div>`;
+}
+function task_links_html(prs) {
+  const one = (p) => `<a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.label)}</a>`;
+  return prs.length === 0 ? "" : `<p class="prs"><span class="lead">${prs.length === 1 ? "PR" : "PRs"}:</span> ${prs.map(one).join(" ")}</p>`;
+}
+function task_closed_html(t, desk) {
+  const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii será avisado em até 1 min"]];
+  const acts = `<div class="acts">${task_button(t, "open", "Reabrir", "reopen")}</div>`;
+  if (!desk) {
+    return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${acts}</li>`;
+  }
+  return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
+}
+function task_waiting_html(t, tasks, desk) {
+  const waits2 = waits(tasks, t);
+  const cls = esc(t.assignee === "user" ? "user" : "other " + t.assignee);
+  const frees2 = task_frees_named(tasks, t);
+  const agent = task_agent_said(t);
+  const tail = [
+    ...frees2 === "" ? [] : [`<span class="frees">${esc(frees2)}</span>`],
+    ...t.assignee === "user" ? [] : [esc(assignee_said(t))],
+    ...agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]
+  ];
+  if (!desk) {
+    return `<li class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, [esc(task_waits_named(tasks, t)), ...tail])}</li>`;
+  }
+  const link = (id) => `<button class="goto" data-desk="${esc(id)}">${esc(id_whose(tasks, id))}</button>`;
+  const why = `<p class="waits">Só pode ser resolvida depois de: ${and_said(waits2.map(link))}.</p>`;
+  return `<article class="task waiting ${cls}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, tail)}${why}${task_prs_html(t)}${task_detail(t, true)}${thread_read_html(t)}</article>`;
+}
+function answers_html(t) {
+  const fields = t.fields ?? [];
+  const values = t.answers ?? {};
+  if (t.state !== "done" || fields.length === 0) {
+    return "";
+  }
+  const said = (f) => {
+    const v = Object.hasOwn(values, f.id) ? values[f.id] : undefined;
+    return v === undefined || v.length === 0 ? "sem resposta" : Array.isArray(v) ? v.join(", ") : v;
+  };
+  return `<dl class="answers">${fields.map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(said(f))}</dd>`).join("")}</dl>`;
+}
+function thread_read_html(t) {
+  const thread = t.thread ?? [];
+  return thread.length === 0 ? "" : `<section class="thread read"><p class="sub">Conversa (${thread.length})</p><ol>${thread.map(thread_msg_html).join("")}</ol></section>`;
+}
+function desk_html(tasks, q, ref, sel, now = Date.now(), opts = {}) {
+  const groups = desk_list(tasks, q, ref);
+  const ids = groups.flatMap((g) => g.tasks.map((t2) => t2.id));
+  const blocked2 = blocked_ids(tasks);
+  const turn = opts.turn ?? null;
+  const row = (t2, g) => {
+    const frees2 = g === "closed" ? "" : task_frees_named(tasks, t2);
+    const late = task_late_said(t2, blocked2, now);
+    const stalled = g === "others" ? task_stalled_said(t2, blocked2, now) : { text: "", late: false };
+    const agent = g === "closed" ? "" : task_agent_said(t2);
+    const talk = g === "closed" ? "" : task_talk_wait_said(t2, now, turn);
+    const prs = g === "closed" ? [] : task_prs(t2);
+    const prio = g === "closed" ? "" : task_priority_said(t2);
+    const outside = g === "closed" ? "" : task_waits_for_said(t2);
+    const rejected = g === "closed" ? 0 : (t2.prs ?? []).filter((p) => p.verdict === "rejected").length;
+    const more = [
+      ...prio === "" ? [] : [`<span class="prio ${esc(priority_of(t2))}">${esc(prio)}</span>`],
+      ...late === "" ? [] : [`<span class="late">${esc(late)}</span>`],
+      ...t2.ref === null ? [] : [`<span class="ref">${esc(t2.ref)}</span>`],
+      ...prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`],
+      ...rejected === 0 ? [] : [`<span class="late">${esc(rejected === 1 ? "1 PR reprovado" : rejected + " PRs reprovados")}</span>`],
+      ...outside === "" ? [] : [`<span class="waits-for">${esc(outside)}</span>`],
+      ...talk === "" ? [] : [`<span class="talk ${esc(t2.talk ?? "")}">${esc(talk)}</span>`],
+      ...t2.assignee === "user" ? [] : [esc(assignee_said(t2))],
+      ...agent === "" ? [] : [`<span class="agent${t2.agent == null ? " none" : ""}">${esc(agent)}</span>`],
+      ...stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`],
+      ...frees2 === "" ? [] : [`<span class="frees">${esc(frees2)}</span>`],
+      ...g === "waiting" ? [esc(task_waits_named(tasks, t2))] : [],
+      ...g === "closed" ? [t2.state === "done" ? "concluída" : "descartada"] : []
+    ];
+    const on = t2.id === sel;
+    return `<button class="row ${g}${on ? " sel" : ""}" role="option" aria-selected="${on}" data-desk="${esc(t2.id)}"><span class="head"><span class="id">${esc(t2.id)}</span><span class="title">${esc(t2.title)}</span></span>${more.length === 0 ? "" : `<span class="meta">${more.join(" · ")}</span>`}</button>`;
+  };
+  const list = groups.flatMap((g) => [`<p class="group ${g.group}" role="presentation">${esc(g.label)} <span class="n">(${g.tasks.length})</span></p>`, ...g.tasks.map((t2) => row(t2, g.group))]);
+  const searched = q.trim() !== "" || ref !== "";
+  const none = tasks.length === 0 ? "Nenhuma pendência. Quando o Unii precisar de você, ela aparece aqui." : searched && ids.length === 0 ? "Nenhuma pendência na busca." : "";
+  const t = sel === null ? undefined : tasks.find((x) => x.id === sel);
+  const back = `<button class="back" type="button" data-desk-back aria-label="Voltar à lista">← Pendências</button>`;
+  const after = t === undefined || desk_group(t, blocked2) === "now" ? null : desk_next(tasks, t.id, q, ref, opts.order ?? []);
+  const next = after === null ? [] : [`<button class="next" type="button" data-desk="${esc(after.id)}">Próxima: <span class="id">${esc(after.id)}</span> ${esc(after.title)} →</button>`];
+  const detail = t === undefined ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`] : [back, t.state !== "open" ? task_closed_html(t, true) : blocked2.has(t.id) ? task_waiting_html(t, tasks, true) : task_open_html(t, tasks, true, now, turn), ...next];
+  return { list: none === "" ? list : [...list, `<p class="none">${esc(none)}</p>`], detail, ids };
+}
+function fields_html(t) {
   const fields = t.fields ?? [];
   if (fields.length === 0) {
     return "";
@@ -1744,28 +2314,43 @@ function fields_html(t, whole = false) {
   const draft = t.draft ?? {};
   const one = (f) => {
     const v = Object.hasOwn(draft, f.id) ? draft[f.id] : undefined;
-    const name = (whole ? "w-" : "f-") + t.id + "-" + f.id;
+    const name = "f-" + t.id + "-" + f.id;
     const req = f.required ? ` <span class="req" title="Obrigatório">*</span>` : "";
     const legend = `<legend>${esc(f.label)}${req}</legend>`;
+    const must = f.required ? ` data-required="true"` : "";
     if (f.kind === "text") {
-      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text">${legend}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
+      const rec2 = field_rec(f);
+      const hint = typeof rec2 === "string" ? `<p class="rec-text"><span class="rec-tag">recomendado</span> ${esc(rec2)}</p>` : "";
+      return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="text"${must}>${legend}${hint}<textarea rows="2" maxlength="1000" aria-label="${esc(f.label)}" data-keep="f-${esc(f.id)}">${esc(typeof v === "string" ? v : "")}</textarea></fieldset>`;
     }
     const type = f.kind === "multi" ? "checkbox" : "radio";
     const on = (c) => Array.isArray(v) ? v.includes(c) : v === c;
-    const means = (k) => f.descriptions?.[k] ? `<small>${esc(f.descriptions[k])}</small>` : "";
-    const boxes = f.choices.map((c, k) => `<label><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> <span>${esc(c)}${means(k)}</span></label>`).join("");
-    return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}">${legend}<div class="picks">${boxes}</div></fieldset>`;
+    const rec = field_rec(f);
+    const label = (c, k) => {
+      const r = rec_is(rec, c);
+      const tagged = r && !rec_marked(c) ? ` <span class="rec-tag">recomendada</span>` : "";
+      const means = f.descriptions?.[k] ? `<small>${esc(f.descriptions[k])}</small>` : "";
+      return `<label${r ? ` class="rec"` : ""}><input type="${type}" name="${esc(name)}" value="${esc(c)}"${on(c) ? " checked" : ""}> ${esc(c)}${tagged}${means}</label>`;
+    };
+    const boxes = f.choices.map(label).join("");
+    return `<fieldset class="field" data-field="${esc(f.id)}" data-kind="${esc(f.kind)}"${must}>${legend}<div class="picks">${boxes}</div></fieldset>`;
   };
   return `<div class="fields">${fields.map(one).join("")}</div>`;
 }
-function thread_html(t, whole = false) {
+function thread_msg_html(m) {
+  return m.who === "unii" ? `<li class="unii"><span class="who">Unii</span><div class="md">${md_parse(m.text).map(block_html).join("")}</div></li>` : `<li class="user"><span class="who">Você</span><p>${esc(m.text)}</p></li>`;
+}
+function thread_html(t, desk = false) {
   const thread = t.thread ?? [];
-  const msg = (m) => m.who === "unii" ? `<li class="unii"><span class="who">Unii</span><div class="md">${md_parse(m.text).map(block_html).join("")}</div></li>` : `<li class="user"><span class="who">Você</span><p>${esc(m.text)}</p></li>`;
-  const open = whole || thread.length > 0 && t.talk !== null ? " open" : "";
   const said = thread.length === 0 ? "Conversar sobre esta pendência" : "Conversa (" + thread.length + ")";
-  const box = `<textarea class="say" rows="2" maxlength="4000" placeholder="Escreva sobre esta pendência (não a conclui)" aria-label="Mensagem sobre ${esc(t.id)}" data-keep="say"></textarea>`;
+  const box = `<textarea class="say" rows="${desk ? 3 : 2}" maxlength="4000" placeholder="Escreva sobre esta pendência (não a conclui)" aria-label="Mensagem sobre ${esc(t.id)}" data-keep="say"></textarea>`;
   const send = `<button class="say-send"${act_html({ $: "TaskSay", task: t.id, text: "" })}>Enviar</button>`;
-  return `<details class="thread" data-keep="thread"${open}><summary>${esc(said)}</summary>${thread.length === 0 ? "" : `<ol>${thread.map(msg).join("")}</ol>`}${box}<div class="acts">${send}</div></details>`;
+  const msgs = thread.length === 0 ? "" : `<ol>${thread.map(thread_msg_html).join("")}</ol>`;
+  if (desk) {
+    return `<section class="thread"><p class="sub">${esc(said)}</p>${msgs}${box}<div class="acts"><span class="hint">Ctrl+Enter envia</span>${send}</div></section>`;
+  }
+  const open = thread.length > 0 && t.talk !== null ? " open" : "";
+  return `<details class="thread" data-keep="thread"${open}><summary>${esc(said)}</summary>${msgs}${box}<div class="acts">${send}</div></details>`;
 }
 function account_html(prompts, notify = null) {
   const item = (what, note, act) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
@@ -1784,20 +2369,19 @@ function prompt_html(name, text, note) {
 }
 function notify_html(notify) {
   const note = {
-    off: "Replies on this device, when UniiChat isn't open.",
-    on: "Replies on this device, when UniiChat isn't open.",
-    blocked: "Blocked in this browser's settings for this site.",
-    home: "On iPhone and iPad: Share, then Add to Home Screen, and open it from there."
+    off: "Respostas e pendências que precisam de você, neste aparelho, quando o UniiChat não está aberto.",
+    on: "Respostas e pendências que precisam de você, neste aparelho, quando o UniiChat não está aberto.",
+    blocked: "Bloqueadas nas configurações deste navegador para este site.",
+    home: "No iPhone e no iPad: toque em Compartilhar, depois em Adicionar à Tela de Início, e abra o UniiChat por lá."
   }[notify];
-  const button = notify === "home" ? "" : `<button class="chip notify"${notify === "blocked" ? " disabled" : ""}>${notify === "on" ? "Turn off" : "Turn on"}</button>`;
-  return `<div class="item"><p>Notifications<small>${note}</small></p>${button}</div>`;
+  const button = notify === "home" ? "" : `<button class="chip notify"${notify === "blocked" ? " disabled" : ""}>${notify === "on" ? "Desativar" : "Ativar"}</button>`;
+  return `<div class="item"><p>Notificações<small>${note}</small></p>${button}</div>`;
 }
 var SETTING = {
   vendors: ["Vendors", "Whose models the server offers."],
   models: ["Models", "The models offered, of those vendors."],
   pick: ["Default model", "What a chat runs on until it picks another."],
-  compactor: ["Compactor model", "What writes the memory's summaries. Sonnet medium summarizes more faithfully than Haiku, using more of a plan's limits."],
-  compactor_context: ["Compactor context", "How much of the chat each summary sees, in KB (1 to 128). More context lets it copy more into a summary that its message doesn't say. New summaries only."],
+  compactor: ["Compactor model", "What writes the memory's summaries."],
   agents: ["Subagent model", "What subagents run on."],
   site: ["Site", "The server's address, for sign-in links and the installer."],
   apple: ["iOS App ID", "The app's team and bundle ID, whose sign-in links it opens."],
@@ -1811,7 +2395,7 @@ var KEY = {
 var VENDOR_KEY = { "claude-api": "anthropic", "openai-api": "openai" };
 var PICKS = ["pick", "compactor", "agents"];
 var GROUPS = [
-  ["Models", ["vendors", "models", "pick", "compactor", "compactor_context", "agents"]],
+  ["Models", ["vendors", "models", "pick", "compactor", "agents"]],
   ["Server", ["site", "apple", "apns"]]
 ];
 function settings_html(page) {
@@ -1863,9 +2447,6 @@ function control_html(r) {
     case "compactor":
     case "agents": {
       return `<input type="hidden" name="${r.key}" value="${esc(r.value)}"><div class="four"></div>`;
-    }
-    case "compactor_context": {
-      return `<input id="set-${r.key}" name="${r.key}" type="number" min="1" max="128" step="1" inputmode="numeric" value="${esc(r.value)}" placeholder="${esc(r.def)}">`;
     }
   }
   return `<input id="set-${r.key}" name="${r.key}" value="${esc(r.value)}" placeholder="${esc(r.def)}" spellcheck="false" autocapitalize="off">`;
@@ -2017,10 +2598,64 @@ function span_html(s) {
     }
   }
 }
+function pipeline_html(panel, now = Date.now(), why = "", opened = null) {
+  const head = `<a class="back" href="/" data-go="/">← Voltar</a><h1>Pipeline</h1>`;
+  if (panel === null) {
+    return head + `<p class="pipe-none">${esc(why || "Não foi possível ler o painel.")}</p><button type="button" class="chip pipe-reload">Tentar de novo</button>`;
+  }
+  const t = pipeline_totals(panel.fronts);
+  const card = (n, what, note = "") => `<div class="pipe-total"><b>${esc(n)}</b><span>${esc(what)}</span>${note === "" ? "" : `<small>${esc(note)}</small>`}</div>`;
+  const totals = `<section class="pipe-totals" aria-label="Resumo">` + card(String(t.active), t.active === 1 ? "frente ativa" : "frentes ativas") + card(String(t.user), "com você") + card(String(t.stalled), t.stalled === 1 ? "parada com o Unii" : "paradas com o Unii") + card(t.cycles === null ? "—" : num_said(t.cycles), "ciclos por PR", "mediana") + card(t.decide === null ? "—" : took_said(t.decide), "até a sua decisão", t.decided === 0 ? "nenhuma decisão registrada" : "mediana de " + t.decided + (t.decided === 1 ? " decisão" : " decisões")) + card(span_said(t.idle), "tempo parado", "frentes ativas, sem agente e sem você") + `</section>`;
+  const read = `<p class="pipe-read">Lido às ${esc(when_said(panel.at).slice(6))}${panel.refreshing ? " · lendo o estado dos PRs no GitHub…" : ""} · <button type="button" class="link pipe-reload">Atualizar</button></p>`;
+  const active = panel.fronts.filter((f) => f.stage !== "closed");
+  const closed = panel.fronts.filter((f) => f.stage === "closed");
+  const list2 = active.length === 0 ? `<p class="pipe-none">Nenhuma frente ativa.</p>` : `<ol class="pipe-fronts">${active.map((f) => `<li>${front_html(f, now, opened === null ? f.stage === "user" || f.stage === "stalled" : opened.has(f.ref))}</li>`).join("")}</ol>`;
+  const old = closed.length === 0 ? "" : `<details class="pipe-closed"><summary>Encerradas (${closed.length})</summary><ol class="pipe-fronts">${closed.map((f) => `<li>${front_html(f, now, opened !== null && opened.has(f.ref))}</li>`).join("")}</ol></details>`;
+  return head + read + totals + list2 + old;
+}
+function num_said(n) {
+  return (Math.round(n * 10) / 10).toString().replace(".", ",");
+}
+function front_html(f, now, open) {
+  const since = span_said(now - Date.parse(f.since));
+  const notes = f.stage === "closed" ? "" : f.fixing ? " · ressalvas em correção" : " · ressalvas abertas: " + sevs_said(f.open);
+  const sum = `<summary><b class="pipe-ref">${esc(f.ref)}</b> <span class="pipe-stage ${f.stage}">${esc(STAGE_SAID[f.stage])}</span> <span class="pipe-meta">${f.stage === "closed" ? "desde " + esc(when_said(f.since)) : "há " + esc(since)} · ${f.cycles.length} ${f.cycles.length === 1 ? "ciclo" : "ciclos"}${esc(notes)}</span></summary>`;
+  const tasks = f.tasks.length === 0 ? "" : `<h3>Pendências abertas</h3><ul class="pipe-tasks">${f.tasks.map((t) => `<li><button type="button" class="link" data-desk="${esc(t.id)}">${esc(t.id)}</button> <span class="pipe-who">${t.assignee === "user" ? "sua" : "do Unii"}</span> ${esc(t.title)}</li>`).join("")}</ul>`;
+  const working = f.runs.filter((r) => r.state === "working");
+  const now_ = working.length === 0 ? "" : `<h3>Agentes trabalhando</h3><ul class="pipe-runs">${working.map((r) => `<li>${run_html(r)} · desde ${esc(when_said(r.start))}</li>`).join("")}</ul>`;
+  const prs = f.prs.length === 0 ? "" : `<h3>PRs</h3><ul class="pipe-prs">${f.prs.map(pr_html).join("")}</ul>`;
+  const cycles = f.cycles.length === 0 ? `<p class="pipe-none">Nenhuma verificação registrada.</p>` : `<h3>Ciclos de verificação</h3><ol class="pipe-cycles">${f.cycles.map((c) => cycle_html(c)).join("")}</ol>`;
+  const decide = f.decide.length === 0 ? "nenhuma decisão sua registrada" : "mediana " + took_said(median_of(f.decide)) + ", máximo " + took_said(Math.max(...f.decide)) + " (" + f.decide.length + (f.decide.length === 1 ? " decisão" : " decisões") + ")";
+  const verified = f.prs.filter((p) => p.cycles > 0);
+  const per = verified.length === 0 ? "nenhum PR verificado" : verified.map((p) => p.key + ": " + p.cycles).join(" · ");
+  const metrics = `<h3>Métricas</h3><dl class="pipe-metrics"><dt>Tempo parado</dt><dd>${esc(span_said(f.idle))} <small>sem agente trabalhando e sem pendência sua, desde ${esc(when_said(f.first))}</small></dd><dt>Até a sua decisão</dt><dd>${esc(decide)}</dd><dt>Ciclos por PR</dt><dd>${esc(per)}</dd></dl>`;
+  return `<details class="pipe-front" data-ref="${esc(f.ref)}"${open ? " open" : ""}>${sum}<div class="pipe-body">${tasks}${now_}${prs}${cycles}${metrics}</div></details>`;
+}
+function run_html(r) {
+  return `<span class="pipe-agent">${esc(r.name)}</span>${r.label === null ? "" : ` <small class="pipe-label">${esc(r.label)}</small>`}`;
+}
+function pr_html(p) {
+  const name = p.url === null ? `<span class="pipe-pr">${esc(p.key)}</span>` : `<a class="pipe-pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.key)}</a>`;
+  const live = p.live === null ? `<span class="pipe-tag">${p.url === null ? "sem link: estado desconhecido" : "estado não lido"}</span>` : `<span class="pipe-tag ${p.live.state.toLowerCase()}">${esc(PR_STATE_SAID[p.live.state])}</span>` + (p.live.state === "OPEN" ? ` <span class="pipe-tag ci-${p.live.ci}">${esc(CI_SAID[p.live.ci])}</span>` : "");
+  const head = pr_head_said(p);
+  const said = head === null ? p.head === null ? "" : ` · verificado em ${esc(p.head.slice(0, 7))}` : ` · <span class="${head.same ? "" : "pipe-warn"}">${esc(head.text)}</span>`;
+  const verdict = p.verdict === null ? "" : ` · ${esc(VERDICT_SAID[p.verdict])}`;
+  return `<li>${name} ${live}${said} · ${p.cycles} ${p.cycles === 1 ? "ciclo" : "ciclos"}${verdict}</li>`;
+}
+function cycle_html(c) {
+  const r = c.run;
+  const verdict = r.state === "working" ? "verificando" : r.state === "cut" ? "interrompida sem veredito" : r.verdict === null ? "veredito não lido do relato" : VERDICT_SAID[r.verdict];
+  const notes = r.verdict === null || r.verdict === "approved" ? "" : r.noted ? " · ressalvas: " + sevs_said(r.notes) : " · ressalvas sem gravidade no relato";
+  const prs = r.prs.length === 0 ? "" : ` · ${esc(r.prs.map((k) => k + (r.heads[k] === undefined ? "" : " em " + r.heads[k].slice(0, 7))).join(", "))}`;
+  const work = c.after.length === 0 ? "" : `<small class="pipe-work">verificou o trabalho de ${c.after.map((w) => esc(w.name) + (w.label === null ? "" : " (" + esc(w.label) + ")")).join(", ")}</small>`;
+  const dur = r.state === "working" ? "" : " · " + took_said(Date.parse(r.end) - Date.parse(r.start));
+  const cls = r.verdict === "rejected" ? "rejected" : r.verdict === "approved_with_notes" ? "notes" : r.verdict === "approved" ? "approved" : "";
+  return `<li class="${cls}"><span class="pipe-n">Ciclo ${c.n}</span> ${esc(when_said(r.start))}${esc(dur)} · ${run_html(r)} · <b class="pipe-verdict">${esc(verdict)}</b>${esc(notes)}${prs}${work}</li>`;
+}
 
 // web/src/main.ts
 var APP = window.webkit?.messageHandlers?.unii ?? null;
-var DESK = matchMedia("(hover: hover)");
+var DESK2 = matchMedia("(hover: hover)");
 var NONE = "No Claude or ChatGPT chats in that folder. Choose ~/.claude or ~/.codex.";
 var SCENES = `
   <div class="scene"><p>Your entire life.</p><p>One single chat.</p></div>
@@ -2042,8 +2677,18 @@ var P = {
   done: {},
   off: new Set,
   step: "",
-  push: null
+  push: null,
+  mode: sessionStorage.getItem(kept("mode")) === "desk" ? "desk" : "chat",
+  chose: false,
+  sel: null,
+  q: "",
+  ref: "",
+  pane: false,
+  ids: [],
+  order: { sel: null, ids: [] },
+  web: null
 };
+var NARROW = matchMedia("(max-width: 760px)");
 function $(sel) {
   return document.querySelector(sel);
 }
@@ -2054,8 +2699,12 @@ async function boot() {
   document.head.insertAdjacentHTML("beforeend", `<style>${theme_css()}</style>`);
   if (APP === null) {
     navigator.serviceWorker?.register("/sw.js").catch(() => {});
+    navigator.serviceWorker?.addEventListener("message", (ev) => ev.data?.$ === "mesa" && desk_mode("desk"));
   }
-  history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : "/");
+  if (new URLSearchParams(location.search).has("mesa")) {
+    sessionStorage.setItem(kept("mode"), "desk");
+  }
+  history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : location.pathname === PIPE ? PIPE : "/");
   if (await boot_me() === null) {
     solo("Sign in", "This UniiChat server is private. On the computer it runs on, run <code>unii serve link</code> and open the link it prints here.");
     return;
@@ -2081,6 +2730,7 @@ async function boot_me() {
   }
 }
 var PAGES = ["/settings", "/account"];
+var PIPE = "/pipeline";
 function solo(title, sub) {
   document.body.className = "solo";
   document.body.innerHTML = `<main><h1>${title}</h1><p class="sub">${sub}</p></main>`;
@@ -2099,7 +2749,7 @@ function chat() {
     draw(true);
   };
   BOX.onkeydown = (ev) => {
-    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && DESK.matches) {
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && DESK2.matches) {
       ev.preventDefault();
       submit();
     }
@@ -2123,23 +2773,21 @@ function chat() {
   document.ondragover = (ev) => ev.preventDefault();
   document.ondrop = (ev) => {
     ev.preventDefault();
-    if (view_typing(v)) {
-      attach([...ev.dataTransfer?.files ?? []]);
-    }
+    attach([...ev.dataTransfer?.files ?? []]);
   };
   document.onclick = click;
-  for (const box of [$("#tasks"), $("#task")]) {
-    box.addEventListener("change", task_draft);
-    box.addEventListener("toggle", thread_toggle, true);
-    box.addEventListener("keydown", (ev) => {
+  for (const root of [$("#tasks"), $("#desk")]) {
+    root.addEventListener("change", task_draft);
+    root.addEventListener("keydown", (ev) => {
       const el = ev.target;
       if (el.matches("textarea.say") && ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
         ev.preventDefault();
-        task_say(el.closest("li[data-task]").dataset.task, el);
+        task_say(el.closest("[data-task]").dataset.task, root);
       }
     });
   }
-  $("#task").addEventListener("close", () => TASK = null);
+  $("#tasks").addEventListener("toggle", thread_toggle, true);
+  desk_wire();
   visualViewport.onresize = () => {
     if (document.activeElement === BOX && BOX.selectionStart === BOX.value.length) {
       BOX.scrollTop = BOX.scrollHeight;
@@ -2217,7 +2865,7 @@ function act(a) {
   draw(a.$ === "Send");
 }
 function click(ev) {
-  const el = ev.target.closest("[data-act], [data-copy], [data-go], [data-knob], [data-open], [data-close], .choices > button");
+  const el = ev.target.closest("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], .choices > button");
   const sel = getSelection();
   if (el === null || sel !== null && !sel.isCollapsed && el.contains(sel.focusNode)) {
     return;
@@ -2226,11 +2874,16 @@ function click(ev) {
     place(el);
     return;
   }
-  if (el.dataset.open !== undefined) {
-    return task_open(el.dataset.open);
+  if (el.dataset.desk !== undefined) {
+    if (location.pathname === PIPE) {
+      history.pushState(null, "", "/");
+    }
+    desk_open(el.dataset.desk, true);
+    return;
   }
-  if (el.dataset.close !== undefined) {
-    return $("#task").close();
+  if (el.dataset.deskBack !== undefined) {
+    desk_back();
+    return;
   }
   el.closest(".choices")?.hidePopover();
   const { act: a, copy: text, go: path } = el.dataset;
@@ -2244,8 +2897,14 @@ function click(ev) {
   }
   if (a !== undefined) {
     const made = JSON.parse(a);
-    if (made.$ === "TaskSay") {
-      task_say(made.task, el);
+    if (made.$ === "TaskSay" && made.text !== "") {
+      act(made);
+    } else if (made.$ === "TaskSay") {
+      task_say(made.task, el.closest("#tasks, #desk") ?? $("#tasks"));
+    } else if (made.$ === "TaskAccept") {
+      task_accept2(el, made.task);
+    } else if (made.$ === "Task" && made.state === "done" && task_missing(el)) {
+      return;
     } else {
       act(task_act(el, made));
     }
@@ -2290,14 +2949,48 @@ function left(ev) {
   }
 }
 function task_act(el, a) {
-  const item = el.closest("li[data-task]");
+  const item = el.closest("[data-task]");
   if (a.$ !== "Task" || a.state === "open" || item === null) {
     return a;
   }
   const note = item.querySelector("input.note")?.value ?? "";
-  const go = item.querySelector(".go input")?.checked ?? false;
   const fields = a.state === "done" ? task_fields(item) : {};
-  return { ...a, note, go, ...Object.keys(fields).length === 0 ? {} : { fields } };
+  return { ...a, note, ...Object.keys(fields).length === 0 ? {} : { fields } };
+}
+function task_accept2(el, id) {
+  const item = el.closest("[data-task]");
+  const t = v.tasks.find((x) => x.id === id);
+  if (item === null || t === undefined) {
+    return;
+  }
+  const fill = task_accept_fill(t, task_fields(item));
+  for (const set of item.querySelectorAll("fieldset.field")) {
+    const want = fill[set.dataset.field];
+    if (want === undefined) {
+      continue;
+    }
+    if (set.dataset.kind === "text") {
+      const box = set.querySelector("textarea");
+      if (box !== null && box.value.trim() === "") {
+        box.value = String(want);
+      }
+      continue;
+    }
+    const picks = Array.isArray(want) ? want.map(String) : [String(want)];
+    for (const input of set.querySelectorAll("input")) {
+      input.checked = picks.includes(input.value);
+    }
+  }
+  if (task_accept_mode(t) === "fill") {
+    act({ $: "TaskDraft", task: id, fields: task_fields(item) });
+    toast(task_fill_said(t));
+    return;
+  }
+  if (task_missing(el)) {
+    return;
+  }
+  const note = item.querySelector("input.note")?.value ?? "";
+  act({ $: "TaskAccept", task: id, ...note.trim() === "" ? {} : { note }, fields: task_fields(item) });
 }
 function field_value(set) {
   if (set.dataset.kind === "text") {
@@ -2313,17 +3006,44 @@ function task_fields(item) {
   }
   return out;
 }
+function field_invalid(set, on) {
+  for (const el of [set, ...set.querySelectorAll("input, textarea, select")]) {
+    if (on) {
+      el.setAttribute("aria-invalid", "true");
+    } else {
+      el.removeAttribute("aria-invalid");
+    }
+  }
+}
+function task_missing(el) {
+  const item = el.closest("[data-task]");
+  const sets = item === null ? [] : [...item.querySelectorAll("fieldset.field[data-required]")];
+  const empty = (set) => {
+    const v2 = field_value(set);
+    return Array.isArray(v2) ? v2.length === 0 : String(v2).trim() === "";
+  };
+  const missing = sets.filter(empty);
+  sets.forEach((set) => field_invalid(set, missing.includes(set)));
+  if (missing.length === 0) {
+    return false;
+  }
+  missing[0].scrollIntoView({ block: "center", behavior: "smooth" });
+  missing[0].querySelector("input, textarea")?.focus({ preventScroll: true });
+  const said = missing.map((set) => "“" + (set.querySelector("legend")?.firstChild?.textContent ?? "").trim() + "”").join(", ");
+  toast("Para concluir, responda " + said + ". Nada foi enviado.");
+  return true;
+}
 function task_draft(ev) {
-  const set = ev.target.closest(":is(#tasks, #task) fieldset.field");
-  const item = set?.closest("li[data-task]");
+  const set = ev.target.closest("fieldset.field");
+  const item = set?.closest("[data-task]");
   if (set === null || set === undefined || item === null || item === undefined) {
     return;
   }
+  field_invalid(set, false);
   act({ $: "TaskDraft", task: item.dataset.task, fields: { [set.dataset.field]: field_value(set) } });
 }
-function task_say(task, at) {
-  const where = at.closest("#task") !== null ? "#task" : "#tasks";
-  const box = () => document.querySelector(`${where} li[data-task="${CSS.escape(task)}"] textarea.say`);
+function task_say(task, root) {
+  const box = () => root.querySelector(`[data-task="${CSS.escape(task)}"] textarea.say`);
   const text = box()?.value ?? "";
   for (const msg of view_act(v, { $: "TaskSay", task, text })) {
     const was = box();
@@ -2343,10 +3063,10 @@ function task_say(task, at) {
   }
   draw(false);
 }
-function keep_take() {
+function keep_take(root) {
   const kept2 = new Map;
-  for (const el of document.querySelectorAll(":is(#tasks, #task) li[data-task] :is(input, textarea)[data-keep]")) {
-    const key = el.closest(":is(#tasks, #task)").id + "/" + el.closest("li[data-task]").dataset.task + "/" + el.dataset.keep;
+  for (const el of root.querySelectorAll("[data-task] :is(input, textarea)[data-keep]")) {
+    const key = el.closest("[data-task]").dataset.task + "/" + el.dataset.keep;
     const box = el instanceof HTMLInputElement && el.type === "checkbox";
     const focus = document.activeElement === el;
     const value = !box && el.value !== el.defaultValue ? el.value : null;
@@ -2357,10 +3077,10 @@ function keep_take() {
   }
   return kept2;
 }
-function keep_put(kept2) {
+function keep_put(root, kept2) {
   for (const [key, k] of kept2) {
-    const [where, task, name] = key.split("/");
-    const el = document.querySelector(`#${where} li[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
+    const [task, name] = key.split("/");
+    const el = root.querySelector(`[data-task="${CSS.escape(task)}"] [data-keep="${CSS.escape(name)}"]`);
     if (el === null || el === k.el) {
       continue;
     }
@@ -2396,6 +3116,19 @@ function threads_put() {
     }
   }
 }
+var TURN2 = -1;
+var TITLE = document.title;
+function turn_show(n) {
+  if (n === TURN2) {
+    return;
+  }
+  TURN2 = n;
+  document.title = turn_title(TITLE, n);
+  $(".tasks").classList.toggle("turn", n > 0);
+  $(".mode").classList.toggle("turn", n > 0);
+  const nav = navigator;
+  (n === 0 ? nav.clearAppBadge?.() : nav.setAppBadge?.(n))?.catch(() => {});
+}
 var TASKS = { of: null, html: { open: [], now: [], waiting: [], closed: [] } };
 function tasks_bar() {
   if (TASKS.of !== v.tasks) {
@@ -2409,10 +3142,9 @@ function tasks_bar() {
   $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
   $("#tasks .none").hidden = open.length > 0;
   $("#tasks .none").textContent = tasks_none_said(waiting.length);
-  const kept2 = keep_take();
+  const kept2 = keep_take($("#tasks"));
   markup($("#tasks ul.now"), now);
-  task_render();
-  keep_put(kept2);
+  keep_put($("#tasks"), kept2);
   threads_put();
   markup($("#tasks .waiting ul"), waiting);
   $("#tasks .waiting").hidden = waiting.length === 0;
@@ -2425,25 +3157,198 @@ function tasks_bar() {
     $("#tasks").hidePopover();
   }
 }
-var TASK = null;
-var WINDOW = { of: null, id: null };
-function task_open(id) {
-  TASK = id;
-  WINDOW = { of: null, id: null };
-  task_render();
-  const box = $("#task");
-  if (!box.open) {
-    box.showModal();
-  }
-  box.querySelector("textarea.say, .x")?.focus();
+function desk_wire() {
+  const q = $("#desk .q");
+  const ref = $("#desk .ref");
+  q.oninput = () => {
+    P.q = q.value;
+    draw(false);
+  };
+  ref.onchange = () => {
+    P.ref = ref.value;
+    draw(false);
+  };
+  $(".mode").onclick = () => desk_mode(P.mode === "desk" ? "chat" : "desk");
+  document.addEventListener("keydown", desk_keys);
+  setInterval(() => P.mode === "desk" && document.visibilityState === "visible" && draw(false), 60000);
+  NARROW.addEventListener("change", () => route());
 }
-function task_render() {
-  if (TASK === null || WINDOW.of === v.tasks && WINDOW.id === TASK) {
+function desk_mode(mode, push = true) {
+  sessionStorage.setItem(kept("mode"), mode);
+  const st = { mode, sel: P.sel, pane: false };
+  if (push) {
+    history.pushState(st, "", "/");
+  } else {
+    history.replaceState(st, "", "/");
+  }
+  route();
+}
+function desk_open(id, pane) {
+  P.sel = id;
+  if (P.mode !== "desk") {
+    P.mode = "desk";
+  }
+  const st = { mode: "desk", sel: id, pane: pane && NARROW.matches };
+  if (st.pane && !(history.state?.pane === true)) {
+    history.pushState(st, "", "/");
+  } else {
+    history.replaceState(st, "", "/");
+  }
+  route();
+  if (!NARROW.matches && pane) {
+    requestAnimationFrame(() => document.querySelector(`#desk .row[data-desk="${CSS.escape(id)}"]`)?.focus({ preventScroll: true }));
+  }
+}
+function desk_back() {
+  if (history.state?.pane === true) {
+    history.back();
     return;
   }
-  WINDOW = { of: v.tasks, id: TASK };
-  $("#task").dataset.task = TASK;
-  $("#task .body").innerHTML = task_window_html(v.tasks, TASK);
+  P.pane = false;
+  route();
+}
+function desk_choose() {
+  if (P.chose) {
+    return;
+  }
+  P.chose = true;
+  const was = sessionStorage.getItem(kept("mode"));
+  const mode = was === "desk" || was === "chat" ? was : desk_turn(v.tasks) ? "desk" : "chat";
+  if (mode !== P.mode && PAGES.includes(location.pathname) === false && location.pathname !== PIPE) {
+    desk_mode(mode, false);
+  }
+}
+function desk_build() {
+  const web = v.web ?? "";
+  if (web === "") {
+    return;
+  }
+  if (P.web === null) {
+    P.web = web;
+  } else if (P.web !== web) {
+    P.web = web;
+    toast("O UniiChat foi atualizado. Recarregando…", true);
+    setTimeout(() => location.reload(), 300);
+  }
+}
+var DESKED = null;
+function desk_draw() {
+  const refs = desk_refs(v.tasks);
+  if (P.ref !== "" && !refs.includes(P.ref)) {
+    P.ref = "";
+  }
+  if (P.chose && P.sel !== null && !v.tasks.some((t) => t.id === P.sel)) {
+    P.sel = null;
+    P.pane = false;
+    document.body.classList.remove("pane");
+  }
+  const turn = turn_of(v);
+  const said = JSON.stringify(turn) + Math.floor(Date.now() / 60000);
+  if (DESKED === null || DESKED.of !== v.tasks || DESKED.q !== P.q || DESKED.ref !== P.ref || DESKED.sel !== P.sel || DESKED.said !== said) {
+    const groups = desk_list(v.tasks, P.q, P.ref);
+    const ids2 = groups.flatMap((g) => g.tasks.map((t) => t.id));
+    if (P.sel === null && !NARROW.matches && ids2.length > 0) {
+      P.sel = ids2[0];
+    }
+    if (P.sel !== null && groups.some((g) => g.group === "now" && g.tasks.some((t) => t.id === P.sel))) {
+      P.order = { sel: P.sel, ids: ids2 };
+    }
+    const order = P.order.sel === P.sel ? P.order.ids : [];
+    DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, said, html: desk_html(v.tasks, P.q, P.ref, P.sel, Date.now(), { order, turn }) };
+  }
+  const { list: list2, detail, ids } = DESKED.html;
+  P.ids = ids;
+  const select = $("#desk .ref");
+  markup(select, [`<option value="">Todos os projetos</option>`, ...refs.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`)]);
+  select.value = P.ref;
+  select.hidden = refs.length === 0;
+  markup($("#desk .rows"), list2);
+  const pane = $("#desk .pane");
+  const was = keep_take(pane);
+  markup(pane, detail);
+  keep_put(pane, was);
+  const live = $("#desk .live");
+  const shown = v.tasks.find((t) => t.id === P.sel);
+  const wait = shown !== undefined && shown.state === "open" && shown.talk === "unii" ? shown.id + ": " + task_talk_wait_said(shown, Date.now(), turn) : "";
+  if (live.textContent !== wait) {
+    live.textContent = wait;
+  }
+  const untold = view_untold(v).length;
+  $("#desk .tell").hidden = untold === 0;
+  $("#desk .tell span").textContent = String(untold);
+}
+function desk_keys(ev) {
+  if (ev.defaultPrevented || ev.ctrlKey || ev.metaKey || ev.altKey || ev.isComposing || !$("#account").hidden || document.body.classList.contains("guest")) {
+    return;
+  }
+  const el = ev.target;
+  const typing = el.matches("input, textarea, select, [contenteditable], [contenteditable] *");
+  if (document.querySelector("[popover]:popover-open") !== null) {
+    return;
+  }
+  if (typing) {
+    if (ev.key === "Escape" && P.mode === "desk" && el.closest("#desk") !== null) {
+      ev.preventDefault();
+      el.blur();
+    }
+    return;
+  }
+  if (ev.key === "m") {
+    ev.preventDefault();
+    desk_mode(P.mode === "desk" ? "chat" : "desk");
+    return;
+  }
+  if (P.mode !== "desk") {
+    return;
+  }
+  const by = { j: 1, ArrowDown: 1, k: -1, ArrowUp: -1 }[ev.key];
+  if (by !== undefined && !(NARROW.matches && P.pane)) {
+    ev.preventDefault();
+    const to = desk_step(P.ids, P.sel, by);
+    if (to !== null) {
+      desk_open(to, false);
+      requestAnimationFrame(() => {
+        const row = document.querySelector(`#desk .row[data-desk="${CSS.escape(to)}"]`);
+        row?.scrollIntoView({ block: "nearest" });
+        row?.focus({ preventScroll: true });
+      });
+    }
+    return;
+  }
+  if (ev.key === "a" && P.sel !== null) {
+    const accept = $("#desk .pane").querySelector("button.accept");
+    if (accept !== null) {
+      ev.preventDefault();
+      accept.click();
+    }
+    return;
+  }
+  if ((ev.key === "Enter" || ev.key === "o") && P.sel !== null && (el === document.body || el.closest("#desk .rows") !== null)) {
+    ev.preventDefault();
+    if (NARROW.matches) {
+      desk_open(P.sel, true);
+    } else {
+      $("#desk .pane").querySelector("input, textarea, button:not(.back)")?.focus();
+    }
+    return;
+  }
+  if (ev.key === "/") {
+    ev.preventDefault();
+    if (NARROW.matches && P.pane) {
+      desk_back();
+    }
+    $("#desk .q").focus();
+    return;
+  }
+  if (ev.key === "Escape") {
+    if (NARROW.matches && P.pane) {
+      ev.preventDefault();
+      desk_back();
+    } else if (P.sel !== null) {
+      ev.preventDefault();
+      document.querySelector(`#desk .row[data-desk="${CSS.escape(P.sel)}"]`)?.focus();
+    }
+  }
 }
 function copied(button) {
   button.innerHTML = CHECK;
@@ -2547,6 +3452,10 @@ function hear(msg) {
   for (const out of view_hear(v, msg)) {
     link_send(v, out);
   }
+  if (msg.$ === "state") {
+    desk_build();
+    desk_choose();
+  }
   const now = view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
   if (now.length > 0) {
     toast("Now " + now.map((k) => k.hint).join("; ") + ".");
@@ -2640,7 +3549,7 @@ function import_took(name, read, status) {
 async function import_welcome() {
   await INTRO;
   const key = kept("welcomed");
-  if (localStorage.getItem(key) === null && v.pick !== null && v.parts.length === OPENING && v.importing === null && DESK.matches) {
+  if (localStorage.getItem(key) === null && v.pick !== null && v.parts.length === OPENING && v.importing === null && DESK2.matches) {
     localStorage.setItem(key, "1");
     import_open(true);
   }
@@ -2785,6 +3694,12 @@ function paint() {
     bars();
     return;
   }
+  if (P.mode === "desk") {
+    P.frame = 0;
+    bars();
+    desk_draw();
+    return;
+  }
   const doc = document.documentElement;
   const follow = P.stick && P.end;
   const at = P.rows && !follow ? anchor() : null;
@@ -2836,14 +3751,20 @@ function bars() {
     $("#timers").hidePopover();
   }
   tasks_bar();
+  const turn = desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
+  turn_show(turn);
+  $(".mode").hidden = false;
+  $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
   send.classList.toggle("stop", stop);
-  $(".composer").hidden = !on;
-  $("#pics").hidden = !on;
-  $(".mic").disabled = v.out.some((p) => p.msg.$ === "voice");
+  send.disabled = !on;
+  BOX.disabled = !on;
+  $(".attach").disabled = !on;
+  $(".mic").disabled = !on || v.out.some((p) => p.msg.$ === "voice");
   $(".mic").classList.toggle("rec", P.rec !== null);
+  $(".composer").classList.toggle("off", !on);
   $(".composer").classList.toggle("rec", P.rec !== null);
   const knob = document.activeElement?.dataset?.knob;
-  markup($("#pick"), pick_html(view_fold(v), v.fold === null, view_shown(v), v.page === null ? v.talk : undefined));
+  markup($("#pick"), pick_html(view_fold(v), v.fold === null, view_pick(v)));
   if (knob !== undefined) {
     $("#pick [data-knob=" + knob + "]").focus();
   }
@@ -2890,15 +3811,56 @@ function go(path) {
   route();
 }
 function route() {
-  const page = PAGES.includes(location.pathname);
-  $("#log").hidden = page;
+  const pipe = location.pathname === PIPE;
+  const page = PAGES.includes(location.pathname) || pipe;
+  const st = history.state ?? {};
+  if (st.mode === "desk" || st.mode === "chat") {
+    P.mode = st.mode;
+  }
+  if (typeof st.sel === "string") {
+    P.sel = st.sel;
+  }
+  P.pane = st.pane === true && NARROW.matches;
+  const desk = !page && P.mode === "desk";
+  $("#log").hidden = page || desk;
+  $("#desk").hidden = !desk;
   document.body.classList.toggle("account", page);
+  document.body.classList.toggle("desk", desk);
+  document.body.classList.toggle("pane", desk && P.pane);
   $("#account").hidden = !page;
-  P.shown = location.pathname;
-  if (page) {
+  P.rows = true;
+  P.shown = location.pathname + (desk ? "/mesa" : "");
+  $("#account").classList.toggle("pipe", pipe);
+  if (pipe) {
+    pipeline();
+  } else if (page) {
     account();
   }
   draw(false);
+}
+var PIPE_AGAIN = 4000;
+var PIPE_TRIES = 5;
+var PIPED = 0;
+async function pipeline(tries = 0) {
+  const el = $("#account");
+  const run = ++PIPED;
+  if (tries === 0 && el.querySelector(".pipe-totals") === null) {
+    el.innerHTML = `<a class="back" href="/" data-go="/">← Voltar</a><h1>Pipeline</h1><p class="pipe-read">Lendo…</p>`;
+  }
+  const got = await fetch("/api/pipeline").catch(() => null);
+  const panel = got !== null && got.ok ? await got.json().catch(() => null) : null;
+  if (run !== PIPED || location.pathname !== PIPE) {
+    return;
+  }
+  const shown = el.querySelectorAll("details.pipe-front");
+  const opened = shown.length === 0 ? null : new Set([...shown].filter((d) => d.open).map((d) => d.dataset.ref ?? ""));
+  const y = scrollY;
+  el.innerHTML = pipeline_html(panel, Date.now(), got === null ? "Sem conexão com o UniiChat." : "Não foi possível ler o painel (" + (got.status || "erro") + ").", opened);
+  scrollTo(0, y);
+  el.querySelectorAll(".pipe-reload").forEach((b) => b.onclick = () => pipeline());
+  if (panel?.refreshing === true && tries < PIPE_TRIES) {
+    setTimeout(() => run === PIPED && location.pathname === PIPE && pipeline(tries + 1), PIPE_AGAIN);
+  }
 }
 async function account() {
   const el = $("#account");
@@ -2982,13 +3944,12 @@ async function notify(on) {
   if (push === null) {
     return;
   }
-  const what = on ? "on" : "off";
   try {
     const out = on ? await notify_on(push.reg, push.key) : await notify_off(push.reg);
-    toast(out.error ?? "Notifications are " + what + ".");
+    toast(out.error ?? (on ? "Notificações ativadas." : "Notificações desativadas."));
   } catch (err) {
     const denied = typeof Notification !== "undefined" && Notification.permission === "denied";
-    toast(denied ? "Notifications are blocked in this browser's settings." : "Could not turn notifications " + what + ": " + (err?.message ?? err));
+    toast(denied ? "As notificações estão bloqueadas nas configurações deste navegador." : (on ? "Não foi possível ativar as notificações: " : "Não foi possível desativar as notificações: ") + (err?.message ?? err));
   }
   account();
 }
@@ -3261,7 +4222,7 @@ function intro_play() {
         el.remove();
         gone();
       };
-      if (DESK.matches) {
+      if (DESK2.matches) {
         BOX.focus();
       }
     }

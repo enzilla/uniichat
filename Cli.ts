@@ -75,6 +75,10 @@ const USAGE = `Usage: unii [url]           the chat in this terminal (url: $UNII
        unii serve cursor [logout|status]
                             the same for a Cursor plan (its cursor-sub
                             vendor), in Cursor's agent's own sign-in
+       unii serve inbox [off]
+                            a token (printed alone) that lets a script add
+                            your tasks from Slack or GitHub, and only that
+                            (POST /api/inbox); off: none
        unii serve sessions  the browsers, terminals and devices signed in
        unii serve revoke <n>|--all
                             sign one of them out (its open sockets close),
@@ -206,6 +210,8 @@ if ((SETS.length > 0 && !FLAG.has("--service")) || (FLAG.size > 0 && !runs && !(
   await (await import("./Owner.ts")).Owner.sessions();
 } else if (cmd === "serve" && sub === "revoke" && more !== undefined && !odd([cmd, sub, more])) {
   await (await import("./Owner.ts")).Owner.sessions(more).catch((err) => fail(err.message));
+} else if (cmd === "serve" && sub === "inbox" && [undefined, "off"].includes(more) && !odd([cmd, sub, ...(more ? [more] : [])])) {
+  (await import("./Owner.ts")).Owner.inbox_cli(more === "off");
 } else if (cmd === "serve" && sub === "link" && !odd([cmd, sub])) {
   (await import("./Owner.ts")).Owner.cli();
 } else if (runs && part === "serve") {

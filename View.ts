@@ -15,8 +15,9 @@ import * as Md from "./Md.ts";
 import { LABELS, type Fall, type Move, Pick } from "./Pick.ts";
 import { GLYPH, WHO } from "./Theme.ts";
 import type { Timer } from "./Timer.ts";
-import type { Field, Task, Values } from "./Tasks.ts";
+import type { Field, PrCheck, Task, Values } from "./Tasks.ts";
 import * as Deps from "./TaskDeps.ts";
+import type { Ci, Front, FrontPr, Live as PipeLive, Role, Sevs, Stage } from "./Pipeline.ts";
 
 // Types
 // =====
@@ -76,6 +77,7 @@ export type State = {
   tasks     : Task[]; // the pending list: open, then closed lately (Tasks.tasks_view)
   skills    : Skilled[]; // the skills on the devices open now (Machine.skills), for the terminal to complete
   talk      : Talk | null;
+  web?      : string; // the site's build (its app.js's hash): a page of another reloads (main.ts)
 };
 
 // conversation mode (Memory.ts): its first message whole, the share of
@@ -188,6 +190,7 @@ export type Act =
   | { $: "Task"; task: string; state: Task["state"]; answer?: string; note?: string; go?: boolean; fields?: Record<string, unknown> } // a pending task's Concluir, Descartar, Reabrir, or a choice
   | { $: "TaskDraft"; task: string; fields: Record<string, unknown> } // a task's field answered (not concluded)
   | { $: "TaskSay"; task: string; text: string }  // a message in a task's thread
+  | { $: "TaskAccept"; task: string; note?: string; fields?: Record<string, unknown> } // "Aceitar as recomendadas": the choice and the fields' answers Unii recommends (fields: those given, kept), concluded
   | { $: "TasksTell" }                          // Avisar o Unii agora
   | { $: "Talk"; on: boolean }                  // conversation mode, or standard
 
@@ -358,6 +361,7 @@ export function view_hear(v: View, msg: Server): Client[] {
     case "state": {
       const { $, ...state } = msg;
       Object.assign(v, state);
+      v.tasks = Array.isArray(v.tasks) ? v.tasks.map(task_whole) : [];
       AGENT_LABELS.clear();
       Object.entries(v.labels ?? {}).forEach(([name, label]) => AGENT_LABELS.set(name, label));
       for (const page of v.pages.values()) {
@@ -503,6 +507,10 @@ export function view_act(v: View, act: Act): Client[] {
         v.notes.push("A pendência " + t.id + " não tem a opção “" + act.answer + "”.");
         return [];
       }
+      if (act.state === "dropped" && t.state === "open" && t.assignee !== "user") {
+        v.notes.push("A pendência " + t.id + " está com o Unii: use “Cobrar agora” ou “Pode fechar”.");
+        return [];
+      }
       const waits = Deps.waits(v.tasks, t);
       if (act.state !== "open" && t.state === "open" && waits.length > 0) {
         v.notes.push(task_waits_said(t, waits));
@@ -528,6 +536,25 @@ export function view_act(v: View, act: Act): Client[] {
         return [];
       }
       return [{ $: "task_say", task: t.id, text }];
+    }
+    case "TaskAccept": {
+      const t = v.tasks.find((x) => x.id === act.task);
+      if (t === undefined) {
+        v.notes.push("Pendência " + act.task + " não encontrada.");
+        return [];
+      }
+      // choices, none recommended (task_accept_mode "fill"): the fields'
+      // recommended answers kept as a draft, the choice left to the user
+      if (task_accept_mode(t) === "fill") {
+        v.notes.push(task_fill_said(t));
+        return view_act(v, { $: "TaskDraft", task: t.id, fields: task_accept_fill(t, act.fields ?? t.draft ?? {}) });
+      }
+      const got = task_accept(t, act.fields ?? t.draft ?? {});
+      if (typeof got === "string") {
+        v.notes.push(got);
+        return [];
+      }
+      return view_act(v, { $: "Task", task: t.id, state: "done", ...(got.answer === undefined ? {} : { answer: got.answer }), ...(act.note === undefined ? {} : { note: act.note }), fields: got.fields });
     }
     case "TasksTell": {
       return [{ $: "tasks_tell" }];
@@ -557,6 +584,48 @@ export function task_waits_said(t: Task, waits: string[]): string {
 export function task_frees_said(v: View, t: Task): string {
   const n = Deps.frees(v.tasks, t);
   return n === 0 ? "" : "libera " + n;
+}
+
+// "P1", "P1 e P2", "P1, P2 e P3" (pt-BR)
+export function and_said(xs: string[]): string {
+  return xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " e " + xs[xs.length - 1];
+}
+
+// whose a task is, short, beside its id: "sua", "do Unii", "de X"; ""
+// for one not in the list
+export function whose_short(t: Task | undefined): string {
+  return t === undefined ? "" : t.assignee === "user" ? "sua" : t.assignee === "unii" ? "do Unii" : "de " + t.assignee;
+}
+
+// an id with whose it is: "P46 (sua)"
+export function id_whose(tasks: Task[], id: string): string {
+  const w = whose_short(tasks.find((u) => u.id === id));
+  return w === "" ? id : id + " (" + w + ")";
+}
+
+// which tasks t frees (through others too), named: "libera P70",
+// "libera P70 e P71", past FREES_SAID "libera P70, P71 e mais 3"; ""
+// for none
+export const FREES_SAID = 3;
+export function task_frees_named(tasks: Task[], t: Task): string {
+  const ids = Deps.frees_ids(tasks, t);
+  if (ids.length === 0) {
+    return "";
+  }
+  return "libera " + (ids.length <= FREES_SAID ? and_said(ids) : ids.slice(0, FREES_SAID - 1).join(", ") + " e mais " + (ids.length - FREES_SAID + 1));
+}
+
+// what t waits for, each with whose it is: "aguarda P46 (sua) e P52
+// (do Unii)"; "" for nothing
+export function task_waits_named(tasks: Task[], t: Task): string {
+  const ids = Deps.waits(tasks, t);
+  return ids.length === 0 ? "" : "aguarda " + and_said(ids.map((id) => id_whose(tasks, id)));
+}
+
+// the tab's title with the user's count of tasks before it: "(2) UniiChat";
+// none, the title alone
+export function turn_title(title: string, n: number): string {
+  return n > 0 ? "(" + n + ") " + title : title;
 }
 
 // the header's ✓ count: the open free to resolve; none, but some that
@@ -660,9 +729,13 @@ export function fields_args(t: Task, words: string): { fields: Record<string, un
     return { fields, rest: words };
   }
   let why: string | null = null;
-  const rest = words.replace(/(^|\s)([A-Za-z0-9][A-Za-z0-9_-]*)=("[^"]*"(?=\s|$)|“[^”]*”(?=\s|$)|\S*)/g, (all, pre: string, ref: string, raw: string) => {
+  const rest = words.replace(/(^|\s)([A-Za-z0-9][A-Za-z0-9_-]*)=("[^"]*"(?=\s|$)|“[^”]*”(?=\s|$)|\S*)/g, (all: string, pre: string, ref: string, raw: string, at: number) => {
     if (/^["“]/.test(raw) && !/^("[^"]*"|“[^”]*”)$/.test(raw)) {
-      why = why ?? "O valor de “" + ref + "” tem " + (/^("[^"]*"|“[^”]*”)./.test(raw) ? "texto colado depois da aspa de fechamento" : "uma aspa sem par") + ": feche as aspas e separe o resto com um espaço. Nada foi alterado.";
+      // the value as typed from its quote on (raw stops at a space: obs="a b"c
+      // is raw "a, though its quote is closed, with c stuck after it)
+      const typed = words.slice(at + pre.length + ref.length + 1);
+      const stuck = /^("[^"\s]*"|“[^”\s]*”)\S/.test(raw) || /^("[^"]*"|“[^”]*”)[^\s"“”]/.test(typed);
+      why = why ?? "O valor de “" + ref + "” tem " + (stuck ? "texto colado depois da aspa de fechamento" : "uma aspa sem par") + ": feche as aspas e separe o resto com um espaço. Nada foi alterado.";
       return all;
     }
     const f = field_ref(t, ref);
@@ -709,6 +782,53 @@ export function view_copy(v: View, n: number): { text: string; what: string } | 
   return { text: all[n - 1].x, what: "o bloco de código " + n };
 }
 
+// Turn
+// ====
+
+// what a view knows of Unii's turn, to say why a task waits for Unii:
+// busy, a turn runs; wait, what it waits on (State.wait: SUMMARIES, a
+// model's name, ""); limited, the turn waits for a usage limit; up, the
+// view is connected to the server
+export type Turn = { busy: boolean; wait: Wait; limited: boolean; up: boolean };
+
+// the turn as a view's state says it
+export function turn_of(v: { busy: boolean; wait: Wait; limits?: Record<string, unknown>; up: boolean }): Turn {
+  return { busy: v.busy, wait: v.wait, limited: Object.hasOwn(v.limits ?? {}, TURN), up: v.up };
+}
+
+// since when a task waits for Unii: the user's last message in its
+// thread (none kept: its last change)
+export function task_talk_since(t: Task): string {
+  const mine = (t.thread ?? []).filter((m) => m.who === "user");
+  return mine.length === 0 ? t.changed : mine[mine.length - 1].at;
+}
+
+// why Unii hasn't answered yet, by its turn
+export function turn_why(turn: Turn): string {
+  if (!turn.up) {
+    return "sem conexão com o servidor";
+  }
+  if (turn.limited) {
+    return "esperando o limite de uso do serviço de IA";
+  }
+  if (!turn.busy) {
+    return "nenhum turno em andamento (o servidor pode ter reiniciado)";
+  }
+  return turn.wait === SUMMARIES ? "compactando mensagens antigas" : turn.wait !== "" ? "esperando a resposta de " + turn.wait : "turno em andamento";
+}
+
+// a task the user wrote about and Unii hasn't answered: "aguardando o
+// Unii há 5 min · compactando mensagens antigas" (no turn known: the
+// time alone); else as task_talk_said ("sua vez", or "")
+export function task_talk_wait_said(t: Task, now: number, turn: Turn | null = null): string {
+  if (t.state !== "open" || t.talk !== "unii") {
+    return task_talk_said(t);
+  }
+  const ms = Math.max(0, now - Date.parse(task_talk_since(t)));
+  const ago = Number.isFinite(ms) ? " há " + (ms < 3600e3 ? Math.floor(ms / 60e3) + " min" : hours_said(ms)) : "";
+  return "aguardando o Unii" + ago + (turn === null ? "" : " · " + turn_why(turn));
+}
+
 // the footer's line of the pending list ("" with none open): ids that
 // fit in w, else the count alone
 // (those that wait for others: only how many, "+2 aguardando")
@@ -744,20 +864,433 @@ export function tasks_by_assignee(open: Task[]): [string, Task[]][] {
   return keys.map((k) => [k, open.filter((t) => t.assignee === k)] as [string, Task[]]).filter(([, ts]) => ts.length > 0);
 }
 
+// The Mesa (the desk): the pending list as a screen of its own (main.ts,
+// Html.desk_html), each task in one group, by whose move it is: "now",
+// the user's (theirs and free, or Unii answered in its thread); "unii",
+// the user wrote in its thread and Unii hasn't answered; "others",
+// someone else's (Unii's, an agent's) at work; "waiting", waiting for
+// other open tasks (TaskDeps.ts); "closed", resolved lately
+export type Desk = "now" | "unii" | "others" | "waiting" | "closed";
+export const DESK: [Desk, string][] = [
+  ["now", "Agora"],
+  ["unii", "Aguardando o Unii"],
+  ["others", "Em andamento"],
+  ["waiting", "Aguardando outras pendências"],
+  ["closed", "Resolvidas recentemente"],
+];
+
+// a task's group in the Mesa (blocked: the ids waiting, Deps.blocked_ids)
+export function desk_group(t: Task, blocked: Set<string>): Desk {
+  if (t.state !== "open") {
+    return "closed";
+  }
+  if (t.talk === "unii") {
+    return "unii";
+  }
+  if (blocked.has(t.id)) {
+    return "waiting";
+  }
+  return t.assignee === "user" || t.talk === "user" ? "now" : "others";
+}
+
+// whether a task is the user's move now (the Mesa opens on it: P19)
+export function desk_turn(tasks: Task[]): boolean {
+  const blocked = Deps.blocked_ids(tasks);
+  return tasks.some((t) => desk_group(t, blocked) === "now");
+}
+
+// the projects (refs) of the tasks, sorted, each once
+export function desk_refs(tasks: Task[]): string[] {
+  return [...new Set(tasks.flatMap((t) => (t.ref === null ? [] : [t.ref])))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+// a text as a search compares it: no case, no accents, spaces as one
+export function desk_fold(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// whether a task is in the search (q: every word in its id, title,
+// detail, ref, assignee, fields or thread; "": all) and in the project
+// (ref: "" all, else that ref)
+export function desk_match(t: Task, q: string, ref: string): boolean {
+  if (ref !== "" && t.ref !== ref) {
+    return false;
+  }
+  const words = desk_fold(q).split(" ").filter((w) => w !== "");
+  if (words.length === 0) {
+    return true;
+  }
+  const hay = desk_fold([t.id, t.title, t.detail, t.ref ?? "", t.assignee, ...(t.fields ?? []).map((f) => f.label), ...(t.thread ?? []).map((m) => m.text)].join(" "));
+  return words.every((w) => hay.includes(w));
+}
+
+// the Mesa's list: each group with tasks in the search, in DESK's
+// order, its tasks as the server sorts them; "now" as P3 asks
+// (TaskDeps.now_order: priority, then how many it frees, then the one to act on longest: ready_at)
+export function desk_list(tasks: Task[], q = "", ref = ""): { group: Desk; label: string; tasks: Task[] }[] {
+  const blocked = Deps.blocked_ids(tasks);
+  const shown = tasks.filter((t) => desk_match(t, q, ref));
+  const order = Deps.now_order(tasks);
+  return DESK.map(([group, label]) => {
+    const of = shown.filter((t) => desk_group(t, blocked) === group);
+    return { group, label, tasks: group === "now" ? [...of].sort(order) : of };
+  }).filter((g) => g.tasks.length > 0);
+}
+
+// the task to show after `at` moves by `by` in the list (ids: its order);
+// none shown, or gone: the first (going up, the last)
+export function desk_step(ids: string[], at: string | null, by: number): string | null {
+  if (ids.length === 0) {
+    return null;
+  }
+  const k = at === null ? -1 : ids.indexOf(at);
+  if (k === -1) {
+    return by < 0 ? ids[ids.length - 1] : ids[0];
+  }
+  return ids[Math.max(0, Math.min(ids.length - 1, k + by))];
+}
+
+// the task to offer after the one shown was resolved (or waits): the
+// next of "now" after it in the list's order, going on from the top
+// past the last; order: the list as it was while the one shown was
+// still in it (a task resolved leaves "now" for "closed", so the list
+// of now no longer says where it was); not given, or it's not in it:
+// the list of now. The one shown in neither (gone), or none of "now"
+// in the order (all new): the first of "now". None: null
+export function desk_next(tasks: Task[], sel: string | null, q = "", ref = "", order: string[] = []): Task | null {
+  const groups = desk_list(tasks, q, ref);
+  const now = (groups.find((g) => g.group === "now")?.tasks ?? []).filter((t) => t.id !== sel);
+  if (now.length === 0) {
+    return null;
+  }
+  const list = sel !== null && order.includes(sel) ? order : groups.flatMap((g) => g.tasks.map((t) => t.id));
+  const k = sel === null ? -1 : list.indexOf(sel);
+  if (k >= 0) {
+    const ahead = [...list.slice(k + 1), ...list.slice(0, k)];
+    const next = ahead.map((id) => now.find((t) => t.id === id)).find((t) => t !== undefined);
+    if (next !== undefined) {
+      return next;
+    }
+  }
+  return now[0];
+}
+
+// how long a task stays the user's before it's late (ms), when its kind
+// says no other: TaskDeps.LATE, the same value the late push
+// (TaskPush.LATE) reads; by kind: TaskDeps.late_after
+export const TASK_LATE = Deps.LATE;
+
+// a task late (open, the user's move, theirs to act on (TaskDeps.ready_at)
+// for longer than its kind allows, TaskDeps.late_after): how long it's
+// been theirs, "atrasada há 30 h" (under 2 days) or "atrasada há 3 d";
+// else "". Late, it stays where it is (P5: none expires)
+export function task_late_said(t: Task, blocked: Set<string>, now: number): string {
+  const age = now - Date.parse(Deps.ready_at(t));
+  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > Deps.late_after(t))) {
+    return "";
+  }
+  return "atrasada há " + hours_said(age);
+}
+
+// a task's kind and its limit, as the views say it ("aprovação de PR,
+// prazo 24 h"); "" for none
+export const KIND_SAID: Record<Deps.TaskKind, string> = { pr: "aprovação de PR", decision: "decisão", test: "teste", action: "ação sua", restart: "reinício", info: "informação" };
+export function task_kind_said(t: Task): string {
+  const k = Deps.kind_of(t);
+  return k === null ? "" : KIND_SAID[k] + (Number.isFinite(Deps.LATE_BY[k]) ? ", prazo " + Deps.LATE_BY[k] / 3600e3 + " h" : ", sem prazo");
+}
+
+// The task's contract (R5)
+// ------------------------
+
+// what a task waits for outside the list, as the views say it ("aguarda:
+// CI do #42"); "" for none
+export function task_waits_for_said(t: Task): string {
+  return t.state !== "open" || (t.waits_for ?? null) === null ? "" : "aguarda: " + t.waits_for;
+}
+
+// whether a choice is an order to Unii (acts): picking it tells it at
+// once; how the views mark it
+export function act_unii(t: Task, c: string): boolean {
+  return (t.acts ?? {})[c] === "unii";
+}
+export const ACT_SAID = "o Unii executa";
+
+// a verdict and a note's severity, as the views say them
+export const VERDICT_SAID: Record<PrCheck["verdict"], string> = { approved: "aprovado", approved_with_notes: "aprovado com ressalvas", rejected: "reprovado", pending: "aguardando verificação" };
+export const SEV_SAID: Record<PrCheck["notes"][number]["sev"], [string, string]> = { high: ["alta", "altas"], medium: ["média", "médias"], low: ["baixa", "baixas"] };
+
+// a pull request's label, "repo#n" (its link as given, else as is)
+export function pr_label(url: string): string {
+  const m = /^https:\/\/github\.com\/[\w.-]+\/([\w.-]+)\/pull\/(\d+)/.exec(url);
+  return m === null ? url : m[1] + "#" + m[2];
+}
+
+// a pull request's notes, counted by severity ("1 alta e 2 baixas");
+// "sem ressalvas" for none
+export function pr_notes_said(p: PrCheck): string {
+  const by = (["high", "medium", "low"] as const).map((v) => [v, p.notes.filter((n) => n.sev === v).length] as const).filter(([, n]) => n > 0);
+  return by.length === 0 ? "sem ressalvas" : "ressalvas: " + and_said(by.map(([v, n]) => n + " " + SEV_SAID[v][n === 1 ? 0 : 1]));
+}
+
+// a verification card as Markdown lines (the terminal's /p)
+export function pr_md(p: PrCheck): string {
+  const head = "- **" + pr_label(p.url) + "** " + p.url + " · head `" + p.head.slice(0, 12) + "` · " + VERDICT_SAID[p.verdict] + (p.verifier === null ? "" : " por " + p.verifier) + " · " + pr_notes_said(p);
+  const notes = p.notes.map((n) => "  - ressalva " + SEV_SAID[n.sev][0] + ": " + n.text);
+  const untested = p.untested.length === 0 ? [] : ["  - não testado: " + p.untested.join("; ")];
+  return [head, ...notes, ...untested].join("\n");
+}
+
+// a task's priority as the views say it, if not normal ("prioridade
+// alta"); else ""
+export function task_priority_said(t: Task): string {
+  const p = Deps.priority_of(t);
+  return p === "high" ? "prioridade alta" : p === "low" ? "prioridade baixa" : "";
+}
+
+// "3 h" under 2 days, else "3 d" (ms: how long)
+function hours_said(ms: number): string {
+  const h = Math.floor(ms / 3600e3);
+  return h < 48 ? h + " h" : Math.floor(h / 24) + " d";
+}
+
+// how long a task of someone else's (Unii's, an agent's) has not
+// moved on (Tasks.task_moves: linking or swapping its agent alone
+// doesn't count; a list of an older server, without moved: its last
+// change), once STALL or more: "parada há 3 h" (late: past TASK_LATE,
+// what the stalled tasks' watch, vigia.ts, charges); else "" (closed,
+// the user's, waiting for others, or the user wrote in its thread: then
+// it's Unii's answer that's awaited, task_talk_wait_said)
+export const STALL = 3600e3;
+export function task_stalled_said(t: Task, blocked: Set<string>, now: number): { text: string; late: boolean } {
+  const age = now - Date.parse(t.moved ?? t.changed ?? t.made);
+  if (t.state !== "open" || t.assignee === "user" || blocked.has(t.id) || t.talk === "unii" || !(age >= STALL)) {
+    return { text: "", late: false };
+  }
+  return { text: "parada há " + hours_said(age), late: age > TASK_LATE };
+}
+
+// the agent linked to a task of someone else's, as the views say it:
+// "agente WiseDolphin", or, open and with none, "sem agente"; the
+// user's, or closed with none: ""
+export function task_agent_said(t: Task): string {
+  const a = t.agent ?? null;
+  return a !== null ? "agente " + a : t.state === "open" && t.assignee !== "user" ? "sem agente" : "";
+}
+
+// Recommendations
+// ---------------
+// Unii recommends a task's choice (recommend) and a field's answer
+// (Field.recommend); a task of before, a choice marked "(recomendado)"
+// or "(recomendada)" in its text (the only one so marked: for a multi,
+// all those). "Aceitar as recomendadas" (task_accept) concludes with
+// them in one act (P2, 25/10/2026)
+
+const REC_MARK = /\(\s*recomendad[oa]s?\s*\)/i;
+
+// whether a choice's own text says it's recommended
+export function rec_marked(c: string): boolean {
+  return REC_MARK.test(c);
+}
+
+// the choice of a task recommended (null: none)
+export function task_rec(t: Task): string | null {
+  if (t.recommend != null && t.choices.includes(t.recommend)) {
+    return t.recommend;
+  }
+  const marked = t.choices.filter(rec_marked);
+  return marked.length === 1 ? marked[0] : null;
+}
+
+// the answer of a field recommended (undefined: none)
+export function field_rec(f: Field): Values[string] | undefined {
+  if (f.recommend !== undefined && f.recommend.length > 0) {
+    return f.recommend;
+  }
+  const marked = f.choices.filter(rec_marked);
+  if (f.kind === "multi") {
+    return marked.length > 0 ? marked : undefined;
+  }
+  return (f.kind === "choice" || f.kind === "yesno") && marked.length === 1 ? marked[0] : undefined;
+}
+
+// whether a choice (of the task, or of a field) is the one recommended
+export function rec_is(rec: Values[string] | string | null | undefined, c: string): boolean {
+  return rec === c || (Array.isArray(rec) && rec.includes(c));
+}
+
+// what "Aceitar as recomendadas" does to a task: null, not offered (not
+// open, not the user's, nothing recommended); "conclude", concludes it
+// with the recommended (its choice, if it has choices, recommended);
+// "fill", only fills its fields' recommended answers, as a draft: it has
+// choices, none recommended, and fields recommended, so the user still
+// picks the choice that concludes it (R1, GreenWasp)
+export type AcceptMode = "conclude" | "fill";
+export function task_accept_mode(t: Task): AcceptMode | null {
+  if (t.state !== "open" || t.assignee !== "user") {
+    return null;
+  }
+  const fields = (t.fields ?? []).some((f) => field_rec(f) !== undefined);
+  if (t.choices.length === 0) {
+    return fields ? "conclude" : null;
+  }
+  return task_rec(t) !== null ? "conclude" : fields ? "fill" : null;
+}
+
+// whether a task offers "Aceitar as recomendadas" (task_accept_mode)
+export function task_accepts(t: Task): boolean {
+  return task_accept_mode(t) !== null;
+}
+
+// the button's words: one recommendation, many, or only filled
+export function task_accept_said(t: Task): string {
+  return task_accept_mode(t) === "fill" ? "Preencher as recomendadas" : t.fields.length === 0 ? "Aceitar a recomendada" : "Aceitar as recomendadas";
+}
+
+// what the user is told once the recommended answers are filled and a
+// choice is still theirs to pick
+export function task_fill_said(t: Task): string {
+  return "Respostas recomendadas preenchidas em " + t.id + ". Escolha uma opção para concluir: " + t.choices.join(" | ") + " (no terminal: /ok " + t.id + " opção).";
+}
+
+// an answer not given: none, an empty text, no choice
+function value_empty(x: unknown): boolean {
+  return x === undefined || x === null || (typeof x === "string" && x.trim() === "") || (Array.isArray(x) && x.length === 0);
+}
+
+// the answers given so far (by field id), each empty one that has a
+// recommendation taking it
+export function task_accept_fill(t: Task, values: Record<string, unknown>): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  for (const f of t.fields ?? []) {
+    const given = Object.hasOwn(values, f.id) ? values[f.id] : undefined;
+    const rec = field_rec(f);
+    if (!value_empty(given)) {
+      fields[f.id] = given;
+    } else if (rec !== undefined) {
+      fields[f.id] = rec;
+    }
+  }
+  return fields;
+}
+
+// "Aceitar as recomendadas" over the answers given so far (values: by
+// field id; those given stay, the empty take the recommended): the
+// choice and the answers to conclude with, else why not (the user's
+// words: a required field with no answer and none recommended)
+export function task_accept(t: Task, values: Record<string, unknown>): { answer?: string; fields: Record<string, unknown> } | string {
+  if (!task_accepts(t)) {
+    return "A pendência " + t.id + " não tem recomendação para aceitar.";
+  }
+  const fields = task_accept_fill(t, values);
+  if (task_accept_mode(t) === "fill") {
+    return task_fill_said(t);
+  }
+  const missing = (t.fields ?? []).filter((f) => f.required && value_empty(fields[f.id]));
+  if (missing.length > 0) {
+    return "Sem recomendação para " + (missing.length === 1 ? "o campo obrigatório " : "os campos obrigatórios ") + missing.map((f) => "“" + f.label + "”").join(", ") + ": responda " + (missing.length === 1 ? "esse campo" : "esses campos") + " e conclua.";
+  }
+  const answer = task_rec(t);
+  return { ...(answer === null ? {} : { answer }), fields };
+}
+
+// what "Cobrar agora" says in a task of Unii's thread (P6)
+export const CHASE = "Cobrança: qual é o andamento desta pendência e o próximo passo?";
+
+// the GitHub pull requests a task points to (its detail, its origin's
+// link), each once, in order, at most LINKS: the link and "repo#n"
+export const LINKS = 8;
+export function task_prs(t: Task): { url: string; label: string }[] {
+  const text = (t.detail ?? "") + " " + (t.origin_url ?? "");
+  const seen = new Map<string, string>();
+  // those verified (R5) first, each as given
+  for (const p of t.prs ?? []) {
+    if (!seen.has(p.url) && seen.size < LINKS) {
+      seen.set(p.url, pr_label(p.url));
+    }
+  }
+  for (const m of text.matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/g)) {
+    const url = m[0];
+    if (!seen.has(url) && seen.size < LINKS) {
+      seen.set(url, m[2] + "#" + m[3]);
+    }
+  }
+  return [...seen].map(([url, label]) => ({ url, label }));
+}
+
+// the Mesa as Markdown, for the terminal's /mesa: its groups, each task
+// a line (ref: that project's only)
+export function desk_md(v: View, ref = ""): string {
+  const groups = desk_list(v.tasks, "", ref);
+  if (groups.length === 0) {
+    return ref === "" ? "A Mesa está vazia: nenhuma pendência." : "Nenhuma pendência do projeto “" + ref + "”. Projetos: " + (desk_refs(v.tasks).join(", ") || "nenhum") + ".";
+  }
+  const line = (t: Task, g: Desk) => {
+    const prio = g === "closed" ? "" : task_priority_said(t);
+    const more = [
+      ...(prio === "" ? [] : ["**" + prio + "**"]),
+      ...(t.ref === null || ref !== "" ? [] : [t.ref]),
+      ...(t.assignee === "user" ? [] : [assignee_said(t)]),
+      ...(g === "waiting" ? ["aguarda " + Deps.waits(v.tasks, t).join(", ")] : []),
+      ...(task_waits_for_said(t) === "" ? [] : [task_waits_for_said(t)]),
+      ...(g === "closed" ? [t.state === "done" ? "concluída" : "descartada"] : []),
+      ...(g === "closed" || g === "waiting" || task_frees_said(v, t) === "" ? [] : [task_frees_said(v, t)]),
+    ];
+    return "- **" + t.id + "** " + t.title + (more.length === 0 ? "" : " · " + more.join(" · "));
+  };
+  const parts = groups.map((g) => "**" + g.label + " (" + g.tasks.length + ")**\n\n" + g.tasks.slice(0, g.group === "closed" ? 10 : undefined).map((t) => line(t, g.group)).join("\n"));
+  return [...parts, "`/p P7` detalha · `/conversa P7 mensagem` conversa · `/ok P7` conclui · `/mesa projeto` filtra por projeto"].join("\n\n");
+}
+
+// a task as an older or newer server sends it, made whole: its assignee
+// from `who` (its older name) if it has none (else "user"), what later
+// phases added, empty; so no view takes an older server's task for the
+// user's, nor breaks on what it lacks
+export function task_whole(t: any): Task {
+  const named = typeof t?.assignee === "string" && t.assignee !== "";
+  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined && Array.isArray(t.prs) && t.acts !== undefined) {
+    return t;
+  }
+  return {
+    ...t,
+    assignee   : named ? t.assignee : t?.who === "unii" ? "unii" : "user",
+    origin     : t?.origin ?? null,
+    origin_url : t?.origin_url ?? null,
+    agent      : t?.agent ?? null,
+    kind       : t?.kind ?? null,
+    priority   : t?.priority ?? "normal",
+    prs        : Array.isArray(t?.prs) ? t.prs : [],
+    acts       : t?.acts ?? {},
+    waits_for  : t?.waits_for ?? null,
+    ready      : t?.ready ?? t?.made,
+    choices    : Array.isArray(t?.choices) ? t.choices : [],
+    after      : Array.isArray(t?.after) ? t.after : [],
+    fields     : Array.isArray(t?.fields) ? t.fields : [],
+    draft      : t?.draft ?? {},
+    answers    : t?.answers ?? null,
+    thread     : Array.isArray(t?.thread) ? t.thread : [],
+    talk       : t?.talk ?? null,
+  };
+}
+
 // the pending list as Markdown, for the terminal's /p (one: its whole;
 // waiting: those that wait for others, listed, the rest left out)
 export function tasks_md(v: View, one: Task | null = null, waiting = false): string {
   const STATE = { open: "aberta", done: "concluída", dropped: "descartada" };
   const tag = (t: Task) => (t.ref === null ? "" : " · " + t.ref) + (origin_said(t) === "" ? "" : " · origem: " + origin_said(t));
-  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c + (t.descriptions?.[k] ? " (" + t.descriptions[k] + ")" : "")).join("  "));
+  const opts = (t: Task) => (t.choices.length === 0 ? "" : " · opções: " + t.choices.map((c, k) => k + 1 + ") " + c + (t.descriptions?.[k] ? " (" + t.descriptions[k] + ")" : "") + (rec_is(task_rec(t), c) && !rec_marked(c) ? " (recomendada)" : "") + (act_unii(t, c) ? " (" + ACT_SAID + ")" : "")).join("  "));
   if (one !== null) {
     const said = [one.answer === null ? "" : "Resposta: " + one.answer + ".", one.note === null ? "" : "Comentário: " + one.note].filter((x) => x !== "").join(" ");
     const waits = Deps.waits(v.tasks, one);
     const frees = task_frees_said(v, one);
     const deps = (one.state === "open" && waits.length > 0 ? " · aguarda " + waits.join(", ") : "") + (frees === "" ? "" : " · " + frees);
     const talk = task_talk_said(one) === "" ? "" : " · " + task_talk_said(one);
-    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + assignee_said(one) + tag(one) + deps + talk + opts(one);
-    return [head, said, one.detail, fields_md(one), thread_md(one)].filter((x) => x !== "").join("\n\n");
+    const kind = task_kind_said(one) === "" ? "" : " · " + task_kind_said(one);
+    const outside = task_waits_for_said(one) === "" ? "" : " · " + task_waits_for_said(one);
+    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + assignee_said(one) + tag(one) + kind + deps + outside + talk + opts(one);
+    const acts = one.state === "open" && one.choices.some((c) => act_unii(one, c)) ? "_As opções marcadas “" + ACT_SAID + "” avisam o Unii na hora, com `/ok " + one.id + " opção`._" : "";
+    const prs = (one.prs ?? []).length === 0 ? "" : "**Verificação**\n\n" + one.prs.map(pr_md).join("\n");
+    return [head, acts, said, prs, one.detail, fields_md(one), thread_md(one)].filter((x) => x !== "").join("\n\n");
   }
   const { open, waiting: wait, closed } = view_tasks(v);
   const frees = (t: Task) => (task_frees_said(v, t) === "" ? "" : " · **" + task_frees_said(v, t) + "**");
@@ -775,7 +1308,7 @@ export function tasks_md(v: View, one: Task | null = null, waiting = false): str
     open.length === 0 ? tasks_none_said(wait.length) : tasks_by_assignee(open).map(group).join("\n\n"),
     wait.length === 0 ? "" : "_" + tasks_waiting_said(wait.length) + "_ · `/p aguardando` mostra quais",
     closed.length === 0 ? "" : "**Resolvidas recentemente**\n\n" + closed.slice(0, 10).map(done).join("\n"),
-    "`/p P7` detalha · `/ok P7 [opção] [campo=valor] [comentário]` conclui · `/ok!` conclui e avisa o Unii · `/rascunho P7 campo=valor` · `/conversa P7 mensagem` · `/descartar P7` · `/reabrir P7` · `/avisar`",
+    "`/p P7` detalha · `/ok P7 [opção] [campo=valor] [comentário]` conclui · `/ok!` conclui e avisa o Unii na hora · `/aceitar P7` aceita as recomendadas · `/cobrar P7` cobra o Unii · `/rascunho P7 campo=valor` · `/conversa P7 mensagem` · `/descartar P7` · `/reabrir P7` · `/avisar`",
   ];
   return parts.filter((x) => x !== "").join("\n\n");
 }
@@ -793,7 +1326,8 @@ function fields_md(t: Task): string {
     const v = Object.hasOwn(values, f.id) ? values[f.id] : undefined;
     return v === undefined || v.length === 0 ? "_sem resposta_" : Array.isArray(v) ? v.join(", ") : v;
   };
-  const opts = (f: Field) => (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.map((c, k) => k + 1 + ") " + c + (f.descriptions?.[k] ? " (" + f.descriptions[k] + ")" : "")).join("  ") : "");
+  const rec = (f: Field, c: string) => (rec_is(field_rec(f), c) && !rec_marked(c) ? " (recomendada)" : "");
+  const opts = (f: Field) => (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.map((c, k) => k + 1 + ") " + c + (f.descriptions?.[k] ? " (" + f.descriptions[k] + ")" : "") + rec(f, c)).join("  ") : f.kind === "text" && typeof field_rec(f) === "string" ? ", recomendado: “" + field_rec(f) + "”" : "");
   const head = t.state === "done" ? "**Respostas**" : "**Campos** (respostas salvas como rascunho até concluir)";
   return head + "\n\n" + fields.map((f, k) => k + 1 + ". " + f.label + " `" + f.id + "` (" + KIND[f.kind] + opts(f) + (f.required ? ", obrigatório" : "") + ") — " + said(f)).join("\n");
 }
@@ -1264,4 +1798,93 @@ function entry_body(kind: Kind, text: string): Md.Block[] {
       return Md.md_parse(text);
     }
   }
+}
+
+// The pipeline's panel (R6)
+// -------------------------
+// Pipeline.ts reads where each front is; these say it, for the panel's
+// page (Html.pipeline_html)
+
+// a front's stage, as the panel says it
+export const STAGE_SAID: Record<Stage, string> = { impl: "implementando", verif: "verificando", user: "com você", others: "com terceiros", stalled: "parada com o Unii", closed: "encerrada" };
+
+// a PR's state and checks read live, as the panel says them
+export const PR_STATE_SAID: Record<PipeLive["state"], string> = { OPEN: "aberto", MERGED: "mesclado", CLOSED: "fechado" };
+export const CI_SAID: Record<Ci, string> = { ok: "CI ok", failed: "CI falhou", running: "CI rodando", none: "sem CI" };
+
+// a role, as the panel says it
+export const ROLE_SAID: Record<Role, string> = { impl: "implementação", verif: "verificação", survey: "levantamento" };
+
+// how long, said short: "agora" under a minute, "12 min", "5 h" under 2
+// days, else "3 d"
+export function span_said(ms: number): string {
+  if (!(ms >= 60e3)) {
+    return "agora";
+  }
+  if (ms < 3600e3) {
+    return Math.floor(ms / 60e3) + " min";
+  }
+  return hours_said(ms);
+}
+
+// how long something took: span_said, but "menos de 1 min" under a
+// minute
+export function took_said(ms: number): string {
+  return ms >= 0 && ms < 60e3 ? "menos de 1 min" : span_said(ms);
+}
+
+// when, said short, in the page's time: "24/10 14:26"
+export function when_said(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return "";
+  }
+  const p = (n: number) => String(n).padStart(2, "0");
+  return p(d.getDate()) + "/" + p(d.getMonth() + 1) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+// notes counted by severity: "1 alta e 2 baixas"; "nenhuma" for none
+export function sevs_said(s: Sevs): string {
+  const by = (["high", "medium", "low"] as const).filter((v) => s[v] > 0);
+  return by.length === 0 ? "nenhuma" : and_said(by.map((v) => s[v] + " " + SEV_SAID[v][s[v] === 1 ? 0 : 1]));
+}
+
+// a PR's head live against the one verified: the same ("head igual ao
+// verificado"), or not ("head mudou: verificado X, agora Y"); "" when
+// either isn't known
+export function pr_head_said(p: FrontPr): { text: string; same: boolean } | null {
+  if (p.head === null || p.live === null || p.live.head === "") {
+    return null;
+  }
+  const same = p.live.head.startsWith(p.head) || p.head.startsWith(p.live.head);
+  return same ? { text: "head igual ao verificado (" + p.head.slice(0, 7) + ")", same } : { text: "head mudou: verificado " + p.head.slice(0, 7) + ", agora " + p.live.head.slice(0, 7), same };
+}
+
+// the panel's totals: the fronts active (not closed), with the user,
+// stalled with Unii; the median of cycles per PR (of the PRs verified)
+// and of the user's time to decide, over every front; and how long the
+// active fronts sat with no one at work (idle, summed)
+export type Totals = { active: number; user: number; stalled: number; cycles: number | null; decide: number | null; decided: number; idle: number };
+export function pipeline_totals(fronts: Front[]): Totals {
+  const active = fronts.filter((f) => f.stage !== "closed");
+  const cycles = fronts.flatMap((f) => f.prs.filter((p) => p.cycles > 0).map((p) => p.cycles));
+  const decide = fronts.flatMap((f) => f.decide);
+  return {
+    active: active.length,
+    user: active.filter((f) => f.stage === "user").length,
+    stalled: active.filter((f) => f.stage === "stalled").length,
+    cycles: median_of(cycles),
+    decide: median_of(decide),
+    decided: decide.length,
+    idle: active.reduce((n, f) => n + f.idle, 0),
+  };
+}
+
+export function median_of(xs: number[]): number | null {
+  if (xs.length === 0) {
+    return null;
+  }
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
 }

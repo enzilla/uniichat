@@ -24,11 +24,24 @@
   <span class="net">offline</span>
   <button class="imping" popovertarget="import" hidden><span></span><progress max="1" value="0"></progress></button>
   <button class="timers" popovertarget="timers" title="Schedules" hidden>⏰ <span></span></button>
+  <button class="mode" type="button" title="Alternar entre a Mesa e a Conversa (m)" hidden>Mesa</button>
   <button class="tasks" popovertarget="tasks" title="Pendências" hidden>✓ <span></span></button>
   <button class="menu" popovertarget="menu">☰</button>
 </header>
 <main id="log"><div class="rows"></div><div class="tail"></div></main>
 <main id="account" hidden></main>
+<!-- the Mesa: the pending list as a screen (main.ts desk; Html.desk_html) -->
+<main id="desk" hidden>
+  <nav class="list" aria-label="Pendências">
+    <div class="find"><input class="q" type="search" placeholder="Buscar pendências" aria-label="Buscar pendências" autocomplete="off"><select class="ref" aria-label="Projeto"></select></div>
+    <div class="rows" role="listbox" aria-label="Pendências"></div>
+    <button class="tell" type="button" data-act='{"$":"TasksTell"}' title="Suas respostas já estão salvas; o Unii as vê quando voltar a trabalhar. Este botão o chama agora." hidden>Avisar o Unii agora (<span></span>)</button>
+    <p class="pipe-go"><button type="button" class="link" data-go="/pipeline">Ver o painel da pipeline</button></p>
+    <p class="keys"><kbd>j</kbd> <kbd>k</kbd> ou setas navegam · <kbd>Enter</kbd> abre · <kbd>/</kbd> busca · <kbd>m</kbd> alterna Mesa e Conversa · <kbd>Esc</kbd> volta</p>
+  </nav>
+  <section class="pane" aria-label="Pendência"></section>
+  <p class="sr live" aria-live="polite" aria-atomic="true"></p>
+</main>
 <footer>
   <button class="mine" type="button" title="Up to your message" hidden><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
   <button class="down" type="button" title="Down to the end" hidden><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
@@ -54,18 +67,12 @@
   <p class="none">Nenhuma pendência aberta.</p>
   <ul class="now"></ul>
   <details class="waiting" hidden><summary></summary><ul></ul></details>
-  <button class="tell" type="button" data-act='{"$":"TasksTell"}' hidden>Avisar o Unii agora (<span></span>)</button>
+  <button class="tell" type="button" data-act='{"$":"TasksTell"}' title="Suas respostas já estão salvas; o Unii as vê quando voltar a trabalhar. Este botão o chama agora." hidden>Avisar o Unii agora (<span></span>)</button>
   <details class="closed" hidden><summary>Resolvidas recentemente</summary><ul></ul></details>
 </aside>
-<!-- a task's window (main.ts task_open): its item, whole: the detail,
-     the choices and fields (answered as a draft), the comment, the acts,
-     its thread and a box to write about it -->
-<dialog id="task" aria-labelledby="task-title">
-  <button class="x" type="button" data-close aria-label="Fechar">✕</button>
-  <div class="body"></div>
-</dialog>
 <div id="menu" popover>
   <button data-go="/settings">Settings</button>
+  <button data-go="/pipeline">Pipeline</button>
   <a href="/tree">Memory</a>
   <button class="imp">Import History</button>
   <div class="mcp"></div>
