@@ -278,6 +278,16 @@ export function user_move<T extends Move>(t: T, blocked_set: Set<string>): boole
   return (t.assignee ?? "user") === "user" || status_of(t) === "waiting_user";
 }
 
+// whether a task's last thread message is Unii's saying it gave no reply
+// (Tasks.Talk.none: the turn ended without one) and the user hasn't
+// written since: still the user's move if it was (user_move), but the
+// views say "Unii não respondeu", not "sua vez" as if Unii had answered
+export function task_missed(t: { talk?: string | null; thread?: { who: string; none?: true }[] }): boolean {
+  const thread = t.thread ?? [];
+  const last = thread[thread.length - 1];
+  return t.talk === "user" && last !== undefined && last.who === "unii" && last.none === true;
+}
+
 // the ids of the tasks overdue now, in their number's order
 export function overdue_ids<T extends Due>(tasks: T[], now: number, ms = stall): string[] {
   return tasks.filter((t) => overdue_ms(tasks, t, now, ms) > 0).map((t) => t.id).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));

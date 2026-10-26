@@ -179,8 +179,11 @@ export type Field = { id: string; label: string; kind: Kind; choices: string[]; 
 export type Value  = string | string[];
 export type Values = Record<string, Value>;
 
-// a message of a task's thread: whose, its text, when
-export type Talk = { who: Who; text: string; at: string };
+// a message of a task's thread: whose, its text, when; none: Unii's
+// that says it gave no reply (the turn ended without one: failed,
+// halted, the server restarted), so the views say "Unii não respondeu"
+// and Unii's next turn is told the user still waits for a reply
+export type Talk = { who: Who; text: string; at: string; none?: true };
 
 // the list of a chat's dir: the next id's number, the last version
 // stamped (only up), the tasks; shown: the changes the last block
@@ -563,7 +566,7 @@ function thread_read(x: unknown): Talk[] {
     const o = y as Record<string, unknown>;
     const text = typeof o.text === "string" ? text_body(o.text, TALK) : "";
     if ((o.who === "user" || o.who === "unii") && text !== "") {
-      all.push({ who: o.who, text, at: time_read(o.at, new Date(0).toISOString()) });
+      all.push({ who: o.who, text, at: time_read(o.at, new Date(0).toISOString()), ...(o.who === "unii" && o.none === true ? { none: true as const } : {}) });
     }
   }
   return all.slice(-THREAD);
@@ -2089,8 +2092,9 @@ export function task_mark(t: Task, text: string): string {
 }
 
 // a message in a thread: kept, the newest THREAD; whose turn it is next
-function task_talk(s: Store, task: Task, who: Who, text: string, now: number): Task {
-  const thread = [...task.thread, { who, text, at: new Date(now).toISOString() }].slice(-THREAD);
+function task_talk(s: Store, task: Task, who: Who, text: string, now: number, none = false): Task {
+  const said: Talk = { who, text, at: new Date(now).toISOString(), ...(none && who === "unii" ? { none: true as const } : {}) };
+  const thread = [...task.thread, said].slice(-THREAD);
   const next: Task = { ...task, thread, talk: task.state !== "open" ? null : who === "user" ? "unii" : "user" };
   s.tasks[s.tasks.indexOf(task)] = next;
   tasks_save(s);
@@ -2133,11 +2137,15 @@ export function task_reply(s: Store, id: unknown, text: unknown, now: number): T
 // a turn ended: each task still waiting for Unii gets its last reply
 // (reply; null: none, said so; failed: the turn's error, said with it,
 // so the thread doesn't send the user to look for a reply that isn't
-// there) in its thread, and it's the user's turn
+// there) in its thread, and it's the user's turn. With no reply, the
+// message is marked none (Talk.none): the views say "Unii não
+// respondeu", not a plain "sua vez" as if Unii had answered, and
+// Unii's next turn sees the user's message still unanswered (task_line)
 export function tasks_talked(s: Store, reply: string | null, now: number, failed: string | null = null): Task[] {
   const none = failed === null || failed.trim() === "" ? "O Unii não respondeu aqui; veja a conversa principal." : "O Unii não conseguiu responder (" + failed.trim() + "). Escreva de novo aqui para tentar outra vez.";
-  const text = reply === null || text_body(reply, TALK) === "" ? text_body(none, TALK) : text_body(reply, TALK);
-  return s.tasks.filter((t) => t.talk === "unii").map((t) => task_talk(s, t, "unii", text, now));
+  const missed = reply === null || text_body(reply, TALK) === "";
+  const text = missed ? text_body(none, TALK) : text_body(reply, TALK);
+  return s.tasks.filter((t) => t.talk === "unii").map((t) => task_talk(s, t, "unii", text, now, missed));
 }
 
 // the user's changes Unii hasn't seen, oldest first
@@ -2232,7 +2240,7 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const rec = (f: Field) => (f.recommend === undefined ? "" : ", recommended: " + (Array.isArray(f.recommend) ? f.recommend.join(" + ") : f.recommend));
   const kind = (f: Field) => f.kind + (f.kind === "choice" || f.kind === "multi" ? ": " + f.choices.join(" | ") : "") + rec(f);
   const fields = t.fields.length === 0 ? "" : " fields: " + t.fields.map((f) => f.id + (f.required ? "*" : "") + " " + JSON.stringify(f.label) + " (" + kind(f) + ")").join("; ");
-  const talk = t.talk === "unii" ? " [the user wrote in its thread: reply with task_reply]" : "";
+  const talk = t.talk === "unii" ? " [the user wrote in its thread: reply with task_reply]" : Deps.task_missed(t) ? " [your turn ended with no reply to the user's message in its thread: reply with task_reply]" : "";
   const acted = Object.entries(t.acts ?? {}).filter(([, a]) => a === "unii").map(([c]) => c);
   const opts = (t.choices.length === 0 ? "" : " options: " + t.choices.join(" | ") + (t.recommend == null ? "" : " (recommended: " + t.recommend + ")") + (acted.length === 0 ? "" : " (you act on: " + acted.join(" | ") + ")")) + fields + deps + talk;
   const st = Deps.status_of(t);
@@ -2257,7 +2265,7 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const more = [
     t.detail,
     answers === "" ? "" : (t.state === "done" ? "answers: " : "draft (not sent yet): ") + answers,
-    t.thread.length === 0 ? "" : "thread (" + (t.talk === "unii" ? "waiting for your reply" : t.talk === "user" ? (Deps.user_move(t, all === null ? new Set<string>() : Deps.blocked_ids(all)) ? "the user's turn" : "you replied; the next step is yours, not the user's") : "quiet") + "):\n" + t.thread.slice(-VIEW_TALK).map((m) => (m.who === "user" ? "user: " : "you: ") + m.text).join("\n"),
+    t.thread.length === 0 ? "" : "thread (" + (t.talk === "unii" ? "waiting for your reply" : t.talk === "user" ? (Deps.task_missed(t) ? "your turn ended with no reply here: the user still waits for one" : Deps.user_move(t, all === null ? new Set<string>() : Deps.blocked_ids(all)) ? "the user's turn" : "you replied; the next step is yours, not the user's") : "quiet") + "):\n" + t.thread.slice(-VIEW_TALK).map((m) => (m.who === "user" ? "user: " : "you: ") + m.text).join("\n"),
   ].filter((x) => x !== "");
   return more.length === 0 ? head : head + "\n  " + more.join("\n").replace(/\n/g, "\n  ");
 }

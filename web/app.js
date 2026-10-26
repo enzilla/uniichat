@@ -1057,6 +1057,11 @@ function user_move(t, blocked_set) {
   }
   return (t.assignee ?? "user") === "user" || status_of(t) === "waiting_user";
 }
+function task_missed(t) {
+  const thread = t.thread ?? [];
+  const last = thread[thread.length - 1];
+  return t.talk === "user" && last !== undefined && last.who === "unii" && last.none === true;
+}
 
 // View.ts
 var PACE = 0.0001;
@@ -1370,12 +1375,16 @@ function turn_title(title, n) {
 function view_untold(v) {
   return v.tasks.filter((t) => !t.told && !t.freed);
 }
+var MISSED = "Unii não respondeu";
 function task_talk_said(t, blocked = new Set) {
   if (t.talk === "unii") {
     return "aguardando o Unii";
   }
   if (t.talk !== "user") {
     return "";
+  }
+  if (task_missed(t)) {
+    return MISSED;
   }
   return user_move(t, blocked) ? "sua vez" : "Unii respondeu";
 }
@@ -1467,7 +1476,7 @@ function task_limit_said(t, tasks, now, blocked = blocked_ids(tasks)) {
   return "próximo passo até " + at(ms) + " (" + (ms < now ? "vencido " : "") + ago_said(due, now) + ")";
 }
 function talk_cls(said) {
-  return said === "sua vez" ? "user" : said.startsWith("aguardando o Unii") ? "unii" : said === "Unii respondeu" ? "replied" : "";
+  return said === "sua vez" ? "user" : said.startsWith("aguardando o Unii") ? "unii" : said === "Unii respondeu" ? "replied" : said === MISSED ? "missed" : "";
 }
 function task_fields_left(t) {
   const draft = t.draft ?? {};
@@ -1487,9 +1496,10 @@ function task_turn_said(t, tasks, now, turn = null, blocked = blocked_ids(tasks)
   if (status_of(t) === "blocked") {
     return { cls: "others", lead: "Bloqueada", text: (t.status_why ?? "sem motivo informado") + ((t.unblock ?? null) === null ? "" : ". Desbloqueia: " + t.unblock) + "." };
   }
+  const missed = task_missed(t) ? "O Unii não respondeu à sua última mensagem na conversa (o turno terminou sem resposta); escreva de novo para tentar outra vez. " : "";
   if (user_move(t, blocked)) {
     if (t.assignee !== "user") {
-      return { cls: "user", lead: "Sua vez", text: "O Unii aguarda você: " + (t.status_why ?? "algo seu") + ". Responda na conversa desta pendência." };
+      return { cls: "user", lead: "Sua vez", text: missed + "O Unii aguarda você: " + (t.status_why ?? "algo seu") + ". Responda na conversa desta pendência." };
     }
     const left = task_fields_left(t);
     const fill = left.length === 0 ? "" : "preencha " + (left.length === 1 ? "o campo obrigatório “" + left[0].label + "”" : left.length + " campos obrigatórios") + " e ";
@@ -1499,9 +1509,9 @@ function task_turn_said(t, tasks, now, turn = null, blocked = blocked_ids(tasks)
     const kind = task_kind_said(t);
     const tail = [kind, late].filter((x) => x !== "").join("; ");
     const said = fill + pick;
-    return { cls: "user", lead: "Sua vez", text: said.charAt(0).toUpperCase() + said.slice(1) + "." + (tail === "" ? "" : " " + tail.charAt(0).toUpperCase() + tail.slice(1) + ".") };
+    return { cls: "user", lead: "Sua vez", text: missed + said.charAt(0).toUpperCase() + said.slice(1) + "." + (tail === "" ? "" : " " + tail.charAt(0).toUpperCase() + tail.slice(1) + ".") };
   }
-  const replied = t.talk === "user" ? " O Unii respondeu na conversa." : "";
+  const replied = missed !== "" ? " " + missed.trim() : t.talk === "user" ? " O Unii respondeu na conversa." : "";
   if ((t.order ?? null) !== null) {
     return { cls: "others", lead: "Ordem recebida", text: "O Unii executa “" + (t.order.answer ?? "sua escolha") + "” e só fecha com a evidência da execução: nada a fazer agora." + replied + " Você pode cobrar ou cancelar a ordem." };
   }

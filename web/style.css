@@ -771,7 +771,10 @@ body.desk footer > :not(#toast) { display: none; }
    width: one column, the ficha over the rest in a grid of facts; a
    phone: one column, the ficha after the decision and the thread, the
    acts stuck to the screen's bottom (the columns' boxes dissolved, so
-   they stick through the whole task) */
+   they stick through the whole task; the article a column of flex
+   items and the acts the last of them, so their place is under the
+   ficha and they stay at the bottom while any of the task is read,
+   the ficha too: a sticky bottom only holds a box above its own place) */
 #desk article .turn-line { margin: 8px 0 18px; padding: 10px 14px; border: 1px solid var(--frame); border-left-width: 4px; border-radius: 10px; font-size: 14.5px; line-height: 1.45; color: var(--mid); overflow-wrap: anywhere; }
 #desk article .turn-line strong { margin-right: 4px; color: var(--ink); font-weight: 600; }
 #desk article .turn-line.user { border-color: var(--accent); color: var(--ink); }
@@ -796,6 +799,7 @@ body.desk footer > :not(#toast) { display: none; }
 #desk article .facts .verdict { font-weight: 600; }
 #desk article .facts .verdict.rejected { color: var(--red); }
 #desk .talk.replied { background: none; border: 1px solid var(--frame); color: var(--mid); }
+#desk .talk.missed { background: none; border: 1px dashed var(--accent); color: var(--ink); }
 #desk .row.now { box-shadow: inset 3px 0 0 var(--accent); }
 #desk .row.now.sel { box-shadow: inset 3px 0 0 var(--accent); }
 @media (max-width: 1240px) {
@@ -805,6 +809,8 @@ body.desk footer > :not(#toast) { display: none; }
 }
 @media (max-width: 760px) {
   #desk article :is(.cols, .main, .decide) { display: contents; }
+  #desk article.task { display: flex; flex-direction: column; }
+  #desk article :is(.decide, .main) > .acts { order: 1; }
   #desk article .facts { order: 0; margin-top: 18px; }
   #desk article .facts dl { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   #desk article .turn-line { margin: 6px 0 12px; }

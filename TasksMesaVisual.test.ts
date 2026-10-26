@@ -228,3 +228,79 @@ test("the Conversa shows no list: only the header's Mesa · N; the Mesa's articl
   expect(css).toMatch(/#desk article \.cols \{ display: grid; grid-template-columns: minmax\(0, 1fr\) minmax\(240px, 300px\);/);
   expect(css).toMatch(/@media \(max-width: 760px\) \{\n  #desk article :is\(\.cols, \.main, \.decide\) \{ display: contents; \}/);
 });
+
+// Correção 1 da Verificação Mesa visual (baixa 2): on a phone the acts
+// stay at the screen's bottom through the whole task, the ficha too: a
+// sticky bottom only holds a box above its own place, so their place is
+// the article's last (the article a flex column, the acts order 1)
+test("phone: the acts are the article's last item (sticky through the ficha too)", () => {
+  const css = fs.readFileSync(import.meta.dir + "/web/style.css", "utf8");
+  const phone = css.slice(css.indexOf("@media (max-width: 760px) {\n  #desk article :is(.cols"));
+  const block = phone.slice(0, phone.indexOf("\n}\n"));
+  expect(block).toContain("#desk article.task { display: flex; flex-direction: column; }");
+  expect(block).toContain("#desk article :is(.decide, .main) > .acts { order: 1; }");
+  expect(block).toMatch(/#desk article :is\(\.decide, \.main\) > \.acts \{ position: sticky; bottom:/);
+  // the ficha keeps order 0: before the acts
+  expect(block).toContain("#desk article .facts { order: 0;");
+  // every article the Mesa shows is a .task (the rule reaches both kinds)
+  const s = T.tasks_load(dir);
+  const mine = add(s, { title: "Minha" });
+  const unii = add(s, { title: "Do Unii", assignee: "unii", next_step: "x" });
+  const tasks = T.tasks_view(s, NOW);
+  expect(shown(tasks, mine.id)).toMatch(/<article class="task user[^"]*"/);
+  expect(shown(tasks, unii.id)).toMatch(/<article class="task other unii[^"]*"/);
+  expect(shown(tasks, mine.id)).toContain('<section class="decide" aria-label="Decisão">');
+});
+
+// baixa 3: a turn that ends with no reply to the user's message in a
+// task's thread (failed, halted, the server restarted) gives the task
+// back marked: "Unii não respondeu", not "sua vez" as if Unii had
+// answered; the move stays whose it was (the user's own: theirs; one of
+// Unii's: not theirs), and Unii's next turn is told to reply
+test("a turn with no reply: 'Unii não respondeu', the move unchanged, Unii told; a real reply clears it", () => {
+  const s = T.tasks_load(dir);
+  const mine = add(s, { title: "Aprovar o PR", choices: ["Mesclar", "Corrigir antes"] });
+  const unii = add(s, { title: "Corrigir as portas", assignee: "unii", next_step: "relato" });
+  T.task_say(s, mine.id, "Pode resumir?", NOW);
+  T.task_say(s, unii.id, "Andamento?", NOW);
+  T.tasks_talked(s, null, NOW + 60e3);
+  let tasks = T.tasks_view(s, NOW + 2 * 60e3);
+  const m = tasks.find((t) => t.id === mine.id)!;
+  const u = tasks.find((t) => t.id === unii.id)!;
+  expect(m.thread[m.thread.length - 1]).toMatchObject({ who: "unii", none: true });
+  expect(Deps.task_missed(m)).toBe(true);
+  expect(Deps.task_missed(u)).toBe(true);
+  expect(View.task_talk_said(m)).toBe("Unii não respondeu");
+  expect(View.task_talk_said(u)).toBe("Unii não respondeu");
+  expect(View.talk_cls(View.MISSED)).toBe("missed");
+  // the move: the user's own stays theirs (they may still decide), Unii's not
+  expect(group(tasks, mine.id)).toBe("now");
+  expect(group(tasks, unii.id)).toBe("others");
+  expect(TaskPush.turn_count(tasks)).toBe(1);
+  const dm = shown(tasks, mine.id, NOW + 2 * 60e3);
+  expect(dm).toContain('<span class="talk missed">Unii não respondeu</span>');
+  expect(dm).toContain("O Unii não respondeu à sua última mensagem na conversa");
+  expect(dm).not.toContain('<span class="talk user">sua vez</span>');
+  expect(shown(tasks, unii.id, NOW + 2 * 60e3)).toContain("O Unii não respondeu à sua última mensagem na conversa");
+  // Unii is told, next turn
+  expect(T.task_line(T.task_find(s, unii.id)!, NOW, true, s.tasks)).toContain("your turn ended with no reply to the user's message in its thread: reply with task_reply");
+  expect(T.task_line(T.task_find(s, mine.id)!, NOW, true, s.tasks)).toContain("the user still waits for one");
+  // kept across a reload (the server restarted)
+  T.tasks_forget();
+  expect(Deps.task_missed(T.task_find(T.tasks_load(dir), mine.id)!)).toBe(true);
+  // a failed turn too
+  const s2 = T.tasks_load(dir);
+  T.task_say(s2, mine.id, "De novo?", NOW + 3 * 60e3);
+  T.tasks_talked(s2, null, NOW + 4 * 60e3, "down");
+  expect(Deps.task_missed(T.task_find(s2, mine.id)!)).toBe(true);
+  // Unii's reply clears it (task_reply, or a turn's last reply)
+  T.task_reply(s2, mine.id, "Resumo: mesclar.", NOW + 5 * 60e3);
+  T.task_say(s2, unii.id, "E aí?", NOW + 5 * 60e3);
+  T.tasks_talked(s2, "Corrigindo.", NOW + 6 * 60e3);
+  tasks = T.tasks_view(s2, NOW + 7 * 60e3);
+  expect(Deps.task_missed(tasks.find((t) => t.id === mine.id)!)).toBe(false);
+  expect(View.task_talk_said(tasks.find((t) => t.id === mine.id)!)).toBe("sua vez");
+  expect(View.task_talk_said(tasks.find((t) => t.id === unii.id)!)).toBe("Unii respondeu");
+  // a hand-made none on the user's message is not read
+  expect(Deps.task_missed({ talk: "user", thread: [{ who: "user", none: true }] })).toBe(false);
+});
