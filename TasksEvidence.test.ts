@@ -713,3 +713,23 @@ test("a restart with blanks inside a doubt, more doubts, or an ordinal before \"
   expect(T.restart_now("Reinicie")).toBe(true);
   expect(T.restart_now("Reinicie a 100 instâncias")).toBe(false);
 });
+
+test("a restart with a doubt denied, or a later act after a restart asked now (SillyHippo)", () => {
+  // B1: "depende" denied is no doubt
+  for (const now of ["Reinicie agora, não depende de mais nada", "Reinicie agora, não depende de nada", "Reinicie, não depende de ninguém", "Reinicie agora, sem depender de nada", "Reinicie sem depender de mais nada", "Reinicie, nem depende", "Restart now, it doesn't depend on anything", "Não depende de nada: reinicie"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // a doubt, a condition or a refusal still holds
+  for (const later of ["Reinicie agora, depende", "Reinicie se não depende de nada", "Reinicie quando não depender de nada", "Não reinicie, não depende de mim", "Reinicie agora, depende do GrandDove", "Não depende de mim, quem sabe reinicie"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // B2: "agora" before "depois", "depois" about another act: now
+  for (const now of ["Reinicie agora e depois decide", "Reinicie agora e depois avise", "Reinicie agora, depois me conte", "Reinicie já. Depois revise o log", "Reinicie imediatamente e em seguida avise", "Pode reiniciar agora, e depois decidimos o resto", "Restart now and afterwards tell me", "Restart now and after that check the log"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // "depois" tied to the restart, "depois" first, a restart after it, a
+  // wait before it, "ou depois", a doubt in it: still open
+  for (const later of ["Reinicie depois", "Reinicie depois e avise", "Reinicie depois dos agentes", "Reinicie já, mas depois dos agentes", "Reinicie agora, depois de terminar o PR", "Reinicie agora e depois que o GrandDove acabar", "Reinicie agora e depois reinicie de novo", "Reinicie agora à tarde e depois avise", "Reinicie agora ou depois", "Reinicie agora, depois", "Reinicie agora não e depois avise", "Agora pare. Reinicie depois e avise", "Agora não, reinicie depois", "Reinicie agora, talvez, e depois avise", "Reinicie já já e depois avise", "Reinicie a uma, depois", "Reinicie já, não depois", "Reinicie na segunda e depois avise", "Reinicie mais uma vez e depois avise", "Termine o PR agora e depois reinicie", "Restart now and afterwards restart again", "Restart later and afterwards tell me"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+});

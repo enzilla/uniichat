@@ -1041,7 +1041,12 @@ export function restart_now(answer: string | null): boolean {
   }
   // "sem esperar", "não espere": the restart asked now, its words of
   // waiting said only to deny them (read as "agora")
-  const b = a.replace(RESTART_NO_WAIT, " agora ");
+  // "não depende de mais nada", "sem depender": a doubt denied, read as
+  // "agora" too, unless after "se" (a condition: "se não depende") (SillyHippo)
+  const c = a.replace(RESTART_NO_WAIT, " agora ").replace(RESTART_NO_DOUBT, (m, se) => (se ? m : " agora "));
+  // "Reinicie agora e depois decide": a "depois" after the restart asked
+  // now, about another thing, is no wait for it (SillyHippo)
+  const b = restart_then(c);
   if (!/\b(?:reinici\w*|restart\w*)\b/.test(b)) {
     return false;
   }
@@ -1068,6 +1073,43 @@ const RESTART_COUNTED = new Set(["instancia", "instancias", "instance", "instanc
 // esperar não" reads its trailing "não" as a refusal (both stay open: the
 // safe side)
 const RESTART_NO_WAIT = /\b(?:sem (?:esperar|aguardar|demora|demorar)|(?:nao|nem) (?:espere|esperar|espera|aguarde|aguardar|aguarda)|don'?t wait|do not wait|without waiting|no wait(?:ing)?)\b/g;
+
+// a doubt denied (already without accents, lower): "não depende", "nem
+// depende de nada", "sem depender de mais ninguém", "doesn't depend on
+// anything". The "se" before it is caught to keep a condition ("se não
+// depende de nada") as it was: a wait
+const RESTART_NO_DOUBT = /(\bse )?\b(?:(?:nao|nem) depende|sem depender|doesn'?t depend|does not depend)\b(?: (?:de|on) (?:mais )?(?:nada|ninguem|anything|anyone))?/g;
+
+// the connector of a later act after a restart asked now: "e depois",
+// ", depois", ". Em seguida", "and afterwards", "and after that"
+const RESTART_THEN = /^(.*?\b(?:reinici\w*|restart\w*)\b.*?\b(?:agora|ja|now|imediatamente|immediately|asap|right away)\b.*?)(?:\s*[,;.!]\s*(?:(?:e|and) )?|\s+(?:e|and) )(?:depois|em seguida|afterwards|after that)\b(.*)$/;
+
+// what may follow "depois" to tie it to the restart itself ("depois dos
+// agentes", "depois que terminar", "after the PR"): a wait, kept
+const RESTART_THEN_TIED = new Set(["de", "do", "da", "dos", "das", "que", "disso", "disto", "dele", "dela", "deles", "delas", "daquilo", "daqui", "of", "the", "that", "this", "it"]);
+
+// a restart asked now, then another act: "Reinicie agora e depois decide",
+// "Restart now and afterwards tell me". The "depois" and what follows it
+// are cut off when: a word of now comes after the restart's verb and
+// before "depois"; "depois" is joined by "e" or a stop; a word follows it
+// that doesn't tie it to the restart (RESTART_THEN_TIED); and no verb of
+// restarting follows it ("e depois reinicie de novo" keeps the wait: the
+// safe side). The rest is still read as a whole: a wait before "depois"
+// ("Reinicie agora à tarde e depois avise") still holds. A limit: the
+// hour by its accent (RESTART_AT_HOUR) is read in the whole answer, so
+// "Reinicie agora e depois, à uma, revise" stays open (the safe side)
+function restart_then(a: string): string {
+  const m = RESTART_THEN.exec(a);
+  if (m === null) {
+    return a;
+  }
+  const tail = m[2]!;
+  const words = tail.split(/[^a-z0-9']+/).filter((w) => w !== "");
+  if (words.length === 0 || RESTART_THEN_TIED.has(words[0]!) || /\b(?:reinici|restart)/.test(tail)) {
+    return a;
+  }
+  return m[1]!;
+}
 
 // a plain sign of now (already without accents, lower). "já já" is a
 // soon, not a now: RESTART_WAIT takes it first
