@@ -76,7 +76,43 @@ Features
   what unblocks it) or **waiting for you** (in your Agora). One closed
   before this, without evidence, reads "sem evidência": Unii may prove
   it, or it's opened again; nothing is erased. A reply of Unii's that
-  promises something for later with no task of its own gets a note.
+  promises something for later with no task of its own gets a note; one
+  that asks you something (a question, a decision, an order to give) with
+  no task of yours about it gets one, "Pergunta sem pendência" (a decision
+  with a text field for your answer, the question in its detail), made by
+  the serve, and a note (`Tasks.questions_in`: a heuristic; quotes, code,
+  headings, questions Unii answers itself, another's questions reported and
+  questions to others don't count). A task of yours is the question's if
+  its id is in the question's paragraph, if it was made in that turn with
+  words of the question, or if Unii said the question in its thread; one
+  about something else doesn't count. Limits: only the turn's last reply is
+  read (a question in an earlier message of the turn, followed by tools,
+  isn't seen); at most 3 questions of a reply go in the task; a rhetorical
+  question said last, or a request in other words, may be misread; a
+  short phrase with "?" that isn't a question counts ("Rodei x? ok."
+  asks "Rodei x?"); a word in common with a task of yours made in the
+  turn about something else spares a question ("Revisar o hospitalar#700"
+  spares "Quer que eu mescle o hospitalar?"). A request negated just
+  before it ("Não depende de ordem sua.", "Nenhum agente depende de
+  ordem.") asks nothing; one on the order of your name ("Depende da ordem
+  do Guilherme.") asks you only with `owner_name` set. "Me avise se
+  falhar." and "Se falhar, me avise." (an instruction on an event) and
+  "Ele não decide, você decide." (who decides, by contrast) ask nothing;
+  "Me avise se posso seguir.", "Não está ok?" and "Falta só a sua
+  aprovação." ask, as meant ("Não falta a sua aprovação." doesn't), and
+  so do "Se quiser, me avise.", "Me avise caso aprove.", "Me avise caso
+  discorde." and "Me avise caso não queira." (the user's will, also
+  denied), "Me avise caso precise de algo." and "Me avise se não
+  gostar." (a need or a liking), and "Se mesclar, me avise." (an act of
+  the user's with no subject: mesclar, aplicar, assinar, publicar,
+  revisar, validar, confirmar, responder; "Se o CI mesclar, me avise."
+  doesn't). Limits: "Me avise quando falhar." and "Quando terminar, me
+  avise." ask ("quando" isn't read as an event), and so does "Rodei os
+  testes? ok." ("Rodei os testes?"); an event said with one of those
+  verbs and no subject ("Se publicar, me avise.", meaning the pipeline)
+  asks. "precisar" with no subject is always read as your need, so "Me
+  avise caso precise reiniciar o serve." asks you even when it is Unii
+  or the pipeline that needs the restart.
   Terminal: `/mesa [projeto]`, `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
   `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
   `/descartar`, `/reabrir`, `/avisar`.
@@ -150,6 +186,9 @@ Settings page). Each may also be set as `UNII_<KEY>`, which wins. Besides
 - `apple`, `apns`: the iOS app's (ios/) App ID and push key id.
 - `task_stall`: hours a task of Unii's may stand still, with no
   `next_due`, before it's overdue (4 by default; read at the start).
+- `owner_name`: your names as the chat calls you, comma-separated
+  ("Guilherme"), so "depende da ordem do Guilherme" is a question to you
+  (none by default; read at the start).
 
 The prompts: `~/.unii/prompt.md` (every turn; subagents get it too)
 and `~/.unii/compact.md` (every summary, nothing else) replace the

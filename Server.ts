@@ -500,8 +500,10 @@ export namespace Chat {
       chat.wait = [];
       chat.busy = false;
       Chat.live(chat, null, []);
+      const reply = Chat.reply(chat, began);
       Chat.talked(chat);
       Chat.promised(chat, began);
+      Chat.asked(chat, began, reply);
       Chat.after(chat);
       Chat.change(chat);
     }
@@ -801,6 +803,42 @@ export namespace Chat {
       return;
     }
     Chat.note(chat, Tasks.promises_said(said));
+  }
+
+  // the turn's last reply, whole (its pages: the trailing messages of
+  // Unii's, at most 8, logged since `since`: an earlier turn's aren't),
+  // as it ended; null if it didn't end in one (a note last: a halt, a
+  // failure)
+  export function reply(chat: Chat, since = 0): string | null {
+    const pages: string[] = [];
+    for (let i = chat.mem.count - 1; i >= 0 && pages.length < 8; i--) {
+      const m = Memory.message(chat.mem, i);
+      if (m === null || m.kind !== "unii" || Date.parse(m.date ?? "") < since) {
+        break;
+      }
+      pages.unshift(m.text);
+    }
+    return pages.length === 0 ? null : pages.join("");
+  }
+
+  // a turn ended whose last reply asks the user something (a question,
+  // a decision, an order to give: Tasks.questions_in) with no task of the
+  // user's about it (Tasks.question_tasked: made in the turn with words of
+  // it, or the thread Unii said it in; another, about something else,
+  // doesn't spare it): the serve makes one, "Pergunta sem pendência"
+  // (Tasks.task_asked), and a note says so in the chat, so the question
+  // isn't lost in it (P87)
+  export function asked(chat: Chat, began: number, reply: string | null): void {
+    if (reply === null) {
+      return;
+    }
+    const s = Tasks.tasks_load(chat.mem.dir);
+    const open = new Set(s.tasks.filter((t) => t.state === "open" && t.assignee === "user").map((t) => t.id));
+    const said = Tasks.questions_in(reply, open, config.OWNER_NAMES).filter((q) => !Tasks.question_tasked(s, q, began));
+    if (said.length === 0) {
+      return;
+    }
+    Chat.note(chat, Tasks.questions_said(said, Tasks.task_asked(s, said, Date.now())));
   }
 
   // a turn's reply goes to no phone nor browser: only the pending list's

@@ -105,6 +105,11 @@ export const SITE    = config_value(FILE, "site").replace(/\/$/, "");
 // the default)
 export const TASK_STALL_HOURS = config_hours(config_get("task_stall", "4"), 4);
 
+// the user's names, as the chat calls them (config owner_name or
+// UNII_OWNER_NAME, comma-separated; none by default): "Depende da ordem do
+// Guilherme." asks the user something (Tasks.questions_in, P87)
+export const OWNER_NAMES = config_get("owner_name", "").split(",").map((x) => x.trim()).filter((x) => x !== "");
+
 function config_hours(x: string, def: number): number {
   const n = Number(String(x).trim().replace(",", "."));
   return Number.isFinite(n) && n > 0 && n <= 24 * 30 ? n : def;
