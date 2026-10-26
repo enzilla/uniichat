@@ -101,9 +101,15 @@ Features
   decide." (who decides, by contrast) ask nothing; "Me avise se posso
   seguir.", "Não está ok?" and "Falta só a sua aprovação." ask, as
   meant ("Não falta a sua aprovação." doesn't), and so do "Se quiser, me
-  avise." and "Me avise caso aprove." (the user's will). Limits: "Me avise
-  quando falhar." asks ("quando" isn't read as an event), and so does
-  "Rodei os testes? ok." ("Rodei os testes?").
+  avise.", "Me avise caso aprove.", "Me avise caso discorde." and "Me
+  avise caso não queira." (the user's will, also denied), and "Se
+  mesclar, me avise." (an act of the user's with no subject: mesclar,
+  aplicar, assinar, publicar, revisar, validar, confirmar, responder;
+  "Se o CI mesclar, me avise." doesn't). Limits: "Me avise quando
+  falhar." and "Quando terminar, me avise." ask ("quando" isn't read as
+  an event), and so does "Rodei os testes? ok." ("Rodei os testes?"); an
+  event said with one of those verbs and no subject ("Se publicar, me
+  avise.", meaning the pipeline) asks.
   Terminal: `/mesa [projeto]`, `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
   `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
   `/descartar`, `/reabrir`, `/avisar`.

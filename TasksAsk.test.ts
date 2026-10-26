@@ -275,3 +275,39 @@ test("the note says the task made, or why none", () => {
   expect(T.questions_said(["Mesclo?"], t)).toStartWith("Pergunta sem pendência: o Unii perguntou “Mesclo?” sem abrir nem atualizar, neste turno, uma pendência sua. Registrei na P9");
   expect(T.questions_said(["Mesclo?"], "The list has 100 open tasks")).toContain("não foi possível abri-la");
 });
+
+test("\"Me avise caso discorde.\", \"caso não queira\" and \"Se mesclar, me avise.\" ask (P87 #5, B2 to B4)", () => {
+  const none = (x: string) => expect(asks(x)).toEqual([]);
+  const one = (x: string) => expect(asks(x)).toEqual([x]);
+  // B2: a disagreement is the user's will
+  one("Me avise caso discorde.");
+  one("Se discordar, me avise.");
+  // B3: the will denied still asks
+  one("Me avise caso não queira.");
+  one("Se não quiser, me avise.");
+  one("Me avise se não aprovar.");
+  // B4: an act of the user's, with no subject, asks
+  one("Se mesclar, me avise.");
+  one("Me avise se mesclar.");
+  one("Caso aplique, me avise.");
+  // ... an event, or an act with its subject, doesn't
+  none("Se o CI mesclar, me avise.");
+  none("Se não falhar, me avise.");
+  // B1: "Quando terminar, me avise." asks, as documented ("quando" isn't read)
+  one("Quando terminar, me avise.");
+  // the table of verification #5 holds
+  none("Se falhar, me avise.");
+  none("Caso o CI falhe, me avise.");
+  none("Se der erro, me avisa.");
+  none("Me avise caso falhe.");
+  none("Me avise caso o CI falhe.");
+  none("Ele não decide, você decide.");
+  none("Me avise se falhar.");
+  one("Se quiser, me avise.");
+  one("Caso aprove, me avise.");
+  one("Me avise caso aprove.");
+  one("Me avise caso queira que eu mescle.");
+  one("Você decide.");
+  one("Me avise.");
+  one("Não está ok?");
+});
