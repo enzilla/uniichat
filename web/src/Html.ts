@@ -229,11 +229,34 @@ export function tasks_html(tasks: Task[]): { open: string[]; now: string[]; wait
   const blocked = Deps.blocked_ids(tasks);
   const opened = tasks.filter((t) => t.state === "open");
   const groups = View.tasks_by_assignee(opened.filter((t) => !blocked.has(t.id)));
-  const open = (t: Task) => task_open_html(t, tasks, false);
+  const open = (t: Task) => task_brief_html(t, tasks);
   const heading = (a: string, ts: Task[]) => `<li class="group" data-assignee="${esc(a)}">${esc(View.assignee_said(ts[0]).replace(/^c/, "C"))} <span class="n">(${ts.length})</span></li>`;
   const titled = groups.length > 1 || (groups.length === 1 && groups[0][0] !== "user");
   const now = groups.flatMap(([a, ts]) => [...(titled ? [heading(a, ts)] : []), ...ts.map(open)]);
   return { open: groups.flatMap(([, ts]) => ts.map(open)), now, waiting: opened.filter((t) => blocked.has(t.id)).map((t) => task_waiting_html(t, tasks, false)), closed: tasks.filter((t) => t.state !== "open").map((t) => task_closed_html(t, false)) };
+}
+
+// an open task in the list beside the chat, in brief: its title (it
+// opens the task in the drawer), what it asks of the user in a line, its
+// choices (each concludes it at once, what it means under it), then a
+// line of where it is from; whole, to answer its fields or comment, in
+// the drawer (drawer_html). One of someone else's says whose it is
+function task_brief_html(t: Task, tasks: Task[]): string {
+  const mine = t.assignee === "user";
+  const rec = View.task_rec(t);
+  const asks = (t.fields ?? []).some((f) => f.required);
+  const opt = (c: string, k: number) => {
+    const on = View.rec_is(rec, c);
+    const means = t.descriptions?.[k] ? `<small>${esc(t.descriptions[k])}</small>` : "";
+    return `<button class="opt${on ? " rec" : ""}"${on ? ` title="Recomendada"` : ""}${act_html({ $: "Task", task: t.id, state: "done", answer: c })}>${esc(c)}${on ? ` <span class="rec-tag">recomendada</span>` : ""}${means}</button>`;
+  };
+  const opts = mine && !asks && t.choices.length > 0 ? `<div class="opts" role="group" aria-label="Concluir como">${t.choices.map(opt).join("")}</div>` : "";
+  const open = `<button class="more" type="button" data-drawer="${esc(t.id)}">${mine ? (opts === "" ? "Responder" : "Comentar ou ver mais") : "Ver"}</button>`;
+  const frees = View.task_frees_named(tasks, t);
+  const talk = View.task_talk_said(t);
+  const more = [...(talk === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(talk)}</span>`]), ...(frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`]), `<time>${esc(task_when(t.made))}</time>`, open];
+  const cls = "task " + (mine ? "user" : "other " + t.assignee) + " brief";
+  return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t, true)}<p class="ask">${esc(View.task_ask_said(t))}</p>${opts}${task_meta(t, more)}</li>`;
 }
 
 function task_when(iso: string): string {
@@ -341,7 +364,8 @@ function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(),
 export function drawer_html(t: Task, tasks: Task[]): string[] {
   const item = t.state !== "open" ? task_closed_html(t, false) : Deps.blocked_ids(tasks).has(t.id) ? task_waiting_html(t, tasks, false) : task_open_html(t, tasks, false);
   const body = item.replace(/^<li /, "<div ").replace(/<\/li>$/, "</div>").replace(/<button class="title" type="button" data-drawer="[^"]*" title="[^"]*">([^<]*)<\/button>/, `<span class="title">$1</span>`);
-  return [`<p class="bar"><span class="lead">Pendência</span><span class="keys"><kbd>Esc</kbd> fecha</span><button class="shut" type="button" data-drawer-close aria-label="Fechar a gaveta">✕</button></p>`, body];
+  const asked = body.replace(/(<p class="head">.*?<\/p>)/, `$1<p class="ask">${esc(View.task_ask_said(t))}</p>`);
+  return [`<p class="bar"><span class="lead">Pendência</span><span class="keys"><kbd>Esc</kbd> fecha</span><button class="shut" type="button" data-drawer-close aria-label="Fechar a gaveta">✕</button></p>`, asked];
 }
 
 // the pull requests a task points to: those verified (prs, R5) each a

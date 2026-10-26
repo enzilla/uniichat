@@ -135,14 +135,16 @@ test("views: the open by assignee, the user's first; a task not the user's has o
   expect(html.now[3]).toBe('<li class="group" data-assignee="unii">Com o Unii <span class="n">(1)</span></li>');
   expect(html.now[1]).toContain('data-task="P2"');
   expect(html.now[1]).toContain('<a class="origin" title="Origem" href="https://numih.slack.com/archives/C1/p2?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">Slack</a>');
-  expect(html.now[1]).toContain('class="done"');
+  const full = (id: string) => Html.drawer_html(tasks.find((t) => t.id === id)!, tasks).join("");
+  expect(html.now[1]).toContain('<p class="ask">');
+  expect(full("P2")).toContain('class="done"');
   expect(html.now[2]).toContain('<span class="origin" title="Origem">agendamento</span>');
-  expect(html.now[4]).toContain('class="chase"');
-  expect(html.now[4]).toContain('>Pode fechar</button>');
-  expect(html.now[4]).not.toContain(">Concluir<");
-  expect(html.now[4]).not.toContain(">Descartar<");
+  expect(full("P1")).toContain('class="chase"');
+  expect(full("P1")).toContain('>Pode fechar</button>');
+  expect(full("P1")).not.toContain(">Concluir<");
+  expect(full("P1")).not.toContain(">Descartar<");
   expect(html.now[4]).toContain("com o Unii");
-  expect(html.now[4]).toContain('class="task other unii"');
+  expect(html.now[4]).toContain('class="task other unii brief"');
   // the user's alone: no heading
   const mine = Html.tasks_html(tasks.filter((t) => t.assignee === "user"));
   expect(mine.now).toEqual(mine.open);

@@ -372,7 +372,9 @@ test("web: fields and thread drawn escaped, drafts checked, whose turn shown; Un
   T.task_draft(s, "P1", { amb: bad.slice(0, 80), dias: ["ter"], obs: "</textarea><script>alert(1)</script>" });
   T.task_say(s, "P1", "<b>oi</b>\u001b[31m", NOW);
   T.task_reply(s, "P1", "<script>alert(2)</script> **ok** [x](javascript:alert(3))", NOW);
-  const html = Html.tasks_html(T.tasks_view(s, NOW)).open[0];
+  const view = T.tasks_view(s, NOW);
+  const html = Html.drawer_html(view[0], view).join("");
+  expect(Html.tasks_html(view).open[0]).not.toContain("<img");
   expect(html).not.toContain("<img");
   expect(html).not.toContain("<script");
   expect(html).not.toContain("<b>oi");

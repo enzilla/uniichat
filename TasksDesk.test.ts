@@ -126,8 +126,9 @@ test("web: the list by group, the one shown marked; its detail whole, with field
   expect(d).toContain("Pode esperar?");
   expect(d).toContain('data-keep="say"');
   expect(d).toContain(">Concluir</button>");
-  // the aside's item of the same task keeps its folds
-  const aside = Html.tasks_html(tasks).open.find((x) => x.includes('data-task="P4"'))!;
+  // the drawer's of the same task (the aside's item is in brief) keeps its folds
+  const aside = Html.drawer_html(tasks.find((t) => t.id === "P4")!, tasks).join("");
+  expect(Html.tasks_html(tasks).open.find((x) => x.includes('data-task="P4"'))!).toContain('data-drawer="P4"');
   expect(aside).toContain("<summary>Detalhes</summary>");
   expect(aside).toContain('<details class="thread"');
 });

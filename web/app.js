@@ -2550,6 +2550,25 @@ function task_late_said(t, blocked2, now) {
   return "atrasada há " + hours_said(age);
 }
 var KIND_SAID = { pr: "aprovação de PR", decision: "decisão", test: "teste", action: "ação sua", restart: "reinício", info: "informação" };
+var ASK_KIND = { pr: "Revise o PR e conclua com o seu parecer.", decision: "Decida e conclua.", test: "Teste e conclua com o resultado.", action: "Faça e marque como concluída.", restart: "Reinicie e marque como concluída.", info: "Leia e conclua." };
+function task_ask_said(t) {
+  if (t.state !== "open") {
+    return t.state === "done" ? "Concluída." : "Descartada.";
+  }
+  if (t.assignee !== "user") {
+    return "Está com " + (t.assignee === "unii" ? "o Unii" : t.assignee) + ": você só acompanha, cobra ou libera para fechar.";
+  }
+  const asks = (t.fields ?? []).filter((f) => f.required).length;
+  const n = t.choices.length;
+  if (asks > 0) {
+    return "Responda " + (asks === 1 ? "à pergunta" : "às " + asks + " perguntas") + (n > 0 ? " e escolha uma opção." : " e conclua.");
+  }
+  if (n > 0) {
+    return "Escolha uma das " + n + " opções.";
+  }
+  const k = kind_of(t);
+  return k === null ? "Conclua quando estiver feito, ou descarte." : ASK_KIND[k];
+}
 function task_kind_said(t) {
   const k = kind_of(t);
   return k === null ? "" : KIND_SAID[k] + (Number.isFinite(LATE_BY[k]) ? ", prazo " + LATE_BY[k] / 3600000 + " h" : ", sem prazo");
@@ -3693,11 +3712,28 @@ function tasks_html(tasks) {
   const blocked2 = blocked_ids(tasks);
   const opened = tasks.filter((t) => t.state === "open");
   const groups = tasks_by_assignee(opened.filter((t) => !blocked2.has(t.id)));
-  const open = (t) => task_open_html(t, tasks, false);
+  const open = (t) => task_brief_html(t, tasks);
   const heading = (a, ts) => `<li class="group" data-assignee="${esc(a)}">${esc(assignee_said(ts[0]).replace(/^c/, "C"))} <span class="n">(${ts.length})</span></li>`;
   const titled = groups.length > 1 || groups.length === 1 && groups[0][0] !== "user";
   const now = groups.flatMap(([a, ts]) => [...titled ? [heading(a, ts)] : [], ...ts.map(open)]);
   return { open: groups.flatMap(([, ts]) => ts.map(open)), now, waiting: opened.filter((t) => blocked2.has(t.id)).map((t) => task_waiting_html(t, tasks, false)), closed: tasks.filter((t) => t.state !== "open").map((t) => task_closed_html(t, false)) };
+}
+function task_brief_html(t, tasks) {
+  const mine = t.assignee === "user";
+  const rec = task_rec(t);
+  const asks = (t.fields ?? []).some((f) => f.required);
+  const opt = (c, k) => {
+    const on = rec_is(rec, c);
+    const means = t.descriptions?.[k] ? `<small>${esc(t.descriptions[k])}</small>` : "";
+    return `<button class="opt${on ? " rec" : ""}"${on ? ` title="Recomendada"` : ""}${act_html({ $: "Task", task: t.id, state: "done", answer: c })}>${esc(c)}${on ? ` <span class="rec-tag">recomendada</span>` : ""}${means}</button>`;
+  };
+  const opts = mine && !asks && t.choices.length > 0 ? `<div class="opts" role="group" aria-label="Concluir como">${t.choices.map(opt).join("")}</div>` : "";
+  const open = `<button class="more" type="button" data-drawer="${esc(t.id)}">${mine ? opts === "" ? "Responder" : "Comentar ou ver mais" : "Ver"}</button>`;
+  const frees2 = task_frees_named(tasks, t);
+  const talk = task_talk_said(t);
+  const more = [...talk === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(talk)}</span>`], ...frees2 === "" ? [] : [`<span class="frees">${esc(frees2)}</span>`], `<time>${esc(task_when(t.made))}</time>`, open];
+  const cls = "task " + (mine ? "user" : "other " + t.assignee) + " brief";
+  return `<li class="${esc(cls)}" data-task="${esc(t.id)}">${task_head(t, true)}<p class="ask">${esc(task_ask_said(t))}</p>${opts}${task_meta(t, more)}</li>`;
 }
 function task_when(iso) {
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -3778,7 +3814,8 @@ function task_open_html(t, tasks, desk, now = Date.now(), turn = null) {
 function drawer_html(t, tasks) {
   const item = t.state !== "open" ? task_closed_html(t, false) : blocked_ids(tasks).has(t.id) ? task_waiting_html(t, tasks, false) : task_open_html(t, tasks, false);
   const body = item.replace(/^<li /, "<div ").replace(/<\/li>$/, "</div>").replace(/<button class="title" type="button" data-drawer="[^"]*" title="[^"]*">([^<]*)<\/button>/, `<span class="title">$1</span>`);
-  return [`<p class="bar"><span class="lead">Pendência</span><span class="keys"><kbd>Esc</kbd> fecha</span><button class="shut" type="button" data-drawer-close aria-label="Fechar a gaveta">✕</button></p>`, body];
+  const asked = body.replace(/(<p class="head">.*?<\/p>)/, `$1<p class="ask">${esc(task_ask_said(t))}</p>`);
+  return [`<p class="bar"><span class="lead">Pendência</span><span class="keys"><kbd>Esc</kbd> fecha</span><button class="shut" type="button" data-drawer-close aria-label="Fechar a gaveta">✕</button></p>`, asked];
 }
 function task_prs_html(t) {
   const verified = new Set((t.prs ?? []).map((p) => p.url));

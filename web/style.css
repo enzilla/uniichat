@@ -112,9 +112,9 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 @keyframes doing-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { #doing .spin { animation-duration: 2.4s; } }
 /* the drawer: a task answered over the box, the chat in sight above it (main.ts drawer_draw) */
-#drawer { width: min(var(--col), 100%); max-height: min(45vh, 440px); margin: 0 auto 8px; padding: 4px 16px 12px; overflow: auto; overscroll-behavior: contain; box-sizing: border-box; border: 1px solid var(--frame); border-radius: 16px; background: var(--paper); }
+#drawer { width: min(var(--col), 100%); max-height: min(45vh, 440px); margin: 0 auto 8px; padding: 4px 16px 12px; overflow: auto; overscroll-behavior: contain; box-sizing: border-box; border: 1px solid var(--frame); border-radius: 20px; background: var(--lift); }
 #drawer[hidden] { display: none; }
-#drawer .bar { position: sticky; top: -4px; z-index: 1; display: flex; align-items: center; gap: 8px; margin: 0 -16px 6px; padding: 8px 16px 6px; border-bottom: 1px solid var(--hair); background: var(--paper); font-size: 12.5px; color: var(--mid); }
+#drawer .bar { position: sticky; top: -4px; z-index: 1; display: flex; align-items: center; gap: 8px; margin: 0 -16px 6px; padding: 8px 16px 6px; border-bottom: 1px solid var(--hair); background: var(--lift); font-size: 12.5px; color: var(--mid); }
 #drawer .bar .lead { font-weight: 600; color: var(--ink); }
 #drawer .bar .keys { margin-left: auto; }
 #drawer .bar kbd { font: 11.5px var(--mono); }
@@ -147,7 +147,7 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 #pick .choices [aria-checked=true] { font-weight: 600; }
 #pick .choices [aria-checked=true]::before { content: "✓"; content: "✓" / ""; position: absolute; margin-left: -18px; }
 
-.composer { width: min(var(--col), 100%); margin: 0 auto; display: flex; align-items: flex-end; gap: 10px; border: 1px solid var(--frame); border-radius: 24px; padding: 7px 7px 7px 20px; background: var(--lift); box-shadow: var(--shadow); }
+.composer { width: min(var(--col), 100%); margin: 0 auto; display: flex; align-items: flex-end; gap: 10px; border: 1px solid var(--frame); border-radius: 24px; padding: 7px 7px 7px 20px; background: var(--lift); }
 .composer:focus-within { border-color: var(--soft); }
 /* the message box (Box.ts): text as typed, as tall as it is up to 40% of
    the screen, then it scrolls; its placeholder while it holds nothing */
@@ -922,3 +922,37 @@ body.tree { height: 100dvh; }
 #tree .bracket.drag { scroll-snap-type: none; user-select: none; cursor: grabbing; }
 @media (prefers-reduced-motion: reduce) { #tree .s.ease { transition: none; } }
 @media (max-width: 600px) { #tree section { padding: 0 14px 14px; } #tree .bracket { scroll-padding: 0 14px; } #tree .top { padding: 4px 14px 0; } #tree .top .tab { height: 30px; padding: 0 10px; font-size: 13px; } }
+
+/* One style for the pending list, the drawer and the Mesa: text and rules,
+   no shadows, no boxes, no fills but the main button's. Labels (project,
+   whose turn, late, priority) are colored words, not badges */
+#tasks { box-shadow: none; }
+:is(#tasks, #desk, #drawer) :is(.ref, .origin, .late, .prio, .stalled, .agent.none, .frees, .talk, .talk.user, .pr) { padding: 0; border: 0; border-radius: 0; background: none; }
+:is(#tasks, #desk, #drawer) :is(.ref, .origin) { color: var(--mid); }
+:is(#tasks, #desk, #drawer) :is(.frees, .talk.user) { color: var(--ink); font-weight: 600; }
+:is(#tasks, #desk, #drawer) .late, :is(#tasks, #desk, #drawer) .agent.none { color: var(--red); font-weight: 500; }
+:is(#tasks, #desk, #drawer) .prio.high { color: var(--accent); }
+:is(#tasks, #desk, #drawer) .rec-tag { padding: 0; border: 0; color: var(--accent); font-weight: 600; }
+:is(#tasks, #desk, #drawer) .field { padding: 0; border: 0; border-radius: 0; }
+:is(#tasks, #desk, #drawer) .field legend { padding: 0 0 2px; }
+:is(#tasks, #desk, #drawer) .field[aria-invalid="true"] { box-shadow: none; }
+:is(#tasks, #desk, #drawer) .field[aria-invalid="true"] legend { color: var(--red); }
+:is(#tasks, #desk, #drawer) :is(.opts, .acts) button { border: 1px solid var(--frame); background: none; }
+:is(#tasks, #desk, #drawer) :is(.opts, .acts) button:hover { background: var(--block); }
+:is(#tasks, #desk, #drawer) .acts :is(.done, .chase) { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+:is(#tasks, #desk, #drawer) .opts button.rec, :is(#tasks, #desk, #drawer) .acts .accept { border: 1px solid var(--accent); background: none; }
+:is(#tasks, #desk, #drawer) .opts button { display: inline-flex; flex-direction: column; align-items: flex-start; text-align: left; }
+:is(#tasks, #desk, #drawer) .opts button small { font-size: 12px; color: var(--mid); font-weight: 400; }
+/* the list beside the chat: each task in brief, what it asks in a line */
+#tasks li.brief { padding: 10px 0; }
+#tasks li.brief .ask, #drawer .ask { margin: 2px 0 0; font-size: 13.5px; color: var(--ink); }
+#tasks li.brief .opts { flex-direction: column; align-items: stretch; gap: 4px; }
+#tasks li.brief .opts button { width: 100%; }
+#tasks li.brief .opts button small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#tasks li.brief .meta { margin-top: 6px; }
+#tasks .meta .more { padding: 0; font: inherit; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; background: none; cursor: pointer; }
+#tasks li.group { padding: 14px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+#tasks li.group[data-assignee="user"] { color: var(--ink); }
+@media (min-width: 1100px) {
+  body.tasking #tasks { border: 0; border-left: 1px solid var(--hair); border-radius: 0; background: var(--paper); inset: var(--head) 0 0 auto; width: 360px; padding: 14px 18px; }
+}

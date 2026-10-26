@@ -90,7 +90,14 @@ export function panel_extra(p: Panel, lines: Paint.Line[]): void {
 // then those closed lately (those that wait for others can't be)
 function panel_items(v: View.View): Task[] {
   const { open, closed } = View.view_tasks(v);
-  return [...open, ...closed];
+  const [mine, others] = panel_split(open);
+  return [...mine, ...others, ...closed];
+}
+
+// the open tasks: the user's, then the others' (Unii's, an agent's),
+// each list under its own heading
+function panel_split(open: Task[]): [Task[], Task[]] {
+  return [open.filter((t) => t.assignee === "user"), open.filter((t) => t.assignee !== "user")];
 }
 
 // all the keys move along: those tasks, then the agents at work (each
@@ -246,7 +253,16 @@ function panel_lines(p: Panel, v: View.View, w: number, h: number, x: number): P
   const head  = [Paint.Run("Pendências", BOLD), Paint.Run(open.length === 0 ? "" : " (" + open.length + ")", Paint.DIM)];
   const body: { line: Paint.Line; id?: string; box?: boolean }[] = [];
   const add   = (t: Task, more: string[]) => task_lines(v, t, t.id === sel?.id ? (p.focus ? "▸" : "›") : " ", more, w).forEach((line, k) => body.push({ line, id: t.id, box: k === 0 }));
-  open.forEach((t) => add(t, []));
+  const [mine, others] = panel_split(open);
+  const group = (title: string, ts: Task[], first: boolean) => {
+    if (ts.length === 0) {
+      return;
+    }
+    body.push(...(first ? [] : [{ line: blank }]), { line: [Paint.Run(title, BOLD), Paint.Run(" (" + ts.length + ")", Paint.DIM)] });
+    ts.forEach((t) => add(t, []));
+  };
+  group("Suas", mine, true);
+  group("Com o Unii", others, mine.length === 0);
   if (open.length === 0) {
     body.push({ line: [Paint.Run("Nenhuma pendência aberta.", Paint.DIM)] });
   }
@@ -289,11 +305,16 @@ function task_lines(v: View.View, t: Task, mark: string, more: string[], w: numb
   const pad   = Paint.Run(" ".repeat(INDENT));
   const lines = text.map((l, k) => (k === 0 ? [Paint.Run(mark + " ", mark === " " ? Paint.DIM : BOLD), Paint.Run(BOX[t.state], box), Paint.Run(" "), ...l] : [pad, ...l]));
   const frees = View.task_frees_said(v, t);
-  const said  = [...(View.task_talk_said(t) === "" ? [] : [View.task_talk_said(t)]), ...(t.assignee === "unii" ? ["com o Unii"] : []), ...(t.ref === null ? [] : [t.ref]), ...(t.answer === null ? [] : ["resposta: " + t.answer]), ...more].map(Paint.text_clean).join(" · ");
+  const said  = [...(View.task_talk_said(t) === "" ? [] : [View.task_talk_said(t)]), ...(t.ref === null ? [] : [t.ref]), ...(t.answer === null ? [] : ["resposta: " + t.answer]), ...more].map(Paint.text_clean).join(" · ");
   const runs  = [...(frees === "" ? [] : [Paint.Run(frees, { ...Paint.INK, c: Theme.ANSI.frees })]), ...(frees !== "" && said !== "" ? [Paint.Run(" · ", Paint.DIM)] : []), ...(said === "" ? [] : [Paint.Run(said, Paint.DIM)])];
   const tail  = runs.length === 0 ? [] : Paint.runs_wrap(runs, Math.max(4, w - INDENT), false).map((l) => [pad, ...l]);
-  const opts  = mark === " " || t.state !== "open" ? [] : t.choices.flatMap((c, k) => Paint.runs_wrap([Paint.Run(k + 1 + ") ", BOLD), Paint.Run(Paint.text_clean(c)), ...(t.descriptions?.[k] ? [Paint.Run(" · " + Paint.text_clean(t.descriptions[k]), Paint.DIM)] : [])], Math.max(4, w - INDENT), false).map((l) => [pad, ...l]));
-  return [...lines, ...tail, ...opts];
+  // what it asks of the user, in a line (theirs and open), then its
+  // choices, each with what it means cut to the line
+  const mine  = t.state === "open" && t.assignee === "user";
+  const ask   = mine ? [[pad, ...Paint.runs_wrap([Paint.Run(View.task_ask_said(t), Paint.INK)], Math.max(4, w - INDENT), true)[0]]] : [];
+  const cw    = Math.max(4, w - INDENT);
+  const opts  = !mine ? [] : t.choices.map((c, k) => [pad, ...Paint.runs_wrap([Paint.Run(k + 1 + ") ", BOLD), Paint.Run(Paint.text_clean(c)), ...(t.descriptions?.[k] ? [Paint.Run(" · " + Paint.text_clean(t.descriptions[k]), Paint.DIM)] : [])], cw, true)[0]]);
+  return [...lines, ...ask, ...opts, ...tail];
 }
 
 // an agent's lines: the mark, its label (else its name), bold when
