@@ -2575,10 +2575,11 @@ function ask_fold(x: string): string {
 // lower; infinitive, indicative and subjunctive: "se aprovar", "caso
 // aprove", "se quiser", "caso queira"): a request still; so are the
 // will denied ("caso não queira", P87 #5, B3), a disagreement ("caso
-// discorde", P87 #5, B2) and an act of the user's, with no subject
+// discorde", P87 #5, B2), a need or a liking ("caso precise de algo",
+// "se não gostar", P87 #6, B1 and B2) and an act of the user's, with no subject
 // before it ("Se mesclar, me avise.", P87 #5, B4: the user merges; "Se
 // o CI falhar" has a subject, an event)
-const ASK_WILL = "(?:voce\\s+|vc\\s+)?(?:nao\\s+)?(?:quiser|queira|quer|preferir|prefira|prefere|puder|possa|pode|decidir|decida|decide|escolher|escolha|escolhe|aprovar|aprove|aprova|autorizar|autorize|autoriza|concordar|concorde|concorda|mandar|mande|manda|liberar|libere|libera|discordar|discorde|discorda|mesclar|mescle|aplicar|aplique|assinar|assine|publicar|publique|revisar|revise|validar|valide|confirmar|confirme|responder|responda|posso|podemos|devo|devemos)\\b";
+const ASK_WILL = "(?:voce\\s+|vc\\s+)?(?:nao\\s+)?(?:quiser|queira|quer|preferir|prefira|prefere|puder|possa|pode|decidir|decida|decide|escolher|escolha|escolhe|aprovar|aprove|aprova|autorizar|autorize|autoriza|concordar|concorde|concorda|mandar|mande|manda|liberar|libere|libera|discordar|discorde|discorda|precisar|precise|precisa|gostar|goste|gosta|gostaria|mesclar|mescle|aplicar|aplique|assinar|assine|publicar|publique|revisar|revise|validar|valide|confirmar|confirme|responder|responda|posso|podemos|devo|devemos)\\b";
 // "me avise se falhar": an instruction to Unii, to tell on an event, not
 // a request (P87 #3, B2); one on the user's will or Unii's next step
 // still asks: "Me avise se quiser que eu mescle.", "Me avise se posso

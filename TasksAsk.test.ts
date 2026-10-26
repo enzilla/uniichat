@@ -311,3 +311,29 @@ test("\"Me avise caso discorde.\", \"caso não queira\" and \"Se mesclar, me avi
   one("Me avise.");
   one("Não está ok?");
 });
+
+test("\"Me avise caso precise de algo.\" and \"Me avise se não gostar.\" ask (P87 #6, B1 and B2)", () => {
+  const none = (x: string) => expect(asks(x)).toEqual([]);
+  const one = (x: string) => expect(asks(x)).toEqual([x]);
+  // B1: a need of the user's
+  one("Me avise caso precise de algo.");
+  one("Me avise se precisar de algo.");
+  one("Caso precise de algo, me avise.");
+  one("Se você precisar de mais tempo, me avise.");
+  // B2: a liking, also denied
+  one("Me avise se não gostar.");
+  one("Se não gostar, me avise.");
+  one("Me avise caso goste.");
+  // ... with a subject, an event: no request
+  none("Se o CI precisar de mais tempo, me avise.");
+  none("Me avise caso o deploy precise de aprovação.");
+  // no regression
+  none("Se falhar, me avise.");
+  none("Se não falhar, me avise.");
+  none("Se o CI mesclar, me avise.");
+  one("Me avise caso discorde.");
+  one("Me avise caso não queira.");
+  one("Se mesclar, me avise.");
+  one("Me avise.");
+  one("Se quiser, me avise.");
+});

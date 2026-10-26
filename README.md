@@ -102,7 +102,9 @@ Features
   seguir.", "Não está ok?" and "Falta só a sua aprovação." ask, as
   meant ("Não falta a sua aprovação." doesn't), and so do "Se quiser, me
   avise.", "Me avise caso aprove.", "Me avise caso discorde." and "Me
-  avise caso não queira." (the user's will, also denied), and "Se
+  avise caso não queira." (the user's will, also denied), "Me avise
+  caso precise de algo." and "Me avise se não gostar." (a need or a
+  liking), and "Se
   mesclar, me avise." (an act of the user's with no subject: mesclar,
   aplicar, assinar, publicar, revisar, validar, confirmar, responder;
   "Se o CI mesclar, me avise." doesn't). Limits: "Me avise quando
