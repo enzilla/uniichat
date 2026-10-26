@@ -633,6 +633,37 @@ test("a restart for a part of the day, a vague later, an ordinal date or 'à uma
   }
   // a known limit: a trailing "não" reads as a refusal (the safe side: open)
   expect(T.restart_now("Reinicie sem esperar não")).toBe(false);
-  // a known limit: "a" is also the article (the safe side: open)
-  expect(T.restart_now("Reinicie a uma instância")).toBe(false);
+  // "a" with no accent and a noun after it is the article (SmoothDove: now a count, see below)
+  expect(T.restart_now("Reinicie a uma instância")).toBe(true);
+});
+
+test("a restart read the other way round (SmoothDove): now only with a plain sign of it; any other time of its own keeps it open", () => {
+  // R1: waits off any list stay open
+  for (const later of ["Reinicie ao almoço", "Reinicie no almoço", "Reinicie de tardinha", "Reinicie hoje", "Reinicie outro dia", "Reinicie em seguida", "Reinicie logo", "Restart afterwards", "Reinicie já já", "Reinicie o night worker", "Restart the early worker"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // R2: "a" + a count is no hour; the hour needs the accent, the end, "h", "hora" or "e meia"
+  for (const now of ["Reinicie a 1 instância", "Reinicie a 2 instâncias", "Reinicie a uma instância", "Reinicie o serve", "Reinicie de novo", "Sim, pode reiniciar o servidor, por favor"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  for (const later of ["Reinicie à uma", "Reinicie a uma", "Reinicie à 1", "Reinicie a 1h", "Reinicie a 1 hora", "Reinicie a uma e meia", "Reinicie à 1 instância"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // R3: a word of now beats a soft one (a part of the day, "cedo", "night", "early")
+  for (const now of ["Reinicie agora, de manhã já está", "Reinicie o serve cedo demais, agora", "Reinicie o night worker agora", "Restart the early worker now", "Reinicie imediatamente"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // a hard wait beats a word of now
+  for (const later of ["Reinicie agora à tarde", "Reinicie já, mas depois dos agentes", "Restart now, tomorrow", "Reinicie agora não"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // R4: a trailing "não" after "sem esperar" stays open (documented limit)
+  expect(T.restart_now("Reinicie sem esperar não")).toBe(false);
+  // the cases SmoothDove checked hold
+  for (const later of ["Reinicie de manhã", "Reinicie cedo", "Reinicie em breve", "Reinicie à noite", "Reinicie às 22h", "Reinicie no domingo", "Reinicie depois", "Restart next week", "Restart on the 27th", "Reinicie à uma"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  for (const now of ["Reinicie sem esperar", "Reinicie, não espere", "Restart, don't wait", "Reinicie agora", "Reinicie já", "Pode reiniciar", "Restart now"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
 });

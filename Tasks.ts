@@ -1012,20 +1012,42 @@ export function tool_args(s: Store, name: string, args: Edit, turn: Origin | nul
 export const RESTART_YES   = "Sim, reinicie";
 export const RESTART_LATER = "Eu reinicio depois";
 // whether an order's answer asks the restart now: the template's "Sim,
-// reinicie", or a restart choice of its own ("Reinicie agora") with no
-// wait in it ("depois", "após os agentes", "quando", "amanhã"...). A
-// restart with no task (Server.ts Chat.back) closes only such orders:
-// one for later stays open, for Unii to close with its own restart
+// reinicie", or a restart choice of its own read the other way round
+// (SmoothDove): now only with a plain sign of it. A restart with no task
+// (Server.ts Chat.back) closes only such orders: one for later stays
+// open, for Unii to close with its own restart. In order:
+// 1. no word of restarting: no
+// 2. a hard wait (RESTART_WAIT: a refusal, a clock time, an event, a day,
+//    a condition, "depois", "em seguida"...): later, even beside "agora"
+// 3. a word of now ("agora", "já", "now", "imediatamente", or a wait
+//    denied: "sem esperar", "não espere", "don't wait"): now, whatever
+//    else it says ("Reinicie agora, de manhã já está", "Restart the early
+//    worker now")
+// 4. else now only if every other word is a plain one (RESTART_PLAIN:
+//    "sim", "pode", "e avise", "o serve", "a 1 instância"...): any other,
+//    a time of its own ("ao almoço", "de tardinha", "hoje", "logo",
+//    "outro dia", "afterwards") or a name it doesn't know ("o night
+//    worker"), keeps the order open: the safe side
 export function restart_now(answer: string | null): boolean {
-  const plain = (x: string) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-  const a = plain(answer ?? "");
-  if (a === plain(RESTART_YES)) {
+  const lower = (answer ?? "").toLowerCase().trim();
+  const a = lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (a === RESTART_YES.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()) {
     return true;
   }
   // "sem esperar", "não espere": the restart asked now, its words of
-  // waiting said only to deny them (taken out before the waits are read)
-  const b = a.replace(RESTART_NO_WAIT, " ");
-  return /\b(?:reinici\w*|restart\w*)\b/.test(b) && !RESTART_WAIT.some((w) => w.test(b));
+  // waiting said only to deny them (read as "agora")
+  const b = a.replace(RESTART_NO_WAIT, " agora ");
+  if (!/\b(?:reinici\w*|restart\w*)\b/.test(b)) {
+    return false;
+  }
+  // "à uma", "à 1": the accent tells the hour from the article
+  if (RESTART_AT_HOUR.test(lower) || RESTART_WAIT.some((w) => w.test(b))) {
+    return false;
+  }
+  if (RESTART_NOW.test(b)) {
+    return true;
+  }
+  return b.split(/[^a-z0-9']+/).filter((w) => w !== "").every((w) => RESTART_PLAIN.has(w) || /^(?:reinici|restart)/.test(w) || /^\d{1,2}$/.test(w));
 }
 
 // a wait denied (already without accents, lower): "sem esperar", "não
@@ -1035,12 +1057,37 @@ export function restart_now(answer: string | null): boolean {
 // safe side)
 const RESTART_NO_WAIT = /\b(?:sem (?:esperar|aguardar|demora|demorar)|(?:nao|nem) (?:espere|esperar|espera|aguarde|aguardar|aguarda)|don'?t wait|do not wait|without waiting|no wait(?:ing)?)\b/g;
 
-// what puts off a restart asked (already without accents, lower): a
-// word of waiting or refusal, a time ("às 22h", "22:30", "em 1 hora",
-// "daqui a pouco"), or an event to wait for ("ao terminar o PR", "assim
-// que os agentes acabarem"). "agora" is no wait: "hora" is whole
+// a plain sign of now (already without accents, lower). "já já" is a
+// soon, not a now: RESTART_WAIT takes it first
+const RESTART_NOW = /\b(?:agora|ja|now|imediatamente|immediately|asap|right away)\b/;
+
+// the hour by its accent (lower, accents kept): "à uma", "à 1", "à uma e
+// meia". "a" with no accent is the article ("a 1 instância"), read as an
+// hour only at the end or before "h", "hora", "e meia" (RESTART_WAIT)
+const RESTART_AT_HOUR = /(?:^|[^\p{L}\p{N}])à (?:uma|\d{1,2})(?![\p{L}\p{N}])/u;
+
+// the words a restart asked now may carry besides its verb (already
+// without accents, lower): a yes, a courtesy, an "e avise", an object
+// ("o serve", "a 1 instância", "as duas instâncias", "de novo"). Numbers
+// of one or two digits too (restart_now). Any other word keeps it open
+const RESTART_PLAIN = new Set([
+  "sim", "s", "yes", "y", "ok", "okay", "pode", "podes", "voce", "vc", "you", "can", "may", "please", "pls", "por", "favor", "pf", "vai", "go", "ahead", "la", "entao", "so",
+  "e", "and", "avise", "avisa", "avisar", "me", "notify", "tell", "let", "know",
+  "o", "a", "os", "as", "the", "it", "this", "isso", "ele", "serve", "servidor", "server", "service", "servico", "unii", "chat", "8788",
+  "instancia", "instancias", "instance", "instances", "um", "uma", "dois", "duas", "tres", "one", "two", "three", "tudo", "all", "both", "ambos", "ambas", "de", "novo", "again",
+]);
+
+// what puts off a restart asked, even beside "agora" (already without
+// accents, lower): a word of waiting or refusal, a time ("às 22h",
+// "22:30", "em 1 hora", "daqui a pouco"), an event to wait for ("ao
+// terminar o PR", "assim que os agentes acabarem"), a day or a condition.
+// "agora" is no wait: "hora" is whole. A part of the day ("manhã",
+// "cedo", "night", "early"), "hoje", "logo", "em breve" are no hard wait:
+// without a word of now they keep the order open (not plain words), with
+// one ("Reinicie agora, de manhã já está") they don't. "tarde" and
+// "noite" stay hard: "agora à tarde" is this afternoon
 const RESTART_WAIT: RegExp[] = [
-  /\b(?:depois|apos|quando|mais tarde|amanha|noite|tarde|antes|ao fim|ao final|no fim|no final|fim do|so se|somente|nao|ate|daqui|assim que|logo que|enquanto|later|after|when|tomorrow|tonight|until|before|once|soon|don'?t|not|as soon)\b/,
+  /\b(?:depois|apos|quando|mais tarde|amanha|noite|tarde|antes|ao fim|ao final|no fim|no final|fim do|so se|somente|nao|nunca|ate|daqui|assim que|logo que|enquanto|em seguida|outro dia|outra hora|ja ja|later|after|afterwards|afterward|when|tomorrow|tonight|until|before|once|soon|next|don'?t|not|never|as soon)\b/,
   // a time: "às 22h", "22:30", "22 h", "at 10", "em 1 hora", "em uma hora", "in an hour"
   /\bas \d|\b\d{1,2} ?h\b|\b\d{1,2}h\d{2}\b|\b\d{1,2}:\d{2}\b|\bat \d|\bem (?:\d+|um|uma|meia|duas|dois|tres|alguns|algumas|poucos|poucas)\b|\bin (?:\d+|an?|one|two|few)\b/,
   /\b(?:hora|horas|minuto|minutos|min|hour|hours|minute|minutes)\b/,
@@ -1049,14 +1096,12 @@ const RESTART_WAIT: RegExp[] = [
   // a day: "na sexta", "segunda-feira", "dia 27", "27/10", "no fim de
   // semana", "monday", "weekend"
   /\b(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|feira|semana|mes|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|week|month)\b|\bdia (?:\d|primeiro|um|dois|tres)|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)\b|\bon the\b/,
-  // a part of the day or a vague later (SnowyPigeon): "de manhã", "de
-  // madrugada", "cedo", "ao anoitecer", "em breve", "in the morning"
-  /\b(?:manha|madrugada|cedo|amanhecer|anoitecer|entardecer|alvorada|breve|logo mais|mais cedo|morning|afternoon|evening|night|early|shortly|by and by)\b/,
   // a time in words: "ao meio-dia", "à meia-noite", "às dez", "às três e
-  // meia", "à uma", "at noon". A limit: "as" and "a" are also articles
-  // ("Reinicie as duas instâncias", "Reinicie a uma instância" stay open:
-  // the safe side)
-  /\bmei[oa][- ](?:dia|noite)\b|\ba (?:uma|\d{1,2})\b|\bas (?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)\b|\b(?:noon|midnight|o'?clock)\b|\bat (?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
+  // meia", "a uma" at the end, "a 1h", "a 1 hora", "at noon". "a uma
+  // instância", "a 2 instâncias" are counts, no hour ("à uma":
+  // RESTART_AT_HOUR). A limit: "as" is also the article ("Reinicie as
+  // duas instâncias" stays open: the safe side)
+  /\bmei[oa][- ](?:dia|noite)\b|\ba (?:uma|\d{1,2})(?= ?h\b| ?hora| e meia|\s*[,.;:!?]|\s*$)|\bas (?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)\b|\b(?:noon|midnight|o'?clock)\b|\bat (?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
   // a condition: "se puder", "se der", "se possível", "if you can"
   /\bse (?:puder|pude\w*|der|possivel|conseguir|for possivel)\b|\bif (?:you can|possible)\b/,
 ];
