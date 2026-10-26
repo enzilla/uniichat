@@ -37,6 +37,11 @@ function reload(): T.Store {
   return T.tasks_load(dir);
 }
 
+// the evidence round: task_add needs done_when, and a task of Unii's its
+// next_step; given here unless a test gives its own (TasksEvidence.test.ts
+// tests them)
+const ROUND = (name: string, args: any) => (name !== "task_add" ? args : { done_when: "feito", ...(String(args.assignee ?? args.who ?? "") === "unii" ? { next_step: "seguir" } : {}), ...args });
+
 test("assignee: by default the user; who (its older name) still read, in the tools and in an old tasks.json", () => {
   const s = T.tasks_load(dir);
   expect(add(s, { title: "A" }).assignee).toBe("user");
@@ -100,7 +105,7 @@ test("a turn's origin: a message of the user's among them, chat; else the first'
 
 test("tools: task_add needs its origin given, never the turn's (R5); says it; who and assignee both accepted", async () => {
   const tools = { mem: { dir }, agents: new Map(), hooks: { change: () => {} } } as unknown as Kit;
-  const call = (name: string, args: object) => Tools.call(tools, "main", name, args, new AbortController().signal, "x");
+  const call = (name: string, args: object) => Tools.call(tools, "main", name, ROUND(name, args), new AbortController().signal, "x");
   expect((await call("task_add", { title: "A", origin: "chat" })).text).toBe("Added P1 [user] A (from chat, 0m)");
   tools.origin = "timer";
   expect((await call("task_add", { title: "B", who: "unii", origin: "timer" })).text).toBe("Added P2 [unii] B (from timer, 0m)");
@@ -152,6 +157,7 @@ test("views: the open by assignee, the user's first; a task not the user's has o
   const md = View.tasks_md(v);
   expect(md.indexOf("**Suas pendências (2)**")).toBeLessThan(md.indexOf("**Pendências com o Unii (1)**"));
   expect(md).toContain("- **P2** Minha · origem: Slack");
-  expect(View.tasks_md(v, tasks.find((t) => t.id === "P1")!)).toContain("aberta · com o Unii");
+  // (the evidence round: Unii's, made days before the clock, is past its due)
+  expect(View.tasks_md(v, tasks.find((t) => t.id === "P1")!)).toMatch(/aberta · \*\*prazo vencido há \d+ [hd]\*\* · com o Unii/);
   expect(View.origin_said({ origin: "agent:SleepyToucan" } as T.Task)).toBe("agente SleepyToucan");
 });

@@ -10,12 +10,19 @@ import * as os from "node:os";
 import * as Tasks from "./Tasks.ts";
 import { Tools, type Tools as Kit } from "./Tools.ts";
 
+// evidence that closes a task (the evidence round): a file that exists
+const EV = { type: "file", path: import.meta.path };
+
 const DIR = fs.mkdtempSync(os.tmpdir() + "/unii-tasks-tools-");
 afterAll(() => fs.rmSync(DIR, { recursive: true, force: true }));
 
 let changes = 0;
 const tools = { mem: { dir: DIR }, agents: new Map([["SmoothCow", {}]]), hooks: { change: () => (changes += 1) } } as unknown as Kit;
-const call = (name: string, args: object, who = "main") => Tools.call(tools, who, name, args, new AbortController().signal, "x");
+// the evidence round: task_add needs done_when, and a task of Unii's its
+// next_step; given here unless a test gives its own (TasksEvidence.test.ts
+// tests them)
+const ROUND = (name: string, args: any) => (name !== "task_add" ? args : { done_when: "feito", ...(String(args.assignee ?? args.who ?? "") === "unii" ? { next_step: "seguir" } : {}), ...args });
+const call = (name: string, args: object, who = "main") => Tools.call(tools, who, name, ROUND(name, args), new AbortController().signal, "x");
 
 test("only the master has the tools", () => {
   const names = (who: string) => Tools.list(tools, who).map((s) => s.name);
@@ -26,13 +33,13 @@ test("only the master has the tools", () => {
 });
 
 test("add, edit, list; each change told to the views; tasks.json kept", async () => {
-  const add = await call("task_add", { title: "Abrir PR no fork?", origin: "chat", choices: ["sim", "não"], ref: "uniichat", ref_new: true, detail: "[PR](https://github.com/morum/uniichat/pull/2)", prs: [{ url: "https://github.com/morum/uniichat/pull/2", head: "739a8be" }] });
+  const add = await call("task_add", { title: "Abrir PR no fork?", origin: "chat", choices: ["sim", "não"], acts: { sim: "user", "não": "user" }, ref: "uniichat", ref_new: true, detail: "[PR](https://github.com/morum/uniichat/pull/2)", prs: [{ url: "https://github.com/morum/uniichat/pull/2", head: "739a8be" }] });
   expect(add).toEqual({ text: "Added P1 [user] Abrir PR no fork? options: sim | não (ref uniichat, from chat, pr https://github.com/morum/uniichat/pull/2 @739a8be pending, 0m)", fail: false });
   expect(changes).toBe(1);
   const twin = await call("task_add", { title: "abrir pr no fork?", origin: "chat" });
   expect(twin.fail).toBe(true);
   expect(changes).toBe(1);
-  const edit = await call("task_edit", { id: "P1", state: "done", answer: "sim", note: "mesclado" });
+  const edit = await call("task_edit", { id: "P1", state: "done", evidence: EV, answer: "sim", note: "mesclado" });
   expect(edit.text).toStartWith("Changed P1 [user] Abrir PR no fork? (done, answer: sim, note: \"mesclado\")");
   expect(changes).toBe(2);
   expect((await call("tasks", {})).text).toBe("No open tasks.");

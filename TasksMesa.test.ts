@@ -10,6 +10,9 @@ import * as os from "node:os";
 import * as T from "./Tasks.ts";
 import * as View from "./View.ts";
 
+// evidence that closes a task (the evidence round): a file that exists
+const EV = { type: "file", path: import.meta.path };
+
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-mesa-");
 const NOW  = Date.parse("2026-10-23T12:00:00Z");
 let dir    = "";
@@ -42,11 +45,11 @@ test("task_edit refuses done on a task that waits; dropped goes; done with its a
   add(s, { title: "A" });
   add(s, { title: "B", after: ["P1"] });
   add(s, { title: "C", after: ["P1"] });
-  const no = T.task_edit(s, { id: "P2", state: "done" }, NOW);
+  const no = T.task_edit(s, { id: "P2", state: "done", evidence: EV }, NOW);
   expect(no).toBe("P2 waits for P1, still open: it can't be done before them. Close those first, change its after, or drop it if it no longer applies.");
   expect(T.task_find(s, "P2")!.state).toBe("open");
-  expect((T.task_edit(s, { id: "P2", state: "dropped" }, NOW) as T.Task).state).toBe("dropped");
-  expect((T.task_edit(s, { id: "P3", state: "done", after: [] }, NOW) as T.Task).state).toBe("done");
+  expect((T.task_edit(s, { id: "P2", state: "dropped", evidence: EV }, NOW) as T.Task).state).toBe("dropped");
+  expect((T.task_edit(s, { id: "P3", state: "done", evidence: EV, after: [] }, NOW) as T.Task).state).toBe("done");
 });
 
 test("a resolution untold survives Unii's change of state and a restart; told once shown", () => {

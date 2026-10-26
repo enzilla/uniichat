@@ -16,6 +16,9 @@ import { Tools, type Tools as Kit } from "./Tools.ts";
 import * as View from "./View.ts";
 import * as Html from "./web/src/Html.ts";
 
+// evidence that closes a task (the evidence round): a file that exists
+const EV = { type: "file", path: import.meta.path };
+
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-contract-");
 const NOW  = Date.parse("2026-10-25T12:00:00Z");
 let dir    = "";
@@ -33,7 +36,11 @@ beforeEach(() => {
 
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 
-const call = (name: string, args: object) => Tools.call(tools, "main", name, args, new AbortController().signal, "x");
+// the evidence round: task_add needs done_when, and a task of Unii's its
+// next_step; given here unless a test gives its own (TasksEvidence.test.ts
+// tests them)
+const ROUND = (name: string, args: any) => (name !== "task_add" ? args : { done_when: "feito", ...(String(args.assignee ?? args.who ?? "") === "unii" ? { next_step: "seguir" } : {}), ...args });
+const call = (name: string, args: object) => Tools.call(tools, "main", name, ROUND(name, args), new AbortController().signal, "x");
 const PR = "https://github.com/morum/uniichat/pull/18";
 const GOOD = { url: PR, head: "88F18996d287", verdict: "approved_with_notes", verifier: "GoldenJay", notes: [{ sev: "low", text: "texto em inglês" }, { sev: "high", text: "quebra o vigia" }], untested: ["iPhone", "Safari"] };
 
@@ -75,7 +82,7 @@ test("edit: making it pr needs prs; prs replaced and checked; an older task with
   expect(T.task_find(s, old.id)!.prs[0]).toMatchObject({ head: "a9e8586", verdict: "approved", verifier: null, notes: [], untested: [] });
   // emptied: refused while it's pr; dropped, let go
   expect((await call("task_edit", { id: old.id, prs: [] })).text).toContain("needs prs");
-  expect((await call("task_edit", { id: old.id, prs: [], state: "dropped" })).fail).toBe(false);
+  expect((await call("task_edit", { id: old.id, prs: [], state: "dropped", evidence: EV })).fail).toBe(false);
 });
 
 test("the inbox's PR links aren't held to the contract (they say what it's about, not a verification)", () => {
@@ -109,8 +116,9 @@ test("acts: by choice, user or unii; checked; kept as choices change; said to Un
   expect(md).toContain("`/ok " + t.id + " opção`");
   // resolved with it: said as an order
   const r = T.task_resolve(s, t.id, "done", "Corrija antes", null, NOW) as T.Task;
-  expect(T.task_said(r)).toContain("Resposta: Corrija antes. Essa opção é uma ordem: cabe ao Unii executá-la.");
-  expect(T.tasks_block(s, NOW)).toContain("answer: Corrija antes (an order: you act on it now)");
+  // (the evidence round: an order received, open and Unii's till it's executed with evidence)
+  expect(T.task_said(r)).toContain("Resposta: Corrija antes. Essa opção é uma ordem: cabe ao Unii executá-la; a pendência fica com o Unii e só fecha com a evidência da execução.");
+  expect(T.tasks_block(s, NOW)).toContain(t.id + ' ORDERED by user: "Mesclar?" — answer: Corrija antes (an order: execute it now; it stays open as yours until you close it with task_edit state done and evidence of the execution)');
 });
 
 test("waits_for: kept, cleared, said to Unii and in the views", async () => {
@@ -246,7 +254,7 @@ test("restart with agents at work: only the user's pick lets it; Unii closing th
   const s = T.tasks_load(dir);
   const t = T.task_new(s, { title: "Reiniciar com agentes rodando?", kind: "restart" }, "main", NOW) as T.Task;
   // Unii's own task_edit, done with "Sim, reinicie": recorded as Unii's, refused
-  const self = await call("task_edit", { id: t.id, state: "done", answer: T.RESTART_YES });
+  const self = await call("task_edit", { id: t.id, state: "done", evidence: EV, answer: T.RESTART_YES });
   expect(self.fail).toBe(false);
   expect(T.tasks_load(dir).tasks.find((x) => x.id === t.id)!.closed_by).toBe("unii");
   const no = Tools.restart(tools, { why: "x", task: t.id }, "exit");
@@ -254,26 +262,28 @@ test("restart with agents at work: only the user's pick lets it; Unii closing th
   expect(no.text).toContain("closed by you (task_edit), not by the user");
   expect(restarts).toEqual([]);
   expect(Restart.mark_read(dir)).toBeNull();
-  // opened again (who closed it forgotten), then the user's pick: lets it
+  // opened again (who closed it forgotten), then the user's pick: an
+  // order received (the evidence round), open, Unii's: lets it
   const s2 = T.tasks_load(dir);
   T.task_resolve(s2, t.id, "open", null, null, NOW);
   expect(s2.tasks.find((x) => x.id === t.id)!.closed_by).toBeNull();
   T.task_resolve(s2, t.id, "done", T.RESTART_YES, null, NOW);
-  expect(s2.tasks.find((x) => x.id === t.id)!.closed_by).toBe("user");
-  // kept on disk as the user's
+  expect(s2.tasks.find((x) => x.id === t.id)!).toMatchObject({ state: "open", assignee: "unii", order: { answer: T.RESTART_YES }, closed_by: null });
+  // kept on disk as the user's order
   T.tasks_forget();
-  expect(T.tasks_load(dir).tasks.find((x) => x.id === t.id)!.closed_by).toBe("user");
-  // Unii changing the answer afterwards makes it Unii's again: refused
-  await call("task_edit", { id: t.id, answer: T.RESTART_LATER });
-  await call("task_edit", { id: t.id, answer: T.RESTART_YES });
-  expect(T.tasks_load(dir).tasks.find((x) => x.id === t.id)!.closed_by).toBe("unii");
-  expect(Tools.restart(tools, { why: "x", task: t.id }, "exit").fail).toBe(true);
-  // a note alone by Unii keeps who closed it
+  expect(T.task_ordered(T.tasks_load(dir).tasks.find((x) => x.id === t.id)!)).toBe(true);
+  // Unii can't change the answer, the choices nor the acts of an order
+  expect((await call("task_edit", { id: t.id, answer: T.RESTART_LATER })).text).toContain("is the user's order received: its answer can't change");
+  expect((await call("task_edit", { id: t.id, acts: { [T.RESTART_LATER]: "unii" } })).fail).toBe(true);
+  // nor drop it
+  expect((await call("task_edit", { id: t.id, state: "dropped", evidence: { type: "reason", text: "não precisa mais reiniciar, os agentes já terminaram" } })).text).toContain("you can't drop it");
+  // a note alone by Unii keeps the order; it lets the restart
+  await call("task_edit", { id: t.id, note: "visto" });
+  expect(Tools.restart(tools, { why: "x", task: t.id }, "exit").fail).toBe(false);
+  // a restart's leave, once
   const s3 = T.tasks_load(dir);
   const u = T.task_new(s3, { title: "Outro reinício?", kind: "restart" }, "main", NOW) as T.Task;
   T.task_resolve(s3, u.id, "done", T.RESTART_YES, null, NOW);
-  await call("task_edit", { id: u.id, note: "visto" });
-  expect(T.tasks_load(dir).tasks.find((x) => x.id === u.id)!.closed_by).toBe("user");
   expect(Tools.restart(tools, { why: "x", task: u.id }, "exit").fail).toBe(false);
   // a list of before it (no closed_by): a done task lets none
   fs.writeFileSync(dir + "/tasks.json", JSON.stringify({ next: 2, rev: 0, tasks: [{ id: "P1", title: "Reiniciar?", kind: "restart", state: "done", answer: T.RESTART_YES, choices: [T.RESTART_YES, T.RESTART_LATER], acts: { [T.RESTART_YES]: "unii" }, made: "2026-10-24T10:00:00Z" }] }));
@@ -389,7 +399,7 @@ test("a closed task's kind, choices and acts stay as the user picked from them: 
   // closing and changing in one edit (dropped to done) doesn't get round it
   const c = T.task_new(s, { title: "Outra decisão", kind: "decision", choices: ["Sim", "Não"] }, "main", NOW) as T.Task;
   T.task_resolve(s, c.id, "dropped", null, null, NOW);
-  expect((await call("task_edit", { id: c.id, state: "done", answer: "Sim", kind: "restart", acts: { Sim: "unii" } })).fail).toBe(true);
+  expect((await call("task_edit", { id: c.id, state: "done", evidence: EV, answer: "Sim", kind: "restart", acts: { Sim: "unii" } })).fail).toBe(true);
   const kept = T.tasks_load(dir).tasks.find((x) => x.id === b.id)!;
   expect(kept.kind).toBe("decision");
   expect(kept.acts).toEqual({});
