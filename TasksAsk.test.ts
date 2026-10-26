@@ -131,6 +131,34 @@ test("short confirmations, \"Me avise\", whose call it is, and the user's name a
   none("depende de ordem do Enzo");
 });
 
+test("\"você decide\" by contrast, and \"Me avise se…\" on an event, ask nothing (P87 #3, B1 and B2)", () => {
+  const none = (x: string) => expect(asks(x)).toEqual([]);
+  const one = (x: string) => expect(asks(x)).toEqual([x]);
+  // B1: who decides, told by contrast
+  none("Ele não decide, você decide.");
+  none("O Enzo não decide, você decide.");
+  none("Ele não escolhe, você escolhe.");
+  // B2: an instruction to tell on an event
+  none("Me avise se falhar.");
+  none("Me avise caso o CI falhe.");
+  none("Me avisa se der erro.");
+  // what asked still does
+  one("Não, você decide.");
+  one("Você decide.");
+  one("Ele não sabe, você decide.");
+  one("Me avise.");
+  one("Me avise quando puder.");
+  one("Me avise se quiser que eu mescle.");
+  one("Me avise se posso seguir.");
+  one("Me diga se posso seguir.");
+  one("Quem decide é você.");
+  // "Não está ok?" is a question to the user: it asks (FoggySalmon)
+  one("Não está ok?");
+  // B3: "Falta só a sua aprovação." asks, as meant; negated, it doesn't
+  one("Falta só a sua aprovação.");
+  none("Não falta a sua aprovação.");
+});
+
 test("known limits, kept as documented (P87 #2, B3 and B4)", () => {
   // B3: "Rodei x? ok.": two words and "?", read as a question
   expect(asks("Rodei x? ok.")).toEqual(["Rodei x?"]);

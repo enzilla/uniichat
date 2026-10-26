@@ -2470,7 +2470,10 @@ export function promises_said(said: string[]): string {
 //   "aguardando resposta do Enzo") doesn't, nor one negated just before
 //   it ("Não depende de ordem sua.", "Nenhum agente depende de ordem.":
 //   ASK_NEGATION), but one on the order of the user's name (config
-//   owner_name: "Depende da ordem do Guilherme.") does;
+//   owner_name: "Depende da ordem do Guilherme.") does; nor "me avise
+//   se/caso" on an event ("Me avise se falhar.": ASK_NOTIFY_IF), nor
+//   "você decide" by contrast ("Ele não decide, você decide."), while
+//   "Falta só a sua aprovação." and "Não está ok?" ask (P87 #3);
 // - but one reporting a question ("Enzo perguntou: …?", "Perguntei ao
 //   Enzo se quer que eu mescle": ASK_REPORTED) only if it asks in words
 //   too ("…, depende de ordem");
@@ -2566,19 +2569,37 @@ function ask_fold(x: string): string {
   return x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
+// "me avise se falhar": an instruction to Unii, to tell on an event, not
+// a request (P87 #3, B2); one on the user's will or Unii's next step
+// still asks: "Me avise se quiser que eu mescle.", "Me avise se posso
+// seguir.", and a bare "Me avise." or "Me avise quando puder."
+const ASK_NOTIFY_IF = /^me (?:avise|avisa|fale|fala)\s+(?:se|caso)\s+(?!(?:voce\s+|vc\s+)?(?:quiser|preferir|puder|decidir|escolher|aprovar|autorizar|concordar|mandar|liberar|posso|podemos|devo|devemos|pode|quer|prefere|concorda|aprova|autoriza)\b)/;
+// "você decide" (a request of ASK_WORDS) told by contrast with another
+// who doesn't, in the clause before: "Ele não decide, você decide." (P87
+// #3, B1); "Não, você decide." still asks
+const ASK_WHO_VERB = /\b(decide|escolhe|manda|define)\b/;
+
 // whether a sentence (folded) asks in words (ASK_WORDS), one request in
-// it not negated just before (ASK_NEGATION)
+// it not negated just before (ASK_NEGATION), nor an instruction on an
+// event (ASK_NOTIFY_IF), nor "você decide" in contrast (ASK_WHO_VERB)
 function ask_in_words(s: string): boolean {
   for (const m of s.matchAll(ASK_WORDS_ALL)) {
     let at = m.index;
     while (at < s.length && !/[a-z0-9]/.test(s[at] ?? "")) {
       at++;
     }
-    const clause = s.slice(0, at).split(/[,;:()]/).pop() ?? "";
+    const parts = s.slice(0, at).split(/[,;:()]/);
+    const clause = parts.pop() ?? "";
     const before = (clause.match(/[a-z0-9]+/g) ?? []).slice(-2).join(" ");
-    if (!ASK_NEGATION.test(before)) {
-      return true;
+    if (ASK_NEGATION.test(before) || ASK_NOTIFY_IF.test(s.slice(at))) {
+      continue;
     }
+    const verb = /^(?:voce|vc) (?:que )?/.test(s.slice(at)) ? ASK_WHO_VERB.exec(m[0])?.[1] : undefined;
+    const prev = parts.pop() ?? "";
+    if (verb !== undefined && new RegExp("\\b(?:nao|nem|nunca|jamais)\\s+(?:[a-z]+\\s+)?" + verb + "\\b").test(prev)) {
+      continue;
+    }
+    return true;
   }
   return false;
 }
