@@ -622,3 +622,17 @@ test("a restart for a day, a time in words or a condition (NeatFinch) stays open
   // a known limit: "não depois" reads as a wait (the safe side: open)
   expect(T.restart_now("Reinicie já, não depois")).toBe(false);
 });
+
+test("a restart for a part of the day, a vague later, an ordinal date or 'à uma' (SnowyPigeon) stays open", () => {
+  for (const later of ["Reinicie de manhã", "Reinicie pela manhã", "Reinicie de madrugada", "Reinicie cedo", "Reinicie mais cedo", "Reinicie ao anoitecer", "Reinicie ao amanhecer", "Reinicie em breve", "Reinicie logo mais", "Restart on the 27th", "Restart on the 1st", "Restart in the morning", "Restart this evening", "Restart shortly", "Reinicie à uma", "Reinicie a uma", "Reinicie à uma e meia", "Reinicie à 1"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // the words of now still hold: no false wait from the new ones
+  for (const now of ["Reinicie agora", "Reiniciar sem esperar", "Reinicie, não espere", "Restart, don't wait", "Reinicie já", "Pode reiniciar", "Restart now"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // a known limit: a trailing "não" reads as a refusal (the safe side: open)
+  expect(T.restart_now("Reinicie sem esperar não")).toBe(false);
+  // a known limit: "a" is also the article (the safe side: open)
+  expect(T.restart_now("Reinicie a uma instância")).toBe(false);
+});

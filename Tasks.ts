@@ -1029,9 +1029,10 @@ export function restart_now(answer: string | null): boolean {
 }
 
 // a wait denied (already without accents, lower): "sem esperar", "não
-// espere", "nem aguarde", "don't wait", "without waiting". A limit: "Reinicie
-// já, não depois" still reads "não depois" as a wait (the order stays open:
-// the safe side)
+// espere", "nem aguarde", "don't wait", "without waiting". Limits: "Reinicie
+// já, não depois" still reads "não depois" as a wait, and "Reinicie sem
+// esperar não" reads its trailing "não" as a refusal (both stay open: the
+// safe side)
 const RESTART_NO_WAIT = /\b(?:sem (?:esperar|aguardar|demora|demorar)|(?:nao|nem) (?:espere|esperar|espera|aguarde|aguardar|aguarda)|don'?t wait|do not wait|without waiting|no wait(?:ing)?)\b/g;
 
 // what puts off a restart asked (already without accents, lower): a
@@ -1047,11 +1048,15 @@ const RESTART_WAIT: RegExp[] = [
   /\b(?:termin\w*|acab\w*|conclu\w*|finaliz\w*|finish\w*|complet\w*|esper\w*|aguard\w*|wait\w*)\b/,
   // a day: "na sexta", "segunda-feira", "dia 27", "27/10", "no fim de
   // semana", "monday", "weekend"
-  /\b(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|feira|semana|mes|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|week|month)\b|\bdia (?:\d|primeiro|um|dois|tres)|\b\d{1,2}\/\d{1,2}\b/,
+  /\b(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|feira|semana|mes|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|week|month)\b|\bdia (?:\d|primeiro|um|dois|tres)|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)\b|\bon the\b/,
+  // a part of the day or a vague later (SnowyPigeon): "de manhã", "de
+  // madrugada", "cedo", "ao anoitecer", "em breve", "in the morning"
+  /\b(?:manha|madrugada|cedo|amanhecer|anoitecer|entardecer|alvorada|breve|logo mais|mais cedo|morning|afternoon|evening|night|early|shortly|by and by)\b/,
   // a time in words: "ao meio-dia", "à meia-noite", "às dez", "às três e
-  // meia", "at noon". A limit: "as" is also the article ("Reinicie as duas
-  // instâncias" stays open: the safe side)
-  /\bmei[oa][- ](?:dia|noite)\b|\bas (?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)\b|\b(?:noon|midnight|o'?clock)\b|\bat (?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
+  // meia", "à uma", "at noon". A limit: "as" and "a" are also articles
+  // ("Reinicie as duas instâncias", "Reinicie a uma instância" stay open:
+  // the safe side)
+  /\bmei[oa][- ](?:dia|noite)\b|\ba (?:uma|\d{1,2})\b|\bas (?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)\b|\b(?:noon|midnight|o'?clock)\b|\bat (?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
   // a condition: "se puder", "se der", "se possível", "if you can"
   /\bse (?:puder|pude\w*|der|possivel|conseguir|for possivel)\b|\bif (?:you can|possible)\b/,
 ];
