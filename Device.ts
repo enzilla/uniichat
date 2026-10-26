@@ -58,7 +58,9 @@ export async function run(given: string | undefined): Promise<void> {
     const sock = (ws = new WebSocket(url.replace(/^http/, "ws") + "/ws" + query, { headers: Client.auth(token) } as any));
     let heard = Date.now();
     let up = false;
-    const tick = setInterval(() => Date.now() - heard > PING && sock.close(), PING / 2);
+    // silent for a PING (a laptop asleep, a network gone): dropped here,
+    // not on its onclose, which a dead link may never fire
+    const tick = setInterval(() => Date.now() - heard > PING && drop(), PING / 2);
     sock.onopen = () => {
       up = true;
       outs.forEach((msg) => sock.send(JSON.stringify(msg)));
@@ -79,8 +81,13 @@ export async function run(given: string | undefined): Promise<void> {
         console.error("unii: " + msg.text);
       }
     };
-    sock.onclose = async () => {
+    const drop = async () => {
+      if (ws !== sock) {
+        return;
+      }
       clearInterval(tick);
+      sock.onclose = sock.onmessage = null;
+      sock.close();
       ws = null;
       Mcp.lost();
       if (!up && !await Client.signed(url, token)) {
@@ -88,6 +95,7 @@ export async function run(given: string | undefined): Promise<void> {
       }
       setTimeout(open, RETRY);
     };
+    sock.onclose = drop;
   };
   // a job run here, its output answered; one too large for a socket
   // message (FRAME, less 1 KiB for the act around it) answers its size

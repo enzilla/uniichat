@@ -53,10 +53,14 @@ export function auth(token: string | undefined): Record<string, string> {
 // whether a token (or none: one of the owner's tailnet nodes) is signed
 // in: the server doesn't refuse it (one it can't reach may be, if a token
 // is kept: the client waits for it)
+// how long asking whether signed in may take (ms): a hung ask would stop a
+// device reconnecting
+const PING_ME = 10e3;
+
 export async function signed(url: string, token: string | undefined): Promise<boolean> {
   // with none, still asked: the server signs in the owner's tailnet nodes
   // by themselves (Tailnet.ts)
-  const res = await fetch(url + "/api/me", { headers: auth(token) }).catch(() => null);
+  const res = await fetch(url + "/api/me", { headers: auth(token), signal: AbortSignal.timeout(PING_ME) }).catch(() => null);
   return res === null ? Boolean(token) : res.status !== 401;
 }
 
