@@ -161,6 +161,13 @@ export function pick_html(fold: string | null, on: boolean, knobs: View.Knob[], 
   return [...all, ...modes, rule, ...parts.flatMap((part, i) => (i === 0 ? part : [`<span class="dot">·</span>`, ...part]))];
 }
 
+// what Unii is doing, a line over the box while it works (main.ts
+// bars): a spinner (style.css), the step now, the subagents at work
+export function activity_html(a: View.Activity): string {
+  const agents = a.agents.length === 0 ? "" : `<span class="agents">${a.agents.length === 1 ? "subagente" : a.agents.length + " subagentes"}: ${a.agents.map((x) => `<span class="agent" title="${esc(x.name)}">${esc(x.label)}</span>`).join(", ")}</span>`;
+  return `<span class="spin" aria-hidden="true"></span><span class="step">${esc(a.step)}</span>${agents}`;
+}
+
 // a menu's row: a model's vendor over its first; the pick's marked and
 // focused as the menu opens, its click only closing it
 function choice_html(c: View.Choice): string {

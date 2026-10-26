@@ -1575,6 +1575,44 @@ export function view_typing(v: View): boolean {
   return v.page === null;
 }
 
+// what Unii is doing now, for a line always in sight while it works
+// (Term.ts, main.ts): its step (the tool it runs, what it reads, thinks
+// or writes, what it waits for) and the subagents at work, each by its
+// label; null while nothing runs
+export type Activity = { step: string; agents: { name: string; label: string }[] };
+export function activity_of(v: View): Activity | null {
+  if (!view_running(v)) {
+    return null;
+  }
+  const agents = v.agents.map((name) => ({ name, label: agent_label(name) ?? name }));
+  if (!v.busy) {
+    return { step: agents.length === 1 ? "Um subagente em andamento" : agents.length + " subagentes em andamento", agents };
+  }
+  const live = v.live;
+  const last = live.at(-1);
+  const call = [...live].reverse().find((l) => l.kind === "tool");
+  const said = (c: Call.Call) => {
+    const line = Call.call_line(c);
+    const name = c.name === "" ? "uma ferramenta" : c.name;
+    return name + (line === "" ? "" : ": " + (line.length > 120 ? line.slice(0, 119) + "…" : line));
+  };
+  const step = Object.hasOwn(v.limits ?? {}, TURN) ? "Aguardando o limite de uso para continuar"
+    : last?.kind === "tool" ? "Executando " + said(Call.call_parse(last.text))
+    : last?.kind === "mind" ? "Pensando…"
+    : last?.kind === "unii" ? "Escrevendo a resposta…"
+    : call !== undefined ? "Analisando o resultado de " + said(Call.call_parse(call.text))
+    : v.wait === SUMMARIES ? "Resumindo mensagens para a memória…"
+    : v.wait !== "" ? "Aguardando " + v.wait + "…"
+    : "Trabalhando…";
+  return { step, agents };
+}
+
+// a spinner's frame, by the time (one each 120 ms)
+export const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+export function spin_frame(now = Date.now()): string {
+  return SPIN[Math.floor(now / 120) % SPIN.length];
+}
+
 export function view_running(v: View): boolean {
   return v.busy || v.agents.length > 0;
 }

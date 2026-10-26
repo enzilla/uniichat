@@ -56,6 +56,7 @@ type Term = {
   chooser : Chooser | null;
   asked   : Set<string> | null;
   busy    : boolean | null;
+  spin    : ReturnType<typeof setInterval> | null; // repaints while Unii works (the activity line's spinner)
   focus   : boolean;
   modal   : Modal.Modal | null;
   kept    : Kept | null;
@@ -220,6 +221,7 @@ function term_new(url: string, token: string): Term {
     chooser : null,
     asked   : null,
     busy    : null,
+    spin    : null,
     focus   : true,
     modal   : null,
     kept    : null,
@@ -299,7 +301,33 @@ function term_hear(t: Term, msg: View.Server): void {
     term_asks(t);
     term_ended(t);
     term_idle(t);
+    term_spin(t);
   }
+}
+
+// while Unii works (its turn, a subagent), the activity line repaints,
+// its spinner turning; stopped as all ends
+function term_spin(t: Term): void {
+  const on = View.view_running(t.v) && t.scr.tty;
+  if (on && t.spin === null) {
+    t.spin = setInterval(() => term_draw(t), 120);
+  } else if (!on && t.spin !== null) {
+    clearInterval(t.spin);
+    t.spin = null;
+  }
+}
+
+// the activity line, w wide (none while nothing runs): the spinner, the
+// step now, then the subagents at work, by label
+function term_activity(t: Term, w: number): Paint.Line[] {
+  const a = View.activity_of(t.v);
+  if (a === null) {
+    return [];
+  }
+  const agents = a.agents;
+  const tail = agents.length === 0 ? [] : [Paint.Run("  ·  ", Paint.DIM), Paint.Run((agents.length === 1 ? "subagente: " : agents.length + " subagentes: ") + agents.map((x) => x.label).join(", "), { ...Paint.INK, c: Theme.ANSI.tool })];
+  const line = [Paint.Run(View.spin_frame() + " ", { ...Paint.INK, b: true, c: Theme.ANSI.here }), Paint.Run(Paint.text_clean(a.step), Paint.INK), ...tail];
+  return [Paint.runs_wrap(line, w, true)[0]];
 }
 
 // Unii's turn ended (busy, then not, failed or not): the bell, with a
@@ -1404,12 +1432,13 @@ function term_paint(t: Term): void {
   // with no input, the rule under it only to say offline
   const under = off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", iw, OFFLINE)];
   const menu  = t.chooser !== null ? term_chooser_lines(t, iw) : term_menu_lines(t, iw);
-  const own   = term_inset([...menu, Paint.rule_line(t.v, iw), ...(input?.lines ?? []), ...under, ...term_tasks_line(t.v, iw), Paint.tabs_line(t.v, iw)]);
+  const doing = term_activity(t, iw);
+  const own   = term_inset([...menu, ...doing, Paint.rule_line(t.v, iw), ...(input?.lines ?? []), ...under, ...term_tasks_line(t.v, iw), Paint.tabs_line(t.v, iw)]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];
   const tail  = term_lines([...held, ...View.view_tail(t.v, rest)]).flatMap((l) => Paint.runs_wrap(l, w, true));
   const above = tail.slice(Math.max(0, tail.length - room + own.length));
-  const at    = input === null ? null : { row: above.length + menu.length + 1 + input.at.row, col: input.at.col + MARGIN };
+  const at    = input === null ? null : { row: above.length + menu.length + doing.length + 1 + input.at.row, col: input.at.col + MARGIN };
   Screen.screen_paint(t.scr, t.out, t.wipe, [...above, ...own], at);
   t.out  = [];
   t.wipe = false;
@@ -1431,7 +1460,8 @@ function term_frame(t: Term, p: Panel.Panel): void {
   const input = t.scr.off ? null : Screen.screen_input(t.scr, fw, Math.max(1, Math.floor(h / 3)), hint);
   const under = t.scr.off && t.v.up ? [] : [Paint.rule_text(t.v.up ? "" : "offline", fw, OFFLINE)];
   const tasks = Panel.panel_width(w) === 0 ? term_tasks_line(t.v, fw) : [];
-  const rest  = [Paint.rule_line(t.v, fw), ...(input?.lines ?? []), ...under, ...tasks, Paint.tabs_line(t.v, fw)];
+  const doing = term_activity(t, fw);
+  const rest  = [...doing, Paint.rule_line(t.v, fw), ...(input?.lines ?? []), ...under, ...tasks, Paint.tabs_line(t.v, fw)];
   // a task's window: a drawer over the input, the chat above it (at most
   // half the screen, the rest of the footer kept)
   const menu  = m !== null ? term_drawer_lines(t, m, fw, Math.max(4, Math.floor(h / 2) - rest.length)) : t.chooser !== null ? term_chooser_lines(t, fw) : term_menu_lines(t, fw);
@@ -1441,7 +1471,7 @@ function term_frame(t: Term, p: Panel.Panel): void {
   // long one lags
   const body  = term_lines([...View.view_body(t.v), ...View.view_tail(t.v)]);
   const lines = Panel.panel_frame(p, t.v, body, foot, w, h);
-  const at    = input === null || off ? null : { row: h - foot.length + menu.length + 1 + input.at.row, col: input.at.col + MARGIN };
+  const at    = input === null || off ? null : { row: h - foot.length + menu.length + doing.length + 1 + input.at.row, col: input.at.col + MARGIN };
   Screen.screen_frame(t.scr, lines, at);
   t.out = [];
   t.wipe = false;

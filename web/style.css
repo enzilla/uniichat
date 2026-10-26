@@ -102,6 +102,15 @@ header .net { font-size: 13px; color: var(--mid); }
 footer { position: sticky; bottom: 0; z-index: 2; padding: 18px max(20px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); background: linear-gradient(transparent, var(--paper) 14px); }
 body:is(.account, .tree) footer { position: fixed; inset: auto 0 0; background: none; pointer-events: none; }
 body:is(.account, .tree) footer > :not(#toast) { display: none; }
+/* what Unii is doing while it works: a spinner, its step, the subagents (main.ts bars) */
+#doing { width: min(var(--col), 100%); margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; font: 13px/20px var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; }
+#doing[hidden] { display: none; }
+#doing .spin { flex: none; width: 12px; height: 12px; border: 2px solid var(--hair); border-top-color: var(--accent); border-radius: 50%; animation: doing-spin .8s linear infinite; }
+#doing .step { overflow: hidden; text-overflow: ellipsis; }
+#doing .agents { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; color: var(--mid); }
+#doing .agents::before { content: "·"; margin-right: 8px; color: var(--soft); }
+@keyframes doing-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #doing .spin { animation-duration: 2.4s; } }
 /* the drawer: a task answered over the box, the chat in sight above it (main.ts drawer_draw) */
 #drawer { width: min(var(--col), 100%); max-height: min(45vh, 440px); margin: 0 auto 8px; padding: 4px 16px 12px; overflow: auto; overscroll-behavior: contain; box-sizing: border-box; border: 1px solid var(--frame); border-radius: 16px; background: var(--paper); }
 #drawer[hidden] { display: none; }
