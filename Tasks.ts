@@ -2471,7 +2471,8 @@ export function promises_said(said: string[]): string {
 //   it ("Não depende de ordem sua.", "Nenhum agente depende de ordem.":
 //   ASK_NEGATION), but one on the order of the user's name (config
 //   owner_name: "Depende da ordem do Guilherme.") does; nor "me avise
-//   se/caso" on an event ("Me avise se falhar.": ASK_NOTIFY_IF), nor
+//   se/caso" on an event ("Me avise se falhar.", "Se falhar, me avise.":
+//   ASK_NOTIFY_IF, ASK_NOTIFY_BEFORE; "Me avise caso aprove." asks), nor
 //   "você decide" by contrast ("Ele não decide, você decide."), while
 //   "Falta só a sua aprovação." and "Não está ok?" ask (P87 #3);
 // - but one reporting a question ("Enzo perguntou: …?", "Perguntei ao
@@ -2493,7 +2494,8 @@ export function promises_said(said: string[]): string {
 // common with an unrelated task made in the turn spares a question (B4:
 // "Revisar o hospitalar#700" spares "Quer que eu mescle o hospitalar?");
 // a short phrase with "?" that isn't a question counts (B3: "Rodei x?
-// ok." asks "Rodei x?").
+// ok." asks "Rodei x?"); "Me avise quando falhar." asks ("quando" isn't
+// read as an event, P87 #4, B3).
 
 // marks that a question is put to the user (no accents, lower, whole)
 const ASK_YOU = /\b(?:voce|voces|vc|vcs|senhor|quer|queira|queres|prefere|prefira|posso|podemos|devo|devemos|deseja|desejas|confirma|confirme|autoriza|autorize|aprova|aprove|concorda|topa|pode|poderia|consegue|sigo|seguimos|mesclo|aplico|reinicio|fecho|envio|mando|abro|crio|faco|publico|respondo|ignoro|descarto|aguardo|seu|sua|seus|suas|te|lhe|contigo|you|your|shall|should i|can i|may i|que tal)\b/;
@@ -2569,11 +2571,20 @@ function ask_fold(x: string): string {
   return x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
+// the user's will or Unii's next step, after "se"/"caso" (no accents,
+// lower; infinitive, indicative and subjunctive: "se aprovar", "caso
+// aprove", "se quiser", "caso queira"): a request still
+const ASK_WILL = "(?:voce\\s+|vc\\s+)?(?:quiser|queira|quer|preferir|prefira|prefere|puder|possa|pode|decidir|decida|decide|escolher|escolha|escolhe|aprovar|aprove|aprova|autorizar|autorize|autoriza|concordar|concorde|concorda|mandar|mande|manda|liberar|libere|libera|posso|podemos|devo|devemos)\\b";
 // "me avise se falhar": an instruction to Unii, to tell on an event, not
 // a request (P87 #3, B2); one on the user's will or Unii's next step
 // still asks: "Me avise se quiser que eu mescle.", "Me avise se posso
-// seguir.", and a bare "Me avise." or "Me avise quando puder."
-const ASK_NOTIFY_IF = /^me (?:avise|avisa|fale|fala)\s+(?:se|caso)\s+(?!(?:voce\s+|vc\s+)?(?:quiser|preferir|puder|decidir|escolher|aprovar|autorizar|concordar|mandar|liberar|posso|podemos|devo|devemos|pode|quer|prefere|concorda|aprova|autoriza)\b)/;
+// seguir.", "Me avise caso aprove." (P87 #4, B2), and a bare "Me avise."
+// or "Me avise quando puder."
+const ASK_NOTIFY_IF = new RegExp("^me (?:avise|avisa|fale|fala)\\s+(?:se|caso)\\s+(?!" + ASK_WILL + ")");
+// the same with the condition before, in the clause just before the
+// request: "Se falhar, me avise." tells on an event (P87 #4, B1); "Se
+// quiser, me avise." still asks
+const ASK_NOTIFY_BEFORE = new RegExp("^\\s*(?:e\\s+|mas\\s+)?(?:se|caso)\\s+(?!" + ASK_WILL + ")");
 // "você decide" (a request of ASK_WORDS) told by contrast with another
 // who doesn't, in the clause before: "Ele não decide, você decide." (P87
 // #3, B1); "Não, você decide." still asks
@@ -2581,7 +2592,8 @@ const ASK_WHO_VERB = /\b(decide|escolhe|manda|define)\b/;
 
 // whether a sentence (folded) asks in words (ASK_WORDS), one request in
 // it not negated just before (ASK_NEGATION), nor an instruction on an
-// event (ASK_NOTIFY_IF), nor "você decide" in contrast (ASK_WHO_VERB)
+// event (ASK_NOTIFY_IF, ASK_NOTIFY_BEFORE), nor "você decide" in
+// contrast (ASK_WHO_VERB)
 function ask_in_words(s: string): boolean {
   for (const m of s.matchAll(ASK_WORDS_ALL)) {
     let at = m.index;
@@ -2592,6 +2604,9 @@ function ask_in_words(s: string): boolean {
     const clause = parts.pop() ?? "";
     const before = (clause.match(/[a-z0-9]+/g) ?? []).slice(-2).join(" ");
     if (ASK_NEGATION.test(before) || ASK_NOTIFY_IF.test(s.slice(at))) {
+      continue;
+    }
+    if (/^me (?:avise|avisa|fale|fala)\b/.test(s.slice(at)) && clause.trim() === "" && ASK_NOTIFY_BEFORE.test(parts[parts.length - 1] ?? "")) {
       continue;
     }
     const verb = /^(?:voce|vc) (?:que )?/.test(s.slice(at)) ? ASK_WHO_VERB.exec(m[0])?.[1] : undefined;

@@ -96,10 +96,14 @@ Features
   before it ("Não depende de ordem sua.", "Nenhum agente depende de
   ordem.") asks nothing; one on the order of your name ("Depende da ordem
   do Guilherme.") asks you only with `owner_name` set. "Me avise se
-  falhar." (an instruction on an event) and "Ele não decide, você
+  falhar." and "Se falhar, me avise." (an instruction on an event) and
+  "Ele não decide, você
   decide." (who decides, by contrast) ask nothing; "Me avise se posso
   seguir.", "Não está ok?" and "Falta só a sua aprovação." ask, as
-  meant ("Não falta a sua aprovação." doesn't).
+  meant ("Não falta a sua aprovação." doesn't), and so do "Se quiser, me
+  avise." and "Me avise caso aprove." (the user's will). Limits: "Me avise
+  quando falhar." asks ("quando" isn't read as an event), and so does
+  "Rodei os testes? ok." ("Rodei os testes?").
   Terminal: `/mesa [projeto]`, `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
   `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
   `/descartar`, `/reabrir`, `/avisar`.

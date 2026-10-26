@@ -159,9 +159,43 @@ test("\"você decide\" by contrast, and \"Me avise se…\" on an event, ask noth
   none("Não falta a sua aprovação.");
 });
 
+test("\"Se falhar, me avise.\" tells on an event; \"Me avise caso aprove.\" asks (P87 #4, B1 and B2)", () => {
+  const none = (x: string) => expect(asks(x)).toEqual([]);
+  const one = (x: string) => expect(asks(x)).toEqual([x]);
+  // B1: the condition before, on an event: an instruction
+  none("Se falhar, me avise.");
+  none("Caso o CI falhe, me avise.");
+  none("Se der erro, me avisa.");
+  none("Rodei o deploy. Se falhar, me avise.");
+  // ... on the user's will: a request
+  one("Se quiser, me avise.");
+  one("Se você preferir, me avise.");
+  one("Caso aprove, me avise.");
+  // B2: the subjunctive of the user's will asks
+  one("Me avise caso aprove.");
+  one("Me avise caso queira que eu mescle.");
+  one("Me avise se aprovar.");
+  one("Me avise caso autorize.");
+  // ... an event doesn't
+  none("Me avise caso falhe.");
+  none("Me avise caso o CI falhe.");
+  // the table of verification #4 holds
+  none("Ele não decide, você decide.");
+  none("Me avise se falhar.");
+  one("Não, você decide.");
+  one("Você decide.");
+  one("Quem decide é você.");
+  one("Me avise.");
+  one("Me avise se posso seguir.");
+  one("Não está ok?");
+});
+
 test("known limits, kept as documented (P87 #2, B3 and B4)", () => {
   // B3: "Rodei x? ok.": two words and "?", read as a question
   expect(asks("Rodei x? ok.")).toEqual(["Rodei x?"]);
+  expect(asks("Rodei os testes? ok.")).toEqual(["Rodei os testes?"]);
+  // P87 #4, B3: "quando" isn't read as an event: it asks
+  expect(asks("Me avise quando falhar.")).toEqual(["Me avise quando falhar."]);
   // B4: question_tasked: a word in common with an unrelated task of the
   // user's made in the turn spares a question
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ask-"));
