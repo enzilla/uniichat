@@ -3,9 +3,10 @@
 // `UNII_DIR=$(mktemp -d) bun test TasksAsk.server.test.ts`: the trava
 // of P87 in the server (Server.ts, Chat.asked). A whole turn (Chat.turn,
 // the model's call faked) whose last reply asks the user something with
-// no task of the user's made or moved in it: the serve makes one,
-// "Pergunta sem pendência", and a note says so; with one, or with no
-// question, nothing. Push.deliver and Push.phones are fakes.
+// no task of the user's about it: the serve makes one, "Pergunta sem
+// pendência", and a note says so; with one, or with no question,
+// nothing; with one about something else, still one. Push.deliver and
+// Push.phones are fakes.
 
 import { afterAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -104,6 +105,19 @@ test("with a task of the user's made in the turn, or no question, nothing", asyn
   await turn("Por que travou? Porque o lint falhou.\n```\nread -p 'Continuar?'\n```");
   expect(chat.mem.count).toBe(count + 3);
   expect(asked()).toHaveLength(0);
+});
+
+test("a task of the user's about something else, made in the turn, doesn't spare the question (B2)", async () => {
+  await turn("Abri a assinatura do lock. Quer que eu mescle o hospitalar?", () => {
+    Tasks.task_new(Tasks.tasks_load(dir), { title: "Assinar o ritsu.lock", origin: "chat", choices: ["Assinei", "Depois"] }, "main", Date.now());
+  });
+  expect(asked()).toHaveLength(1);
+  expect(last().kind).toBe("note");
+  expect(last().text).toStartWith("Pergunta sem pendência: o Unii perguntou “Quer que eu mescle o hospitalar?”");
+  Tasks.task_resolve(Tasks.tasks_load(dir), asked()[0].id, "dropped", null, null, Date.now());
+  for (const t of Tasks.tasks_load(dir).tasks.filter((x) => x.state === "open" && x.title === "Assinar o ritsu.lock")) {
+    Tasks.task_resolve(Tasks.tasks_load(dir), t.id, "dropped", null, null, Date.now());
+  }
 });
 
 test("a reply in a task's thread (the user wrote there) is that task's: nothing", async () => {

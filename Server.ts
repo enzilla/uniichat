@@ -823,17 +823,19 @@ export namespace Chat {
 
   // a turn ended whose last reply asks the user something (a question,
   // a decision, an order to give: Tasks.questions_in) with no task of the
-  // user's made, moved or talked in by Unii in it: the serve makes one,
-  // "Pergunta sem pendência" (Tasks.task_asked), and a note says so in
-  // the chat, so the question isn't lost in it (P87)
+  // user's about it (Tasks.question_tasked: made in the turn with words of
+  // it, or the thread Unii said it in; another, about something else,
+  // doesn't spare it): the serve makes one, "Pergunta sem pendência"
+  // (Tasks.task_asked), and a note says so in the chat, so the question
+  // isn't lost in it (P87)
   export function asked(chat: Chat, began: number, reply: string | null): void {
     if (reply === null) {
       return;
     }
     const s = Tasks.tasks_load(chat.mem.dir);
     const open = new Set(s.tasks.filter((t) => t.state === "open" && t.assignee === "user").map((t) => t.id));
-    const said = Tasks.questions_in(reply, open);
-    if (said.length === 0 || Tasks.tasks_asked_since(s, began)) {
+    const said = Tasks.questions_in(reply, open).filter((q) => !Tasks.question_tasked(s, q, began));
+    if (said.length === 0) {
       return;
     }
     Chat.note(chat, Tasks.questions_said(said, Tasks.task_asked(s, said, Date.now())));

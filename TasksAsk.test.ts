@@ -2,7 +2,8 @@
 // =============
 // `bun test TasksAsk.test.ts`: the questions to the user a reply holds
 // (Tasks.questions_in, P87), what isn't one, and the task a question
-// without one gets (Tasks.task_asked, tasks_asked_since).
+// without one gets (Tasks.task_asked), and when a task of the user's is
+// the question's (Tasks.question_tasked).
 
 import { expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -51,6 +52,43 @@ test("what isn't a question to the user: none", () => {
   expect(asks("Você pediu reinício e não há agentes ativos.")).toEqual([]);
 });
 
+test("common requests to the user count (M1)", () => {
+  const one = (x: string) => expect(asks(x)).toEqual([x]);
+  one("Unii perguntou se mescla os três (depende de ordem).");
+  one("O merge e as tags dependem de ordem.");
+  one("Aguardando decisão.");
+  one("Aguardando sua resposta.");
+  one("Fico no aguardo.");
+  one("Qual opção?");
+  one("Qual?");
+  one("Você decide.");
+  one("Diga qual prefere.");
+  one("Preciso que você decida.");
+  one("Preciso de decisão sua: mesclar ou esperar.");
+  one("Falta só a sua aprovação.");
+  one("Pode confirmar o merge");
+  one("Quando quiser, aplico.");
+  expect(asks("Opções: (a) mesclar agora; (b) esperar o CI. Qual?")).toEqual(["Qual?"]);
+  // another's order, decision, answer: not the user's
+  expect(asks("O deploy depende de ordem do Enzo.")).toEqual([]);
+  expect(asks("Aguardando resposta do Enzo no Slack.")).toEqual([]);
+  expect(asks("Preciso da aprovação do comitê antes.")).toEqual([]);
+});
+
+test("what isn't asked of the user: none (B1)", () => {
+  expect(asks("Perguntei ao Enzo se quer que eu mescle.")).toEqual([]);
+  expect(asks("O Enzo quer que eu mescle?")).toEqual([]);
+  expect(asks("Alguém sabe por que falhou?")).toEqual([]);
+  expect(asks("Você já viu o que houve? Foi o lint.")).toEqual([]);
+  expect(asks("Você viu o que houve? Foi o lint.")).toEqual([]);
+  expect(asks("Não testado: hom?")).toEqual([]);
+  // but to the user still, with a word to them, or said last
+  expect(asks("O Enzo quer que eu mescle; você concorda?")).toEqual(["O Enzo quer que eu mescle; você concorda?"]);
+  expect(asks("O lint passou. Você viu o PR #22?")).toEqual(["Você viu o PR #22?"]);
+  expect(asks("A P86 segue aberta; mesclo?")).toEqual(["A P86 segue aberta; mesclo?"]);
+  expect(asks("Pergunto se você quer que eu mescle.")).toEqual(["Pergunto se você quer que eu mescle."]);
+});
+
 test("a question tied by id to an open task of the user's is that task's", () => {
   expect(asks("A P86 segue aberta: mesclo os três como admin?", ["P86"])).toEqual([]);
   // the id of a task not open (or not the user's): still a question
@@ -67,7 +105,7 @@ test("a question without a task gets one of the user's: a decision from the chat
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ask-"));
   const s = T.tasks_load(dir);
   const now = Date.now();
-  expect(T.tasks_asked_since(s, now)).toBe(false);
+  expect(T.question_tasked(s, "Quer que eu mescle?", now)).toBe(false);
   const t = T.task_asked(s, ["Quer que eu mescle?"], now) as T.Task;
   expect(t.title).toBe(T.ASKED_TITLE);
   expect(t.assignee).toBe("user");
@@ -75,18 +113,41 @@ test("a question without a task gets one of the user's: a decision from the chat
   expect(t.kind).toBe("decision");
   expect(t.fields.map((f) => [f.id, f.kind, f.required])).toEqual([["resposta", "text", true]]);
   expect(t.detail).toContain("“Quer que eu mescle?”");
-  expect(T.tasks_asked_since(s, now)).toBe(true);
+  expect(T.question_tasked(s, "Quer que eu mescle?", now)).toBe(true);
   const u = T.task_asked(s, ["Aplico em hom?"], now + 1000) as T.Task;
   expect(u.id).toBe(t.id);
   expect(u.detail).toContain("“Aplico em hom?”");
   expect(s.tasks.filter((x) => x.state === "open")).toHaveLength(1);
-  // a task of Unii's moved: not the user's question's
+  // a task of Unii's made: not the user's question's
   const later = now + 60e3;
-  T.task_new(s, { title: "Conferir CI", assignee: "unii", done_when: "CI lido", next_step: "ler" }, "main", later);
-  expect(T.tasks_asked_since(s, later)).toBe(false);
-  // Unii talked in a thread of the user's: it is
-  T.task_reply(s, t.id, "Mesclo?", later + 10);
-  expect(T.tasks_asked_since(s, later)).toBe(true);
+  T.task_new(s, { title: "Conferir o deploy", assignee: "unii", done_when: "CI lido", next_step: "ler" }, "main", later);
+  expect(T.question_tasked(s, "Faço o deploy hoje?", later)).toBe(false);
+  // Unii said it in a thread of the user's: it is
+  T.task_reply(s, t.id, "CI verde. Faço o deploy hoje?", later + 10);
+  expect(T.question_tasked(s, "Faço o deploy hoje?", later)).toBe(true);
+  T.tasks_forget();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("only a task of the user's about the question spares it (B2)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ask-"));
+  const s = T.tasks_load(dir);
+  const before = Date.now() - 3600e3;
+  const old = T.task_new(s, { title: "Mesclar o hospitalar#649?", origin: "chat", kind: "decision", choices: ["Sim", "Não"] }, "main", before) as T.Task;
+  const now = Date.now();
+  // made before the turn, even about it, and moved in it: the id in the
+  // paragraph ties it (questions_in), the words don't
+  T.task_edit(s, { id: old.id, detail: "Mesclar o hospitalar agora?" }, now + 5);
+  expect(T.question_tasked(s, "Quer que eu mescle o hospitalar?", now)).toBe(false);
+  // made in the turn, about something else
+  T.task_new(s, { title: "Assinar o ritsu.lock", detail: "Rode o comando de assinatura.", origin: "chat" }, "main", now + 10);
+  expect(T.question_tasked(s, "Quer que eu mescle o hospitalar?", now)).toBe(false);
+  // made in the turn, about it (words in common: "mescl", "hospi")
+  T.task_new(s, { title: "Mesclar o hospitalar#649 como admin?", origin: "chat", kind: "decision", choices: ["Sim", "Não"] }, "main", now + 20);
+  expect(T.question_tasked(s, "Quer que eu mescle o hospitalar?", now)).toBe(true);
+  // made in the turn but Unii's: not
+  T.task_new(s, { title: "Aplicar o infra#1127", assignee: "unii", done_when: "aplicado", next_step: "aplicar" }, "main", now + 30);
+  expect(T.question_tasked(s, "Aplico o infra#1127?", now)).toBe(false);
   T.tasks_forget();
   fs.rmSync(dir, { recursive: true, force: true });
 });

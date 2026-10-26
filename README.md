@@ -78,11 +78,17 @@ Features
   it, or it's opened again; nothing is erased. A reply of Unii's that
   promises something for later with no task of its own gets a note; one
   that asks you something (a question, a decision, an order to give) with
-  no task of yours made or moved in that turn gets one, "Pergunta sem
-  pendência" (a decision with a text field for your answer, the question in
-  its detail), made by the serve, and a note (`Tasks.questions_in`: a
-  heuristic; quotes, code, headings and questions Unii answers itself
-  don't count).
+  no task of yours about it gets one, "Pergunta sem pendência" (a decision
+  with a text field for your answer, the question in its detail), made by
+  the serve, and a note (`Tasks.questions_in`: a heuristic; quotes, code,
+  headings, questions Unii answers itself, another's questions reported and
+  questions to others don't count). A task of yours is the question's if
+  its id is in the question's paragraph, if it was made in that turn with
+  words of the question, or if Unii said the question in its thread; one
+  about something else doesn't count. Limits: only the turn's last reply is
+  read (a question in an earlier message of the turn, followed by tools,
+  isn't seen); at most 3 questions of a reply go in the task; a rhetorical
+  question said last, or a request in other words, may be misread.
   Terminal: `/mesa [projeto]`, `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
   `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
   `/descartar`, `/reabrir`, `/avisar`.
