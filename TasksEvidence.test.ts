@@ -752,3 +752,14 @@ test("a doubt denied under a condition, or a wait in the act after \"depois\" (L
     expect([now, T.restart_now(now)]).toEqual([now, true]);
   }
 });
+
+test("a doubt denied by its subject: nada, ninguém, nenhum, \"depende de nada\" (StormyFlamingo)", () => {
+  for (const now of ["Reinicie agora, nada depende disso", "Reinicie agora, não dependo de ninguém", "Reinicie agora, isso depende de nada", "Reinicie agora, nenhum agente depende do serve", "Reinicie, ninguém depende do serve", "Reinicie agora, nenhum dos agentes depende disso", "Reinicie agora, não dependemos de nada", "Reinicie já; nada depende do 8788", "Nada depende disso: reinicie", "Restart now, nothing depends on it", "Restart now, no agent depends on it", "Restart now, no one depends on it"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // a condition before it, a wait, a refusal, a doubt kept, "tudo depende",
+  // a connector between "nenhum" and "depende": still open
+  for (const later of ["Reinicie, se nada depende disso", "Reinicie agora se nenhum agente depende do serve", "Restart now if nothing depends on it", "Reinicie agora caso ninguém dependa", "Reinicie agora caso ninguém depende", "Reinicie agora, tudo depende disso", "Reinicie agora, depende de mim", "Reinicie agora, nenhum problema, mas depende", "Reinicie agora, nenhum problema mas depende", "Reinicie se puder, nada depende disso", "Reinicie quando nada depender disso", "Reinicie agora, nada depende disso, talvez", "Reinicie às 22h, nada depende disso", "Reinicie depois, nada depende disso", "Não reinicie, nada depende disso", "Reinicie agora, isso depende de nada? Depende do GrandDove", "Reinicie agora, nada depende disso e depois aguarde os agentes", "Reinicie agora, desde que não dependa de nada"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+});

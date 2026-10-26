@@ -1080,8 +1080,22 @@ const RESTART_NO_WAIT = /\b(?:sem (?:esperar|aguardar|demora|demorar)|(?:nao|nem
 // depende de nada", "sem depender de mais ninguém", "doesn't depend on
 // anything". The "se" before it is caught to keep a condition ("se não
 // depende de nada") as it was: a wait. A condition is found by RESTART_IF
-// in the clause before it (clause_before), not only right before it
-const RESTART_NO_DOUBT = /\b(?:(?:nao|nem) depende|sem depender|doesn'?t depend|does not depend)\b(?: (?:de|on) (?:mais )?(?:nada|ninguem|anything|anyone))?/g;
+// in the clause before it (clause_before), not only right before it.
+// Denied by its subject too (StormyFlamingo): "não dependo de ninguém",
+// "nada depende disso", "ninguém depende", "nenhum agente depende do
+// serve" ("nenhum" and up to two words, none a connector: "nenhum
+// problema, mas depende" stays a doubt), "isso depende de nada", "nothing
+// depends on it", "no agent depends on it". "tudo depende", "depende de
+// mim" stay doubts
+const RESTART_NO_DOUBT = new RegExp(
+  [
+    "\\b(?:(?:nao|nem) depend(?:e|em|o|emos)|sem depender|(?:doesn'?t|does not|don'?t|do not) depend)\\b(?: (?:de|on) (?:mais )?(?:nada|ninguem|anything|anyone))?",
+    "\\b(?:nada|ninguem|nenhuma?(?: (?!(?:mas|porem|e|ou)\\b)[a-z0-9']+){0,2}?) depend(?:e|em)\\b",
+    "\\b(?:nothing|nobody|no one|no(?: (?!(?:but|and|or)\\b)[a-z0-9']+){1,2}?) depends?\\b",
+    "\\bdepend(?:e|em|s)? (?:de|on) (?:mais )?(?:nada|ninguem|nothing|nobody)\\b",
+  ].join("|"),
+  "g",
+);
 
 // a word of condition (already without accents, lower): "se", "if",
 // "caso". Read only in the clause before a doubt denied (clause_before):
