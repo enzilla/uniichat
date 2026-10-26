@@ -433,6 +433,17 @@ test("a promise and the tasks moved in its turn: only one related (its id, a wor
   expect(T.tasks_moved_since(s, NOW, ["vou fazer isso agora"])).toBe(false);
   // not moved in the turn: nothing
   expect(T.tasks_moved_since(s, NOW + 1, ["Vou revisar o ritsu.lock"])).toBe(false);
+  // generic words relate nothing: a promise about "a pendência" isn't
+  // any task saying "pendência"; whole words: "infraestrutura" isn't "infra"
+  const g = mine(s, "Pendência do Slack de Morum", { detail: "Uma pendência de infra a conferir", ref: "infra" }, NOW);
+  expect(T.tasks_moved_since({ ...s, tasks: [g] }, NOW, ["Vou responder a pendência do Enzo"])).toBe(false);
+  expect(T.tasks_moved_since({ ...s, tasks: [g] }, NOW, ["vou revisar a infraestrutura"])).toBe(false);
+  expect(T.tasks_moved_since({ ...s, tasks: [g] }, NOW, ["vou ver a pendência de infra"])).toBe(false);
+  // a distinct word, whole, or the id: related
+  expect(T.tasks_moved_since({ ...s, tasks: [g] }, NOW, ["Vou responder a pendência do Morum"])).toBe(true);
+  expect(T.tasks_moved_since({ ...s, tasks: [g] }, NOW, ["vou fechar a " + g.id])).toBe(true);
+  // a word's start alone isn't the word: "revisão" isn't "revisar"
+  expect(T.tasks_moved_since({ ...s, tasks: [t] }, NOW, ["vou fazer a revisão"])).toBe(false);
   expect(T.promises_said(["vou A", "vou B"])).toBe("Compromisso sem pendência: o Unii disse “vou A”, “vou B” e não registrou nem atualizou, neste turno, nenhuma pendência sua ligada a eles. Unii: registre-os com task_add (assignee unii, next_step e next_due) ou diga que não vai fazê-los.");
 });
 
@@ -533,4 +544,19 @@ test("a view's act on an order: Concluir refused (only evidence closes it), Canc
   const u = mine(s, "Minha");
   v.tasks = T.tasks_view(s, NOW);
   expect(View.view_act(v, { $: "Task", task: u.id, state: "dropped" })).toEqual([]);
+});
+
+test("a restart's order taken as one to restart now: the template's yes, or its own words with no wait", () => {
+  expect(T.restart_now(T.RESTART_YES)).toBe(true);
+  expect(T.restart_now("sim, REINICIE")).toBe(true);
+  expect(T.restart_now("Reinicie agora")).toBe(true);
+  expect(T.restart_now("Pode reiniciar")).toBe(true);
+  expect(T.restart_now("Reinicie depois dos agentes")).toBe(false);
+  expect(T.restart_now("Reinicie após os agentes terminarem")).toBe(false);
+  expect(T.restart_now("Reinicie quando o GrandDove acabar")).toBe(false);
+  expect(T.restart_now("Reinicie amanhã")).toBe(false);
+  expect(T.restart_now("Não reinicie")).toBe(false);
+  expect(T.restart_now(T.RESTART_LATER)).toBe(false);
+  expect(T.restart_now("Mesclar o PR")).toBe(false);
+  expect(T.restart_now(null)).toBe(false);
 });

@@ -308,10 +308,12 @@ export namespace Chat {
     // A restart with no agents at work needs no task (P8): Unii may call
     // it without one, and the order of a restart the user gave before it
     // was executed all the same: each such order (kind restart, received
-    // before the restart was asked) closed too
+    // before the restart was asked, its answer one to restart now:
+    // Tasks.restart_now; "reinicie depois dos agentes" stays open)
+    // closed too
     const s = Tasks.tasks_load(chat.mem.dir);
     const asked = Date.parse(mark.at);
-    const orders = mark.task !== null ? [Tasks.task_find(s, mark.task)] : s.tasks.filter((t) => t.kind === "restart" && Tasks.task_ordered(t) && Date.parse(t.order!.at) <= asked);
+    const orders = mark.task !== null ? [Tasks.task_find(s, mark.task)] : s.tasks.filter((t) => t.kind === "restart" && Tasks.task_ordered(t) && Date.parse(t.order!.at) <= asked && Tasks.restart_now(t.order!.answer));
     for (const t of orders) {
       if (t !== null && Tasks.task_ordered(t)) {
         Tasks.task_close_system(s, t.id, [{ type: "restart", at: new Date().toISOString(), summary: "pedido às " + mark.at + "; o serve voltou (pid " + process.pid + ")" }], Date.now());

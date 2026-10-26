@@ -148,3 +148,28 @@ test("a restart with no task given (no agents): the orders of a restart received
   expect(Tasks.task_find(after, a.id)).toMatchObject({ state: "done", closed_by: "unii", evidence: [{ type: "restart" }] });
   expect(Tasks.task_ordered(Tasks.task_find(after, b.id)!)).toBe(true);
 });
+
+test("a restart with no task given: an order to restart later (its own choice) stays open", async () => {
+  const s = Tasks.tasks_load(dir);
+  const LATER = "Reinicie depois dos agentes";
+  const NOW_ = "Reinicie agora";
+  const mk = (title: string) => Tasks.task_new(s, { title, kind: "restart", done_when: "serve reiniciado", choices: [NOW_, LATER], acts: { [NOW_]: "unii", [LATER]: "unii" } }, "main", Date.now()) as Tasks.Task;
+  const a = mk("Reiniciar já?");
+  const b = mk("Reiniciar quando der?");
+  expect(await Chat.apply(chat, { id: "act-now-a", $: "task", task: a.id, state: "done", answer: NOW_ }, "")).toEqual({});
+  expect(await Chat.apply(chat, { id: "act-later-b", $: "task", task: b.id, state: "done", answer: LATER }, "")).toEqual({});
+  await settle();
+  expect(Tasks.task_ordered(Tasks.task_find(s, a.id)!)).toBe(true);
+  expect(Tasks.task_ordered(Tasks.task_find(s, b.id)!)).toBe(true);
+  // both received before the restart (asked by the process before)
+  const start = Date.now() - process.uptime() * 1000;
+  Tasks.task_find(s, a.id)!.order!.at = new Date(start - 5000).toISOString();
+  Tasks.task_find(s, b.id)!.order!.at = new Date(start - 5000).toISOString();
+  Tasks.tasks_save(s);
+  Restart.mark_write(dir, { why: "sem agentes", resume: "Seguir.", at: new Date(start - 2000).toISOString(), agents: [], task: null, done: false, used: [], pid: process.pid + 1 });
+  Chat.back(chat);
+  await settle();
+  const after = Tasks.tasks_load(dir);
+  expect(Tasks.task_find(after, a.id)).toMatchObject({ state: "done", closed_by: "unii", evidence: [{ type: "restart" }] });
+  expect(Tasks.task_ordered(Tasks.task_find(after, b.id)!)).toBe(true);
+});

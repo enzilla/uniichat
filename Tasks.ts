@@ -1011,6 +1011,20 @@ export function tool_args(s: Store, name: string, args: Edit, turn: Origin | nul
 // depois" (the user does)
 export const RESTART_YES   = "Sim, reinicie";
 export const RESTART_LATER = "Eu reinicio depois";
+// whether an order's answer asks the restart now: the template's "Sim,
+// reinicie", or a restart choice of its own ("Reinicie agora") with no
+// wait in it ("depois", "após os agentes", "quando", "amanhã"...). A
+// restart with no task (Server.ts Chat.back) closes only such orders:
+// one for later stays open, for Unii to close with its own restart
+export function restart_now(answer: string | null): boolean {
+  const plain = (x: string) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  const a = plain(answer ?? "");
+  if (a === plain(RESTART_YES)) {
+    return true;
+  }
+  return /\b(?:reinici\w*|restart\w*)\b/.test(a) && !/\b(?:depois|apos|quando|mais tarde|amanha|noite|antes|ao fim|ao final|so se|somente|nao|later|after|when|tomorrow|tonight|until|before|don'?t|not)\b/.test(a);
+}
+
 export const RESTART_DETAIL = "Política (P8): o Unii reinicia sozinho quando nenhum agente está rodando, avisando antes e depois. Esta pendência só existe porque há agentes rodando agora, e o reinício os interrompe.";
 
 // Fields
@@ -2147,10 +2161,12 @@ export function promises_in(text: string): string[] {
 
 // whether any task of Unii's was made or moved since `since` (ms); with
 // the promises said, only one related to them: its id said in one, or a
-// word of one (4 letters or more, not a filler, by its first 5: "revisar"
-// and "revisão" alike) in its title, detail, next step, done when or ref.
-// A heuristic: a task registered for the promise in other words isn't
-// seen (the note asks for it, harmless), and one sharing a word by
+// word of one in its title, detail, next step, done when or ref, whole
+// (4 letters or more, no accents, not a filler nor a word any task may
+// have, as "pendência" or "infra": PROMISE_GENERIC). Whole:
+// "infraestrutura" isn't "infra", nor "revisão" "revisar" (the note asks
+// for a task then: harmless). A heuristic: a task registered for the
+// promise in other words isn't seen, and one sharing a distinct word by
 // chance hides a promise (rare: the words must be in the same turn)
 export function tasks_moved_since(s: Store, since: number, said: string[] | null = null): boolean {
   const moved = s.tasks.filter((t) => t.assignee !== "user" && (Date.parse(t.made) >= since || Date.parse(t.moved ?? t.changed) >= since));
@@ -2166,10 +2182,14 @@ export function tasks_moved_since(s: Store, since: number, said: string[] | null
 // English (already without accents)
 const PROMISE_FILLER = new Set(["agora", "ainda", "depois", "seguida", "tambem", "logo", "isso", "isto", "esse", "essa", "este", "esta", "aquilo", "para", "pelo", "pela", "sobre", "como", "voce", "vamos", "iremos", "irei", "fazer", "fazendo", "feito", "quando", "mais", "will", "then", "that", "this", "with", "later", "after", "soon"]);
 
-// a text's words as compared (no accents, lower, 4 letters or more, not
-// a filler, cut to their first 5)
+// what any task may say, so relates none to a promise (already without
+// accents)
+const PROMISE_GENERIC = new Set(["pendencia", "pendencias", "tarefa", "tarefas", "infra", "item", "itens", "coisa", "coisas", "assunto", "task", "tasks", "issue", "issues", "todo", "todos"]);
+
+// a text's words as compared (no accents, lower, whole, 4 letters or
+// more, not a filler nor generic)
 function promise_words(text: string): string[] {
-  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !PROMISE_FILLER.has(w)).map((w) => w.slice(0, 5));
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !PROMISE_FILLER.has(w) && !PROMISE_GENERIC.has(w));
 }
 
 // the note a promise without a task gets (the user's language)
