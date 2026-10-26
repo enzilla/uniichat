@@ -304,3 +304,47 @@ test("a turn with no reply: 'Unii não respondeu', the move unchanged, Unii told
   // a hand-made none on the user's message is not read
   expect(Deps.task_missed({ talk: "user", thread: [{ who: "user", none: true }] })).toBe(false);
 });
+
+// baixa 1 (P85, decided by the user): a task with waits_for set is a
+// wait: out of Agora, no push, not in "Mesa · N", not late; the line
+// says what it waits for; the wait removed, it's the user's again, its
+// lateness counted from then (ready)
+test("waits_for: a wait (P85): out of Agora, no push, not counted, not late; back to Agora when cleared", () => {
+  const s = T.tasks_load(dir);
+  const ci = add(s, { title: "Aplicar em hom", kind: "test", waits_for: "CI do #42" }, NOW - 10 * H);
+  const free = add(s, { title: "Aprovar", kind: "test" }, NOW - 10 * H);
+  const unii = add(s, { title: "Do Unii", assignee: "unii", next_step: "x" }, NOW - 10 * H);
+  expect(typeof T.task_edit(s, { id: unii.id, status: "waiting_user", status_why: "o token", waits_for: "deploy" }, NOW - 10 * H)).not.toBe("string");
+  let tasks = T.tasks_view(s, NOW);
+  const blocked = Deps.blocked_ids(tasks);
+  const of = (id: string) => tasks.find((t) => t.id === id)!;
+  expect(Deps.user_move(of(ci.id), blocked)).toBe(false);
+  expect(Deps.user_move(of(unii.id), blocked)).toBe(false);
+  expect(Deps.user_move({ id: "P9", state: "open", assignee: "user", waits_for: "  " }, blocked)).toBe(true);
+  expect(group(tasks, ci.id)).toBe("others");
+  expect(group(tasks, unii.id)).toBe("others");
+  expect(group(tasks, free.id)).toBe("now");
+  expect(TaskPush.turn_count(tasks)).toBe(1);
+  expect(TaskPush.actionable(tasks)).toEqual([free.id]);
+  // not late, though past a test's 2 h; the free one is
+  expect(View.task_late_said(of(ci.id), blocked, NOW)).toBe("");
+  expect(View.task_late_said(of(free.id), blocked, NOW)).toContain("atrasada");
+  expect(View.task_limit_said(of(ci.id), tasks, NOW)).toBe("em espera: o prazo conta quando a espera acabar");
+  const said = View.task_turn_said(of(ci.id), tasks, NOW);
+  expect(said).toEqual({ cls: "waiting", lead: "Aguardando", text: "Espera algo fora da lista: CI do #42. Nada a fazer até lá; volta para Agora quando a espera for retirada." });
+  const d = shown(tasks, ci.id, NOW);
+  expect(d).toContain('<p class="turn-line waiting"><strong>Aguardando</strong>');
+  expect(d).not.toContain("Sua vez");
+  // Unii's reply in its thread: news, not "sua vez"
+  T.task_say(s, ci.id, "E o CI?", NOW);
+  T.task_reply(s, ci.id, "Rodando.", NOW);
+  tasks = T.tasks_view(s, NOW);
+  expect(View.task_talk_said(tasks.find((t) => t.id === ci.id)!)).toBe("Unii respondeu");
+  // the wait removed: the user's again, late counted from now
+  expect(typeof T.task_edit(s, { id: ci.id, waits_for: "" }, NOW + H)).not.toBe("string");
+  tasks = T.tasks_view(s, NOW + H);
+  expect(group(tasks, ci.id)).toBe("now");
+  expect(TaskPush.actionable(tasks).sort()).toEqual([ci.id, free.id].sort());
+  expect(View.task_late_said(tasks.find((t) => t.id === ci.id)!, Deps.blocked_ids(tasks), NOW + H + 60e3)).toBe("");
+  expect(View.task_late_said(tasks.find((t) => t.id === ci.id)!, Deps.blocked_ids(tasks), NOW + 4 * H)).toContain("atrasada");
+});

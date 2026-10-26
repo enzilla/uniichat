@@ -31,7 +31,11 @@ Features
   draft till you conclude), and have a thread: talk with Unii about it
   without resolving it (your message is a message of the chat, marked
   `[Pendência P7: …]`; it shows "aguardando o Unii", then "sua vez" if
-  the next step is yours, or "Unii respondeu" on one of Unii's).
+  the next step is yours, or "Unii respondeu" on one of Unii's; "Unii
+  não respondeu" if the turn ended with no reply). A task that waits for
+  something outside the list ("aguarda: CI do #42") is a wait, not your
+  move: out of Agora, no push, not counted, never late, till the wait
+  is removed.
   On the web, the **Mesa** is the list as a screen of its own, beside
   the **Conversa** (the header's button, or `m`; the Conversa shows no
   list, only the button's count, "Mesa · 3"): tasks grouped by whose
@@ -43,7 +47,7 @@ Features
   ficha beside (whose, origin, front, kind and limit, depends on and
   frees, PRs with verdict and head, fields left, agent, next step,
   dates) (on a phone, list and task one at a time, the ficha after the
-  decision); `j`/`k` or the arrows move, Enter opens, `/` searches, Esc goes
+  decision, the actions kept at the screen's bottom); `j`/`k` or the arrows move, Enter opens, `/` searches, Esc goes
   back. A task of yours open over a day says how late ("atrasada há
   2 d", as the late push counts it); the GitHub PRs it links show as
   `repo#n` in its row and over its detail; once one is resolved, the

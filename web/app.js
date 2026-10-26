@@ -1052,7 +1052,7 @@ function overdue_ms(tasks, t, now, ms = stall) {
   return late > 0 ? late : 0;
 }
 function user_move(t, blocked_set) {
-  if (t.state !== "open" || blocked_set.has(t.id) || t.talk === "unii" || status_of(t) === "blocked") {
+  if (t.state !== "open" || blocked_set.has(t.id) || t.talk === "unii" || status_of(t) === "blocked" || outside_wait(t)) {
     return false;
   }
   return (t.assignee ?? "user") === "user" || status_of(t) === "waiting_user";
@@ -1061,6 +1061,9 @@ function task_missed(t) {
   const thread = t.thread ?? [];
   const last = thread[thread.length - 1];
   return t.talk === "user" && last !== undefined && last.who === "unii" && last.none === true;
+}
+function outside_wait(t) {
+  return typeof t.waits_for === "string" && t.waits_for.trim() !== "";
 }
 
 // View.ts
@@ -1456,6 +1459,9 @@ function task_limit_said(t, tasks, now, blocked = blocked_ids(tasks)) {
   }
   const at = (ms) => new Date(ms).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   if (t.assignee === "user") {
+    if (outside_wait(t)) {
+      return "em espera: o prazo conta quando a espera acabar";
+    }
     const limit = late_after(t);
     const from = Date.parse(ready_at(t));
     if (!Number.isFinite(limit) || Number.isNaN(from)) {
@@ -1492,6 +1498,10 @@ function task_turn_said(t, tasks, now, turn = null, blocked = blocked_ids(tasks)
   if (t.talk === "unii") {
     const ago = ago_said(task_talk_since(t), now);
     return { cls: "unii", lead: "Aguardando o Unii", text: "Você escreveu na conversa" + (ago === "" ? "" : " " + ago) + " e o Unii ainda não respondeu" + (turn === null ? "" : " (" + turn_why(turn) + ")") + ". Nada a fazer até ele responder." };
+  }
+  if (outside_wait(t)) {
+    const missed_wait = task_missed(t) ? " O Unii não respondeu à sua última mensagem na conversa (o turno terminou sem resposta)." : "";
+    return { cls: "waiting", lead: "Aguardando", text: "Espera algo fora da lista: " + t.waits_for.trim() + ". Nada a fazer até lá; volta para Agora quando a espera for retirada." + missed_wait };
   }
   if (status_of(t) === "blocked") {
     return { cls: "others", lead: "Bloqueada", text: (t.status_why ?? "sem motivo informado") + ((t.unblock ?? null) === null ? "" : ". Desbloqueia: " + t.unblock) + "." };
@@ -1578,7 +1588,7 @@ function desk_next(tasks, sel, q = "", ref = "", order = []) {
 var TASK_LATE = LATE;
 function task_late_said(t, blocked, now) {
   const age = now - Date.parse(ready_at(t));
-  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > late_after(t))) {
+  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || outside_wait(t) || !(age > late_after(t))) {
     return "";
   }
   return "atrasada há " + hours_said(age);

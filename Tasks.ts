@@ -2014,7 +2014,8 @@ function task_put(s: Store, task: Task, next: Task, now: number, told: boolean |
   next.moved = task_moves(task, next) ? at : (task.moved ?? task.changed);
   // the user's to act on from now (opened again, or handed to them): its
   // lateness counts from here (TaskDeps.ready_at)
-  const handed = next.state === "open" && next.assignee === "user" && (task.state !== "open" || task.assignee !== "user");
+  // (a wait outside the list ended counts too: P85, the wait isn't late)
+  const handed = next.state === "open" && next.assignee === "user" && (task.state !== "open" || task.assignee !== "user" || (Deps.outside_wait(task) && !Deps.outside_wait(next)));
   next.ready = handed ? at : Deps.ready_at(task);
   next.changed = at;
   next.closed = next.state === "open" ? null : closes ? at : (task.closed ?? at);

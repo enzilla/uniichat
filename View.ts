@@ -832,7 +832,8 @@ export function tasks_by_assignee(open: Task[]): [string, Task[]][] {
 // Html.desk_html), each task in one group, by whose move it is: "now",
 // the user's (theirs and free, or Unii answered in its thread); "unii",
 // the user wrote in its thread and Unii hasn't answered; "others",
-// someone else's (Unii's, an agent's) at work; "waiting", waiting for
+// someone else's (Unii's, an agent's) at work, or one waiting for
+// something outside the list (waits_for, P85); "waiting", waiting for
 // other open tasks (TaskDeps.ts); "closed", resolved lately
 export type Desk = "now" | "unii" | "others" | "waiting" | "closed";
 export const DESK: [Desk, string][] = [
@@ -884,6 +885,10 @@ export function task_limit_said(t: Task, tasks: Task[], now: number, blocked: Se
   }
   const at = (ms: number) => new Date(ms).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   if (t.assignee === "user") {
+    // waiting for something outside the list (P85): no limit runs yet
+    if (Deps.outside_wait(t)) {
+      return "em espera: o prazo conta quando a espera acabar";
+    }
     const limit = Deps.late_after(t);
     const from = Date.parse(Deps.ready_at(t));
     if (!Number.isFinite(limit) || Number.isNaN(from)) {
@@ -940,6 +945,11 @@ export function task_turn_said(t: Task, tasks: Task[], now: number, turn: Turn |
   if (t.talk === "unii") {
     const ago = ago_said(task_talk_since(t), now);
     return { cls: "unii", lead: "Aguardando o Unii", text: "Você escreveu na conversa" + (ago === "" ? "" : " " + ago) + " e o Unii ainda não respondeu" + (turn === null ? "" : " (" + turn_why(turn) + ")") + ". Nada a fazer até ele responder." };
+  }
+  // waiting for something outside the list (P85): a wait, not the user's move
+  if (Deps.outside_wait(t)) {
+    const missed_wait = Deps.task_missed(t) ? " O Unii não respondeu à sua última mensagem na conversa (o turno terminou sem resposta)." : "";
+    return { cls: "waiting", lead: "Aguardando", text: "Espera algo fora da lista: " + t.waits_for!.trim() + ". Nada a fazer até lá; volta para Agora quando a espera for retirada." + missed_wait };
   }
   if (Deps.status_of(t) === "blocked") {
     return { cls: "others", lead: "Bloqueada", text: (t.status_why ?? "sem motivo informado") + ((t.unblock ?? null) === null ? "" : ". Desbloqueia: " + t.unblock) + "." };
@@ -1060,7 +1070,7 @@ export const TASK_LATE = Deps.LATE;
 // else "". Late, it stays where it is (P5: none expires)
 export function task_late_said(t: Task, blocked: Set<string>, now: number): string {
   const age = now - Date.parse(Deps.ready_at(t));
-  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > Deps.late_after(t))) {
+  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || Deps.outside_wait(t) || !(age > Deps.late_after(t))) {
     return "";
   }
   return "atrasada há " + hours_said(age);
