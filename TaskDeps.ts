@@ -257,6 +257,44 @@ export function overdue_ms<T extends Due>(tasks: T[], t: T, now: number, ms = st
   return late > 0 ? late : 0;
 }
 
+// Whose move it is ("sua vez")
+// -----------------------------
+// A task is the user's move only while there's something of theirs to
+// do: open, not waiting for other open tasks (after), not waiting for
+// Unii's reply in its thread (talk "unii"), not blocked (status), not
+// waiting for something outside the list (waits_for: "CI do #42"; P85,
+// the user's: a wait, out of Agora, no push, not counted, as the
+// pipeline has it), and theirs (assignee user) or one of Unii's waiting for something only
+// they can give (status waiting_user). A reply of Unii's in its thread
+// (talk "user") makes no move of the user's by itself: on a task of
+// Unii's (or an agent's) it is news to read, not a step to take (else
+// the task stayed "sua vez" for good, the user having nothing to do).
+// The Mesa's Agora (View.desk_group), the count on the tab and the
+// app's badge (TaskPush.turn_count) and the pushes (TaskPush.actionable)
+// all read this one rule.
+export type Move = Dep & { assignee?: string; status?: Status | null; talk?: string | null; waits_for?: string | null };
+export function user_move<T extends Move>(t: T, blocked_set: Set<string>): boolean {
+  if (t.state !== "open" || blocked_set.has(t.id) || t.talk === "unii" || status_of(t) === "blocked" || outside_wait(t)) {
+    return false;
+  }
+  return (t.assignee ?? "user") === "user" || status_of(t) === "waiting_user";
+}
+
+// whether a task's last thread message is Unii's saying it gave no reply
+// (Tasks.Talk.none: the turn ended without one) and the user hasn't
+// written since: still the user's move if it was (user_move), but the
+// views say "Unii não respondeu", not "sua vez" as if Unii had answered
+export function task_missed(t: { talk?: string | null; thread?: { who: string; none?: true }[] }): boolean {
+  const thread = t.thread ?? [];
+  const last = thread[thread.length - 1];
+  return t.talk === "user" && last !== undefined && last.who === "unii" && last.none === true;
+}
+
+// whether a task waits for something outside the list (waits_for set)
+export function outside_wait(t: { waits_for?: string | null }): boolean {
+  return typeof t.waits_for === "string" && t.waits_for.trim() !== "";
+}
+
 // the ids of the tasks overdue now, in their number's order
 export function overdue_ids<T extends Due>(tasks: T[], now: number, ms = stall): string[] {
   return tasks.filter((t) => overdue_ms(tasks, t, now, ms) > 0).map((t) => t.id).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));

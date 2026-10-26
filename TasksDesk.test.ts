@@ -49,13 +49,15 @@ function desk(): T.Task[] {
   return T.tasks_view(s, NOW);
 }
 
-test("groups: now (the user's, or Unii answered), Unii's turn, at work, waiting, closed; in DESK's order", () => {
+test("groups: now (the user's move), Unii's turn, at work, waiting, closed; in DESK's order", () => {
   const tasks = desk();
   const groups = View.desk_list(tasks);
+  // P5, Unii's, Unii answered in its thread: no move of the user's, so
+  // at work, not Agora (it stayed "sua vez" for good before: Mesa visual)
   expect(groups.map((g) => [g.group, g.label, g.tasks.map((t) => t.id)])).toEqual([
-    ["now", "Agora", ["P1", "P5"]],
+    ["now", "Agora", ["P1"]],
     ["unii", "Aguardando o Unii", ["P4"]],
-    ["others", "Em andamento", ["P2"]],
+    ["others", "Em andamento", ["P2", "P5"]],
     ["waiting", "Aguardando outras pendências", ["P3"]],
     ["closed", "Resolvidas recentemente", ["P6"]],
   ]);
@@ -104,9 +106,9 @@ test("keys: j and k step through the list, held at its ends; none shown starts a
 
 test("web: the list by group, the one shown marked; its detail whole, with fields, acts and an open thread", () => {
   const tasks = desk();
-  const html = Html.desk_html(tasks, "", "", "P4");
-  expect(html.ids).toEqual(["P1", "P5", "P4", "P2", "P3", "P6"]);
-  expect(html.list[0]).toBe('<p class="group now" role="presentation">Agora <span class="n">(2)</span></p>');
+  const html = Html.desk_html(tasks, "", "", "P4", NOW);
+  expect(html.ids).toEqual(["P1", "P4", "P2", "P5", "P3", "P6"]);
+  expect(html.list[0]).toBe('<p class="group now" role="presentation">Agora <span class="n">(1)</span></p>');
   const p4 = html.list.find((x) => x.includes('data-desk="P4"'))!;
   expect(p4).toContain('aria-selected="true"');
   expect(p4).toContain('class="row unii sel"');
@@ -126,10 +128,12 @@ test("web: the list by group, the one shown marked; its detail whole, with field
   expect(d).toContain("Pode esperar?");
   expect(d).toContain('data-keep="say"');
   expect(d).toContain(">Concluir</button>");
-  // the aside's item of the same task keeps its folds
-  const aside = Html.tasks_html(tasks).open.find((x) => x.includes('data-task="P4"'))!;
-  expect(aside).toContain("<summary>Detalhes</summary>");
-  expect(aside).toContain('<details class="thread"');
+  // whose move it is, said first; the ficha beside, in its own column
+  expect(d).toContain('<p class="turn-line unii"><strong>Aguardando o Unii</strong> Você escreveu na conversa agora e o Unii ainda não respondeu. A resposta chega aqui quando ele responder nesta conversa ou quando o turno dele terminar; se o servidor reiniciar sem turno a retomar, ela volta marcada “Unii não respondeu”. Nada a fazer até lá.</p>');
+  expect(d).toContain('<div class="cols"><div class="main">');
+  expect(d).toContain('<aside class="facts" aria-label="Ficha da pendência P4"><p class="sub">Ficha</p><dl>');
+  expect(d).toContain("<dt>Frente</dt><dd><span class=\"ref\">uniichat</span></dd>");
+  expect(d).toContain("<dt>Conversa</dt><dd>1 mensagem; última de você agora</dd>");
 });
 
 test("web: a waiting task links to what it waits for; a closed one shows its answers and Reabrir; none shown, a note", () => {
@@ -168,7 +172,8 @@ test("terminal: /mesa by group, a project's only, or why none", () => {
   const v = View.view_new();
   v.tasks = desk();
   const md = View.desk_md(v);
-  expect(md).toContain("**Agora (2)**\n\n- **P1** Mesclar o PR · num-3182\n- **P5** Configurar o Slack · slack · com o Unii");
+  expect(md).toContain("**Agora (1)**\n\n- **P1** Mesclar o PR · num-3182\n\n");
+  expect(md).toMatch(/- \*\*P5\*\* Configurar o Slack · slack · com o Unii/);
   expect(md).toContain("**Aguardando outras pendências (1)**\n\n- **P3** Mesclar o #18 · num-3182 · aguarda P2");
   // (the evidence round: Unii's, made days before the clock, past its due)
   expect(md).toMatch(/- \*\*P2\*\* Trocar o require · num-3182 · com o Unii · \*\*prazo vencido há \d+ [hd]\*\* · libera 1/);
@@ -185,7 +190,7 @@ test("a task of an older server (who, no assignee) is made whole: Unii's stays U
   View.view_hear(v, { $: "state", tasks: [old("unii"), { ...old("user"), id: "P2" }, { ...old(""), id: "P3", assignee: "agente-x" }] } as any);
   expect(v.tasks.map((t) => t.assignee)).toEqual(["unii", "user", "agente-x"]);
   expect(v.tasks[0]).toMatchObject({ after: [], fields: [], thread: [], talk: null, origin: null, origin_url: null, draft: {} });
-  expect(Html.tasks_html(v.tasks).now.join("")).toContain("com o Unii");
+  expect(Html.desk_html(v.tasks, "", "", "P1").detail.join("")).toContain("<dt>Responsável</dt><dd>Unii</dd>");
   expect(View.desk_list(v.tasks).map((g) => g.group)).toEqual(["now", "others"]);
   // a whole one stays the same object
   const s = T.tasks_load(dir);
@@ -197,11 +202,13 @@ test("a task of an older server (who, no assignee) is made whole: Unii's stays U
 test("web: after one resolved, the next of Agora; none past the last; a task of Agora shown offers none", () => {
   const tasks = desk();
   expect(View.desk_next(tasks, "P6")?.id).toBe("P1");
-  expect(View.desk_next(tasks, "P1")?.id).toBe("P5");
+  // P1 is the only one of Agora: none after it
+  expect(View.desk_next(tasks, "P1")).toBe(null);
   expect(Html.desk_html(tasks, "", "", "P6").detail.at(-1)).toContain('class="next" type="button" data-desk="P1"');
   expect(Html.desk_html(tasks, "", "", "P1").detail.join("")).not.toContain('class="next"');
   // the search narrows what's next too
-  expect(View.desk_next(tasks, "P6", "slack")?.id).toBe("P5");
+  expect(View.desk_next(tasks, "P6", "num-3182")?.id).toBe("P1");
+  expect(View.desk_next(tasks, "P6", "slack")).toBe(null);
   expect(View.desk_next(tasks, "P6", "zzz")).toBe(null);
   expect(Html.desk_html(tasks, "zzz", "", "P6").detail.join("")).not.toContain('class="next"');
 });
@@ -385,8 +392,9 @@ test("aguardando o Unii: how long since the user wrote, and why, by Unii's turn;
   expect(View.task_talk_wait_said(p4, at, turn({ limited: true }))).toBe("aguardando o Unii há 5 min · esperando o limite de uso do serviço de IA");
   expect(View.task_talk_wait_said(p4, at, turn({ up: false }))).toBe("aguardando o Unii há 5 min · sem conexão com o servidor");
   expect(View.task_talk_wait_said(p4, NOW + 3 * 3600e3)).toBe("aguardando o Unii há 3 h");
-  // Unii answered: the user's turn, as before
-  expect(View.task_talk_wait_said(tasks.find((t) => t.id === "P5")!, at, turn())).toBe("sua vez");
+  // Unii answered in the thread of a task of Unii's: news, not the
+  // user's turn (it said "sua vez" for good before: Mesa visual)
+  expect(View.task_talk_wait_said(tasks.find((t) => t.id === "P5")!, at, turn())).toBe("Unii respondeu");
   // the view's state read as a turn
   expect(View.turn_of({ busy: true, wait: "", limits: { [View.TURN]: { until: 0, known: true } }, up: true }).limited).toBe(true);
   expect(View.turn_of({ busy: false, wait: "", limits: {}, up: true }).limited).toBe(false);
@@ -411,7 +419,8 @@ test("blocked: its PR chips on the Mesa; what it waits for with whose it is; wha
   const list = Html.desk_html(tasks, "", "", "P1", NOW).list;
   expect(list.find((x) => x.includes('data-desk="P3"'))).toContain("aguarda P1 (sua) e P2 (do Unii)");
   expect(list.find((x) => x.includes('data-desk="P1"'))).toContain('<span class="frees">libera P3</span>');
-  expect(Html.tasks_html(tasks).waiting[0]).toContain("aguarda P1 (sua) e P2 (do Unii)");
+  expect(d).toContain('<p class="turn-line waiting"><strong>Aguardando outras pendências</strong> Só pode ser resolvida depois de P1 (sua) e P2 (do Unii).</p>');
+  expect(d).toContain('<dt>Depende de</dt><dd><button class="goto" data-desk="P1">P1 (sua)</button> <button class="goto" data-desk="P2">P2 (do Unii)</button></dd>');
   // many freed: the first ones and how many more, through others too
   for (const title of ["D", "E", "F", "G"]) {
     add(s, { title, after: ["P3"] });

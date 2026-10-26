@@ -210,7 +210,7 @@ function chat(): void {
     attach([...(ev.dataTransfer?.files ?? [])]);
   };
   document.onclick = click;
-  for (const root of [$("#tasks"), $("#desk")]) {
+  for (const root of [$("#desk")]) {
     root.addEventListener("change", task_draft);
     root.addEventListener("keydown", (ev) => {
       const el = ev.target as HTMLElement;
@@ -220,7 +220,6 @@ function chat(): void {
       }
     });
   }
-  $("#tasks").addEventListener("toggle", thread_toggle, true);
   desk_wire();
   // a phone's keyboard up or down: the box's last line stays in sight, if
   // the caret is there; the page's bottom, if at it
@@ -355,7 +354,7 @@ function click(ev: MouseEvent): void {
     if (made.$ === "TaskSay" && made.text !== "") {
       act(made);
     } else if (made.$ === "TaskSay") {
-      task_say(made.task, el.closest<HTMLElement>("#tasks, #desk") ?? $("#tasks"));
+      task_say(made.task, $("#desk"));
     } else if (made.$ === "TaskAccept") {
       task_accept(el, made.task);
     } else if (made.$ === "Task" && made.state === "done" && task_missing(el)) {
@@ -537,8 +536,8 @@ function task_draft(ev: Event): void {
   act({ $: "TaskDraft", task: item.dataset.task!, fields: { [set.dataset.field!]: field_value(set) } });
 }
 
-// a message in a task's thread (its box's text, in root: the aside or
-// the Mesa): the box emptied, its text back in it if the server refuses
+// a message in a task's thread (its box's text, in root: the Mesa's
+// task): the box emptied, its text back in it if the server refuses
 // (and it's still empty)
 function task_say(task: string, root: HTMLElement): void {
   const box = () => root.querySelector<HTMLTextAreaElement>(`[data-task="${CSS.escape(task)}"] textarea.say`);
@@ -562,7 +561,7 @@ function task_say(task: string, root: HTMLElement): void {
   draw(false);
 }
 
-// what's typed in the list (root: the aside or the Mesa's task) and not
+// what's typed in a task (root: the Mesa's task) and not
 // sent (data-keep: a comment, a text field, a thread's box, a box
 // checked), and where the focus is, taken before its items are made
 // again and put back in the new ones
@@ -603,30 +602,10 @@ function keep_put(root: HTMLElement, kept: Map<string, Kept>): void {
   }
 }
 
-// a thread opened or shut by hand stays so, its item made again, till
-// a message comes to it (THREADS: by task, how and at how many messages)
-const THREADS = new Map<string, { open: boolean; n: number }>();
-function thread_toggle(ev: Event): void {
-  const el = ev.target as HTMLElement;
-  const item = el.closest<HTMLElement>("#tasks li[data-task]");
-  if (!(el instanceof HTMLDetailsElement) || !el.classList.contains("thread") || item === null) {
-    return;
-  }
-  THREADS.set(item.dataset.task!, { open: el.open, n: el.querySelectorAll("ol > li").length });
-}
-function threads_put(): void {
-  for (const el of document.querySelectorAll<HTMLDetailsElement>("#tasks li[data-task] details.thread")) {
-    const task = el.closest<HTMLElement>("li[data-task]")!.dataset.task!;
-    const was = THREADS.get(task);
-    if (was !== undefined && was.n === el.querySelectorAll("ol > li").length && el.open !== was.open) {
-      el.open = was.open;
-    }
-  }
-}
-
 // the user's count of tasks (the Mesa's "Agora"), wherever it shows
-// besides the list: the tab's title ("(2) UniiChat"), the ✓ marked, the
-// app's badge (an installed app: sw.js sets it too, as pushes come); none,
+// besides the list: the tab's title ("(2) UniiChat"), the header's
+// "Mesa · N" marked (on the Conversa, the only notice of the pending
+// list: the list itself shows on the Mesa alone), the app's badge (an installed app: sw.js sets it too, as pushes come); none,
 // all cleared. Set only as it changes
 let TURN = -1;
 const TITLE = document.title;
@@ -636,43 +615,9 @@ function turn_show(n: number): void {
   }
   TURN = n;
   document.title = View.turn_title(TITLE, n);
-  $(".tasks").classList.toggle("turn", n > 0);
   $(".mode").classList.toggle("turn", n > 0);
   const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
   (n === 0 ? nav.clearAppBadge?.() : nav.setAppBadge?.(n))?.catch(() => {});
-}
-
-// the pending list: the header's ✓ (on a wide screen, an aside instead:
-// style.css), its items made again only as the list changes (a state)
-// (those that wait for others: out of the count, a summary that opens
-// to them)
-let TASKS: { of: unknown; html: { open: string[]; now: string[]; waiting: string[]; closed: string[] } } = { of: null, html: { open: [], now: [], waiting: [], closed: [] } };
-function tasks_bar(): void {
-  if (TASKS.of !== v.tasks) {
-    TASKS = { of: v.tasks, html: Html.tasks_html(v.tasks) };
-  }
-  const { open, now, waiting, closed } = TASKS.html;
-  const untold = View.view_untold(v).length;
-  document.body.classList.toggle("tasking", v.tasks.length > 0);
-  $(".tasks").hidden = v.tasks.length === 0;
-  $(".tasks span").textContent = View.tasks_count_said(open.length, waiting.length);
-  $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
-  $("#tasks .none").hidden = open.length > 0;
-  $("#tasks .none").textContent = View.tasks_none_said(waiting.length);
-  const kept = keep_take($("#tasks"));
-  markup($("#tasks ul.now"), now);
-  keep_put($("#tasks"), kept);
-  threads_put();
-  markup($("#tasks .waiting ul"), waiting);
-  $("#tasks .waiting").hidden = waiting.length === 0;
-  $("#tasks .waiting summary").textContent = View.tasks_waiting_said(waiting.length);
-  markup($("#tasks .closed ul"), closed);
-  $("#tasks .closed").hidden = closed.length === 0;
-  $("#tasks .tell").hidden = untold === 0;
-  $("#tasks .tell span").textContent = String(untold);
-  if (v.tasks.length === 0 && $("#tasks").matches(":popover-open")) {
-    $("#tasks").hidePopover();
-  }
 }
 
 // Mesa
@@ -1399,11 +1344,11 @@ function bars(): void {
   if (v.timers.length === 0 && $("#timers").matches(":popover-open")) {
     $("#timers").hidePopover();
   }
-  tasks_bar();
   const turn = View.desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
   turn_show(turn);
   $(".mode").hidden = false;
   $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
+  $(".mode").setAttribute("aria-label", P.mode === "desk" ? "Voltar à Conversa" : turn === 0 ? "Mesa: nenhuma pendência na sua vez" : "Mesa: " + turn + (turn === 1 ? " pendência" : " pendências") + " na sua vez");
   send.classList.toggle("stop", stop);
   send.disabled = !on;
   BOX.disabled = !on;

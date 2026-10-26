@@ -82,14 +82,15 @@ const ID = /^P\d{1,15}$/;
 // waiting for others, nor for Unii's reply in its thread
 export function actionable(tasks: Task[]): string[] {
   const blocked = Deps.blocked_ids(tasks);
-  return tasks.filter((t) => t.state === "open" && (t.assignee === "user" || Deps.status_of(t) === "waiting_user") && t.talk !== "unii" && !blocked.has(t.id)).map((t) => t.id);
+  return tasks.filter((t) => Deps.user_move(t, blocked)).map((t) => t.id);
 }
 
-// the user's count, as the Mesa's "Agora" (View.desk_group "now"): open,
-// not waiting for Unii nor for others, theirs or their turn in its thread
+// the user's count, as the Mesa's "Agora" (View.desk_group "now"): the
+// tasks that are the user's move (TaskDeps.user_move; Unii's reply in
+// the thread of a task of Unii's is no move of theirs)
 export function turn_count(tasks: Task[]): number {
   const blocked = Deps.blocked_ids(tasks);
-  return tasks.filter((t) => t.state === "open" && t.talk !== "unii" && !blocked.has(t.id) && (t.assignee === "user" || t.talk === "user" || Deps.status_of(t) === "waiting_user")).length;
+  return tasks.filter((t) => Deps.user_move(t, blocked)).length;
 }
 
 // "P3"; "P3 e P4"; "P3, P4 e P5"; past NAMES, "P1, P2, P3, P4 e mais 2"

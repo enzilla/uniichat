@@ -108,7 +108,8 @@ test("P4: the kind, given or as its title says, sets when it's late: PR 24 h, de
   expect(late("P1", 72)).toBe("atrasada há 3 d");
   // the Mesa's detail says its kind and limit
   const detail = Html.desk_html(tasks, "", "", "P2", NOW).detail.join("");
-  expect(detail).toContain('<span class="kind">teste, prazo 2 h</span>');
+  expect(detail).toContain("<dt>Tipo</dt><dd>teste, prazo 2 h</dd>");
+  expect(detail).toContain("Teste, prazo 2 h.");
   expect(Html.desk_html(tasks, "", "", "P1", NOW).detail.join("")).toContain("decisão, prazo 72 h");
   expect(Html.desk_html(tasks, "", "", "P4", NOW).detail.join("")).not.toContain('class="kind"');
 });

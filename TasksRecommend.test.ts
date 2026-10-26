@@ -149,8 +149,8 @@ test("web: the recommended choice framed and tagged (not twice if its text says 
   T.task_say(s, u.id, View.CHASE, NOW);
   const asked = Html.desk_html(T.tasks_view(s, NOW), "", "", u.id, NOW).detail.join("");
   // why: visible text, the button's description (R3), not a title alone
-  expect(asked).toContain('<button class="chase" disabled aria-describedby="chase-why-desk-' + u.id + '"');
-  expect(asked).toContain('<span class="hint" id="chase-why-desk-' + u.id + '">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>');
+  expect(asked).toContain('<button class="chase" disabled aria-describedby="chase-why-' + u.id + '"');
+  expect(asked).toContain('<span class="hint" id="chase-why-' + u.id + '">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>');
   expect(asked).not.toContain('title="O Unii ainda não respondeu');
   expect(asked).toContain(">Cobrado: aguardando o Unii</button>");
   // terminal
