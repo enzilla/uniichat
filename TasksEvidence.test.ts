@@ -695,3 +695,21 @@ test("a restart with a doubt, an ordinal or a loose digit (PeachCow): a doubt or
     expect([now, T.restart_now(now)]).toEqual([now, true]);
   }
 });
+
+test("a restart with blanks inside a doubt, more doubts, or an ordinal before \"vez\" (PaperWaffle)", () => {
+  // R1: any run of blanks between the words of a doubt still reads it; more hesitations
+  for (const later of ["Reinicie agora, quem  sabe", "Reinicie agora, quem\nsabe", "Reinicie agora, quem\tsabe", "Reinicie agora, sei lá", "Reinicie agora, depende", "Reinicie agora, provavelmente", "Provavelmente reinicie agora", "Restart now, who knows", "Restart now, probably", "Restart now, it depends", "Reinicie em\nseguida", "Reinicie mais  tarde"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // R2: "segunda" before "vez" is no day, and "vez" is plain
+  for (const now of ["Reinicie a segunda vez", "Reinicie a segunda vez agora", "Reinicie mais uma vez agora", "Reinicie de vez", "Reinicie  agora", "Reinicie\nagora"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  for (const later of ["Reinicie na segunda", "Reinicie a segunda", "Reinicie mais uma vez"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  // the design kept (PaperWaffle, baixa 3): a bare "Reinicie" is now; a
+  // count of three digits ("a 100 instâncias") stays open
+  expect(T.restart_now("Reinicie")).toBe(true);
+  expect(T.restart_now("Reinicie a 100 instâncias")).toBe(false);
+});

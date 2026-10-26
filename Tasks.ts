@@ -1028,8 +1028,13 @@ export const RESTART_LATER = "Eu reinicio depois";
 //    a time of its own ("ao almoço", "de tardinha", "hoje", "logo",
 //    "outro dia", "afterwards") or a name it doesn't know ("o night
 //    worker"), keeps the order open: the safe side
+// By design (PaperWaffle, baixa 3): a bare "Reinicie" is now (the verb
+// alone asks nothing else), and a count is plain only in one or two
+// digits: "a 100 instâncias" stays open (no serve runs that many)
 export function restart_now(answer: string | null): boolean {
-  const lower = (answer ?? "").toLowerCase().trim();
+  // any run of blanks (two spaces, a line break, a tab) reads as one
+  // space, so "quem  sabe" or "em\nseguida" match as "quem sabe" (PaperWaffle)
+  const lower = (answer ?? "").toLowerCase().replace(/\s+/g, " ").trim();
   const a = lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   if (a === RESTART_YES.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()) {
     return true;
@@ -1085,6 +1090,9 @@ const RESTART_PLAIN = new Set([
   // an ordinal before a counted noun ("a segunda instância"): RESTART_WAIT
   // reads "segunda" as a day unless such a noun follows it
   "primeira", "primeiro", "segunda", "segundo", "terceira", "terceiro", "first", "second", "third",
+  // "vez" too, the noun RESTART_WAIT lets follow "segunda" ("Reinicie a
+  // segunda vez", "uma vez"): plain like "instância" (PaperWaffle)
+  "vez", "vezes",
 ]);
 
 // what puts off a restart asked, even beside "agora" (already without
@@ -1114,8 +1122,10 @@ const RESTART_WAIT: RegExp[] = [
   /\bmei[oa][- ](?:dia|noite)\b|\ba (?:uma|\d{1,2})(?= ?h\b| ?hora| e meia|\s*[,.;:!?](?!\s*(?:agora|ja|now|imediatamente|immediately)\b)|\s*$)|\bas (?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)\b|\b(?:noon|midnight|o'?clock)\b|\bat (?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
   // a condition: "se puder", "se der", "se possível", "if you can"
   /\bse (?:puder|pude\w*|der|possivel|conseguir|for possivel)\b|\bif (?:you can|possible)\b/,
-  // a doubt: "agora, quem sabe", "talvez", "quiçá", "maybe" (PeachCow)
-  /\b(?:quem sabe|talvez|quica|porventura|maybe|perhaps|possibly)\b/,
+  // a doubt: "agora, quem sabe", "talvez", "quiçá", "sei lá", "depende",
+  // "provavelmente", "maybe", "who knows" (PeachCow, PaperWaffle). The
+  // blanks between words are already one space (restart_now)
+  /\b(?:quem sabe|talvez|quica|porventura|sei la|depend\w*|provavel\w*|maybe|perhaps|possibly|probably|who knows|it depends)\b/,
 ];
 
 export const RESTART_DETAIL = "Política (P8): o Unii reinicia sozinho quando nenhum agente está rodando, avisando antes e depois. Esta pendência só existe porque há agentes rodando agora, e o reinício os interrompe.";
