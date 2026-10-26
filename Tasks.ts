@@ -1022,8 +1022,17 @@ export function restart_now(answer: string | null): boolean {
   if (a === plain(RESTART_YES)) {
     return true;
   }
-  return /\b(?:reinici\w*|restart\w*)\b/.test(a) && !RESTART_WAIT.some((w) => w.test(a));
+  // "sem esperar", "não espere": the restart asked now, its words of
+  // waiting said only to deny them (taken out before the waits are read)
+  const b = a.replace(RESTART_NO_WAIT, " ");
+  return /\b(?:reinici\w*|restart\w*)\b/.test(b) && !RESTART_WAIT.some((w) => w.test(b));
 }
+
+// a wait denied (already without accents, lower): "sem esperar", "não
+// espere", "nem aguarde", "don't wait", "without waiting". A limit: "Reinicie
+// já, não depois" still reads "não depois" as a wait (the order stays open:
+// the safe side)
+const RESTART_NO_WAIT = /\b(?:sem (?:esperar|aguardar|demora|demorar)|(?:nao|nem) (?:espere|esperar|espera|aguarde|aguardar|aguarda)|don'?t wait|do not wait|without waiting|no wait(?:ing)?)\b/g;
 
 // what puts off a restart asked (already without accents, lower): a
 // word of waiting or refusal, a time ("às 22h", "22:30", "em 1 hora",
@@ -1035,7 +1044,16 @@ const RESTART_WAIT: RegExp[] = [
   /\bas \d|\b\d{1,2} ?h\b|\b\d{1,2}h\d{2}\b|\b\d{1,2}:\d{2}\b|\bat \d|\bem (?:\d+|um|uma|meia|duas|dois|tres|alguns|algumas|poucos|poucas)\b|\bin (?:\d+|an?|one|two|few)\b/,
   /\b(?:hora|horas|minuto|minutos|min|hour|hours|minute|minutes)\b/,
   // an event: "ao terminar", "os agentes acabarem", "concluir o PR"
-  /\b(?:termin\w*|acab\w*|conclu\w*|finaliz\w*|finish\w*|complet\w*|esper\w*|wait\w*)\b/,
+  /\b(?:termin\w*|acab\w*|conclu\w*|finaliz\w*|finish\w*|complet\w*|esper\w*|aguard\w*|wait\w*)\b/,
+  // a day: "na sexta", "segunda-feira", "dia 27", "27/10", "no fim de
+  // semana", "monday", "weekend"
+  /\b(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|feira|semana|mes|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|week|month)\b|\bdia (?:\d|primeiro|um|dois|tres)|\b\d{1,2}\/\d{1,2}\b/,
+  // a time in words: "ao meio-dia", "à meia-noite", "às dez", "às três e
+  // meia", "at noon". A limit: "as" is also the article ("Reinicie as duas
+  // instâncias" stays open: the safe side)
+  /\bmei[oa][- ](?:dia|noite)\b|\bas (?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)\b|\b(?:noon|midnight|o'?clock)\b|\bat (?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
+  // a condition: "se puder", "se der", "se possível", "if you can"
+  /\bse (?:puder|pude\w*|der|possivel|conseguir|for possivel)\b|\bif (?:you can|possible)\b/,
 ];
 
 export const RESTART_DETAIL = "Política (P8): o Unii reinicia sozinho quando nenhum agente está rodando, avisando antes e depois. Esta pendência só existe porque há agentes rodando agora, e o reinício os interrompe.";
@@ -2174,14 +2192,20 @@ export function promises_in(text: string): string[] {
 
 // whether any task of Unii's was made or moved since `since` (ms); with
 // the promises said, only one related to them: its id said in one, or a
-// word of one in its title, detail, next step, done when or ref, whole
+// word of one in its title, detail, next step or done when, whole
 // (4 letters or more, no accents, not a filler nor a word any task may
 // have, as "pendência", "infra" or a verb of action in any form,
 // "revisar", "atualizo", "verificação": PROMISE_GENERIC). Whole:
 // "infraestrutura" isn't "infra" (the note asks for a task then:
 // harmless). A heuristic: a task registered for the
 // promise in other words isn't seen, and one sharing a distinct word by
-// chance hides a promise (rare: the words must be in the same turn)
+// chance hides a promise (rare: the words must be in the same turn).
+// The ref isn't compared (NeatFinch): it's a project's or a channel's
+// name any task of it has ("slack", "fractal-ritsu"), so "Vou ajustar o
+// slack" would relate any task with ref slack. Limits, known: a verb out
+// of PROMISE_GENERIC relates ("Vou documentar o fluxo" a task saying
+// "documentar"), and so does a common noun ("fluxo", "serviço") a task
+// shares by chance: the note is then missed, never wrongly given
 export function tasks_moved_since(s: Store, since: number, said: string[] | null = null): boolean {
   const moved = s.tasks.filter((t) => t.assignee !== "user" && (Date.parse(t.made) >= since || Date.parse(t.moved ?? t.changed) >= since));
   if (said === null) {
@@ -2189,7 +2213,7 @@ export function tasks_moved_since(s: Store, since: number, said: string[] | null
   }
   const keys = new Set(said.flatMap(promise_words));
   const ids = new Set(said.flatMap((x) => (x.match(/\bP\d{1,15}\b/g) ?? [])));
-  return moved.some((t) => ids.has(t.id) || [t.title, t.detail, t.next_step, t.done_when, t.ref].some((x) => typeof x === "string" && promise_words(x).some((w) => keys.has(w))));
+  return moved.some((t) => ids.has(t.id) || [t.title, t.detail, t.next_step, t.done_when].some((x) => typeof x === "string" && promise_words(x).some((w) => keys.has(w))));
 }
 
 // what reads as no subject of a promise: its fillers, in Portuguese and

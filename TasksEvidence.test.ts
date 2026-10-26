@@ -469,6 +469,16 @@ test("a promise's verbs of action, in any form, relate nothing (BrownOctopus): i
   expect(T.tasks_moved_since({ ...s, tasks: [p5] }, NOW, ["vou fechar a P55"])).toBe(false);
   expect(T.tasks_moved_since({ ...s, tasks: [p5] }, NOW, ["vou fechar a P5"])).toBe(true);
   expect(T.tasks_moved_since({ ...s, tasks: [{ ...up, id: "P55" }] }, NOW, ["vou atualizar a P5 agora"])).toBe(false);
+  // the ref isn't compared (NeatFinch): "slack" there relates nothing;
+  // in the title, it does (a common noun shared: a known limit)
+  const ref = mine(s, "Responder o Enzo sobre os PRs", { ref: "slack" }, NOW);
+  expect(T.tasks_moved_since({ ...s, tasks: [ref] }, NOW, ["Vou ajustar o slack"])).toBe(false);
+  expect(T.tasks_moved_since({ ...s, tasks: [{ ...ref, ref: "fractal-ritsu" }] }, NOW, ["Vou olhar o fractal-ritsu"])).toBe(false);
+  expect(T.tasks_moved_since({ ...s, tasks: [ref] }, NOW, ["Vou responder o Enzo"])).toBe(true);
+  expect(T.tasks_moved_since({ ...s, tasks: [{ ...ref, title: "Slack Enzo: responder" }] }, NOW, ["Vou ajustar o slack"])).toBe(true);
+  // known limits: a verb out of PROMISE_GENERIC, or a common noun shared, relates
+  const doc = mine(s, "Documentar o fluxo de deploy", {}, NOW);
+  expect(T.tasks_moved_since({ ...s, tasks: [doc] }, NOW, ["Vou documentar o serviço"])).toBe(true);
   expect(T.promises_said(["vou A", "vou B"])).toBe("Compromisso sem pendência: o Unii disse “vou A”, “vou B” e não registrou nem atualizou, neste turno, nenhuma pendência sua ligada a eles. Unii: registre-os com task_add (assignee unii, next_step e next_due) ou diga que não vai fazê-los.");
 });
 
@@ -595,4 +605,20 @@ test("a restart for later (BrownOctopus): a time or an event to wait for keeps t
   for (const later of ["Reinicie às 22h", "Reinicie as 22h", "Reinicie às 22:30", "Reinicie 22h30", "Reinicie ao terminar o PR", "Reinicie em 1 hora", "Reinicie em uma hora", "Reinicie em 30 minutos", "Reinicie daqui a pouco", "Reinicie assim que os agentes acabarem", "Reinicie logo que o GrandDove terminar", "Reinicie ao fim do dia", "Reinicie à tarde", "Reinicie quando puder", "Reinicie até as 18h", "Espere e reinicie", "Reinicie depois", "Restart at 10", "Restart in an hour", "Restart once the agents finish", "Restart as soon as they're done"]) {
     expect([later, T.restart_now(later)]).toEqual([later, false]);
   }
+});
+
+test("a restart for a day, a time in words or a condition (NeatFinch) stays open; a wait denied is now", () => {
+  for (const later of ["Reinicie ao meio-dia", "Reinicie ao meio dia", "Reinicie à meia-noite", "Reinicie às dez", "Reinicie às três e meia", "Reinicie na sexta", "Reinicie segunda-feira", "Reinicie no sábado", "Reinicie no fim de semana", "Reinicie dia 27", "Reinicie no dia 27", "Reinicie em 27/10", "Reinicie e aguarde", "Aguarde e reinicie", "Reinicie se puder", "Reinicie se der", "Reinicie se possível", "Restart at noon", "Restart on friday", "Restart if you can", "Restart at ten"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
+  for (const now of ["Reiniciar sem esperar", "Reinicie, não espere", "Reinicie sem aguardar", "Não espere, reinicie", "Reinicie, nem aguarde os agentes", "Restart, don't wait", "Restart without waiting"]) {
+    expect([now, T.restart_now(now)]).toEqual([now, true]);
+  }
+  // a wait denied doesn't hide another: still later, or no restart at all
+  expect(T.restart_now("Reinicie sem esperar, mas às 22h")).toBe(false);
+  expect(T.restart_now("Não espere: reinicie na sexta")).toBe(false);
+  expect(T.restart_now("Não reinicie, espere")).toBe(false);
+  expect(T.restart_now("Sem esperar")).toBe(false);
+  // a known limit: "não depois" reads as a wait (the safe side: open)
+  expect(T.restart_now("Reinicie já, não depois")).toBe(false);
 });
