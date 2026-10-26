@@ -292,6 +292,29 @@ function task_button(t: Task, state: Task["state"], text: string, cls: string, a
   return `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...(answer === undefined ? {} : { answer }) })}>${esc(text)}</button>`;
 }
 
+// a task's marks of the evidence round (View.task_marks), each a badge
+function marks_html(t: Task, tasks: Task[], now: number): string[] {
+  return View.task_marks(t, tasks, now).map(([cls, text]) => `<span class="mark ${esc(cls)}">${esc(text)}</span>`);
+}
+
+// what makes a task done and its next step with when it's due, a
+// paragraph each ("" for neither)
+function round_html(t: Task): string {
+  const done = View.task_done_when_said(t);
+  const next = View.task_next_said(t);
+  return (done === "" ? "" : `<p class="done-when">${esc(done)}</p>`) + (next === "" ? "" : `<p class="next-step">${esc(next)}</p>`);
+}
+
+// what closed a task, each evidence a line; none: "sem evidência",
+// said with what to do
+function evidence_html(t: Task): string {
+  const all = t.evidence ?? [];
+  if (all.length === 0) {
+    return `<p class="evidence none"><span class="mark unproven">${esc(View.UNPROVEN_SAID)}</span> Fechada sem evidência registrada. Reabra-a se o problema não foi resolvido.</p>`;
+  }
+  return `<section class="evidence" aria-label="Evidência"><p class="sub">Evidência</p><ul>${all.map((e) => `<li>${esc(View.evidence_said(e))}</li>`).join("")}</ul></section>`;
+}
+
 // a task's detail, Markdown: folded in the list, whole on the Mesa
 function task_detail(t: Task, desk: boolean): string {
   if (t.detail === "") {
@@ -323,12 +346,13 @@ function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(),
     ...(mine ? [] : [esc(View.assignee_said(t))]),
     ...(agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`]),
     ...(stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`]),
+    ...marks_html(t, tasks, now),
   ];
   const said = desk ? View.task_talk_wait_said(t, now, turn) : View.task_talk_said(t);
   const talk = said === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(said)}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
   const tag = desk ? "article" : "li";
-  const head = `${task_head(t, !desk)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
+  const head = `${task_head(t, !desk)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${round_html(t)}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
   // a task of Unii's (P6): only "Cobrar agora" (a message in its thread,
   // a turn) and "Pode fechar" (done; Unii told as of any resolution)
   if (!mine) {
@@ -337,8 +361,13 @@ function task_open_html(t: Task, tasks: Task[], desk: boolean, now = Date.now(),
     const asked = t.talk === "unii";
     const why = `chase-why-${desk ? "desk" : "list"}-${esc(t.id)}`; // the aside and the Mesa may both hold it: an id each
     const chase = `<button class="chase"${asked ? ` disabled aria-describedby="${why}"` : ""}${act_html({ $: "TaskSay", task: t.id, text: View.CHASE })}>${asked ? "Cobrado: aguardando o Unii" : "Cobrar agora"}</button>`;
-    const close = task_button(t, "done", "Pode fechar", "close");
-    const hint = asked ? `<span class="hint" id="${why}">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>` : `<span class="hint">Com o Unii. Você pode cobrar o andamento ou liberá-lo para fechar.</span>`;
+    // an order received closes only with the evidence of its execution:
+    // the user may cancel it, not close it (the evidence round)
+    const ordered = t.state === "open" && (t.order ?? null) !== null;
+    const close = ordered ? task_button(t, "dropped", "Cancelar ordem", "drop cancel") : task_button(t, "done", "Pode fechar", "close");
+    const waiting = Deps.status_of(t) === "waiting_user" ? `O Unii aguarda você: ${esc(t.status_why ?? "")}. Responda na conversa desta pendência. ` : "";
+    const free = ordered ? "Ordem recebida: o Unii a executa e só a fecha com a evidência da execução. Você pode cobrar ou cancelar a ordem." : "Com o Unii. Você pode cobrar o andamento ou liberá-lo para fechar.";
+    const hint = asked ? `<span class="hint" id="${why}">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>` : `<span class="hint">${waiting}${free}</span>`;
     const acts = `<div class="acts unii">${hint}${chase}${close}</div>`;
     return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${acts}${thread_html(t, desk)}</${tag}>`;
   }
@@ -402,12 +431,13 @@ function task_links_html(prs: { url: string; label: string }[]): string {
 // a task closed lately: how, and Reabrir (desk: with its detail, its
 // answers and its thread, to read)
 function task_closed_html(t: Task, desk: boolean): string {
-  const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii será avisado em até 1 min"])];
+  const how = [t.state === "done" ? "Concluída" : "Descartada", ...(t.answer === null ? [] : ["resposta: " + esc(t.answer)]), ...(t.note === null ? [] : ["“" + esc(t.note) + "”"]), ...(t.told ? [] : ["o Unii será avisado em até 1 min"]), ...marks_html(t, [], Date.now())];
   const acts = `<div class="acts">${task_button(t, "open", "Reabrir", "reopen")}</div>`;
   if (!desk) {
-    return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t, true)}${task_meta(t, how)}${acts}</li>`;
+    return `<li class="task closed${View.task_unproven(t) ? " unproven" : ""}" data-task="${esc(t.id)}">${task_head(t, true)}${task_meta(t, how)}${acts}</li>`;
   }
-  return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
+  const done = View.task_done_when_said(t);
+  return `<article class="task closed${View.task_unproven(t) ? " unproven" : ""}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${done === "" ? "" : `<p class="done-when">${esc(done)}</p>`}${evidence_html(t)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
 }
 
 // a task waiting for others: what it waits for, each with whose it is,
@@ -492,6 +522,7 @@ export function desk_html(tasks: Task[], q: string, ref: string, sel: string | n
       ...(frees === "" ? [] : [`<span class="frees">${esc(frees)}</span>`]),
       ...(g === "waiting" ? [esc(View.task_waits_named(tasks, t))] : []),
       ...(g === "closed" ? [t.state === "done" ? "concluída" : "descartada"] : []),
+      ...marks_html(t, tasks, now),
     ];
     const on = t.id === sel;
     return `<button class="row ${g}${on ? " sel" : ""}" role="option" aria-selected="${on}" data-desk="${esc(t.id)}"><span class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></span>${more.length === 0 ? "" : `<span class="meta">${more.join(" · ")}</span>`}</button>`;

@@ -22,6 +22,13 @@
 // the list, neither then nor at today's REMIND. A task that stops
 // being the user's (resolved, waiting again) is forgotten, so being so
 // again (reopened, freed again) is told again.
+// A task of Unii's whose waiting for the user (status waiting_user) is
+// the user's move as well: told as one of theirs. One of Unii's past its
+// next step's due (TaskDeps.overdue_ids: the evidence round) is told
+// once for that due ("Pendência P48 do Unii está parada além do prazo"):
+// a new due (a new next step) may be told again; the first look (and the
+// first since the evidence round: a state with no alerted) takes
+// those overdue then as told.
 
 import * as fs from "node:fs";
 import * as Deps from "./TaskDeps.ts";
@@ -35,11 +42,12 @@ import { write_whole } from "./Write.ts";
 // or the first look); the ones made or freed and not pushed yet, and since
 // when the first waits (ms; null: none); the ones reminded as late; the
 // local day (YYYY-MM-DD) the last reminder was looked for
-export type State = { seen: Record<string, string>; queue: string[]; since: number | null; reminded: string[]; day: string | null };
+// (alerted: each task of Unii's told overdue, and the due it was told for)
+export type State = { seen: Record<string, string>; queue: string[]; since: number | null; reminded: string[]; day: string | null; alerted?: Record<string, string> };
 
 // a push to send: new (made or freed) or late, its tasks, its text, and
 // the user's count
-export type Notice = { kind: "new" | "late"; ids: string[]; text: string; count: number };
+export type Notice = { kind: "new" | "late" | "stalled"; ids: string[]; text: string; count: number };
 
 // Constants
 // =========
@@ -74,14 +82,14 @@ const ID = /^P\d{1,15}$/;
 // waiting for others, nor for Unii's reply in its thread
 export function actionable(tasks: Task[]): string[] {
   const blocked = Deps.blocked_ids(tasks);
-  return tasks.filter((t) => t.state === "open" && t.assignee === "user" && t.talk !== "unii" && !blocked.has(t.id)).map((t) => t.id);
+  return tasks.filter((t) => t.state === "open" && (t.assignee === "user" || Deps.status_of(t) === "waiting_user") && t.talk !== "unii" && !blocked.has(t.id)).map((t) => t.id);
 }
 
 // the user's count, as the Mesa's "Agora" (View.desk_group "now"): open,
 // not waiting for Unii nor for others, theirs or their turn in its thread
 export function turn_count(tasks: Task[]): number {
   const blocked = Deps.blocked_ids(tasks);
-  return tasks.filter((t) => t.state === "open" && t.talk !== "unii" && !blocked.has(t.id) && (t.assignee === "user" || t.talk === "user")).length;
+  return tasks.filter((t) => t.state === "open" && t.talk !== "unii" && !blocked.has(t.id) && (t.assignee === "user" || t.talk === "user" || Deps.status_of(t) === "waiting_user")).length;
 }
 
 // "P3"; "P3 e P4"; "P3, P4 e P5"; past NAMES, "P1, P2, P3, P4 e mais 2"
@@ -95,6 +103,9 @@ export function ids_said(ids: string[]): string {
 // a push's text: only the ids
 export function text(kind: Notice["kind"], ids: string[]): string {
   const one = ids.length === 1;
+  if (kind === "stalled") {
+    return (one ? "Pendência " : "Pendências ") + ids_said(ids) + (one ? " do Unii está parada além do prazo" : " do Unii estão paradas além do prazo");
+  }
   if (kind === "late") {
     return (one ? "Pendência " : "Pendências ") + ids_said(ids) + (one ? " está em atraso" : " estão em atraso");
   }
@@ -136,9 +147,22 @@ export function step(state: State | null, tasks: Task[], now: number): { state: 
   const at = new Date(now).toISOString();
   const send: Notice[] = [];
   const count = turn_count(tasks);
+  const over = Deps.overdue_ids(tasks, now);
+  const by_id = new Map(tasks.map((t) => [t.id, t]));
+  const due = (id: string) => Deps.due_at(by_id.get(id)!) ?? "";
   if (state === null) {
-    const by = new Map(tasks.map((t) => [t.id, t]));
-    return { state: { seen: Object.fromEntries(ids.map((id) => [id, made_at(by.get(id), now)])), queue: [], since: null, reminded: [], day: day(now) }, send };
+    return { state: { seen: Object.fromEntries(ids.map((id) => [id, made_at(by_id.get(id), now)])), queue: [], since: null, reminded: [], day: day(now), ...alerted_kept(Object.fromEntries(over.map((id) => [id, due(id)]))) }, send };
+  }
+  // Unii's overdue: each told once for its due. A state of before the
+  // evidence round (no alerted: the first look since it) takes those
+  // overdue now as told, as the first look does: no batch of pushes for
+  // all of Unii's moved long ago
+  const was_alerted = state.alerted;
+  const stalled = was_alerted === undefined ? [] : over.filter((id) => was_alerted[id] !== due(id));
+  // (each overdue now told for its due: before, or just now)
+  const alerted: Record<string, string> = Object.fromEntries(over.map((id) => [id, due(id)]));
+  if (stalled.length > 0) {
+    send.push({ kind: "stalled", ids: stalled, text: text("stalled", stalled), count });
   }
   const seen: Record<string, string> = {};
   for (const id of ids) {
@@ -173,7 +197,13 @@ export function step(state: State | null, tasks: Task[], now: number): { state: 
       reminded = [...reminded, ...late];
     }
   }
-  return { state: { seen, queue, since: queue.length === 0 ? null : since, reminded, day: looked }, send };
+  return { state: { seen, queue, since: queue.length === 0 ? null : since, reminded, day: looked, ...alerted_kept(alerted) }, send };
+}
+
+// alerted as kept: always, even none ({}), so a state of the evidence
+// round is told from one of before it (no alerted: step seeds it)
+function alerted_kept(alerted: Record<string, string>): { alerted: Record<string, string> } {
+  return { alerted };
 }
 
 // what's told, as kept in a chat's dir (null: none yet, or not one: the
@@ -190,7 +220,17 @@ export function load(dir: string): State | null {
     const list = (x: unknown) => (Array.isArray(x) ? x.filter((id): id is string => typeof id === "string" && ID.test(id)) : []);
     const since = typeof o?.since === "number" && Number.isFinite(o.since) ? o.since : null;
     const day = typeof o?.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(o.day) ? o.day : null;
-    return { seen, queue: list(o?.queue), since, reminded: list(o?.reminded), day };
+    // none in the file: a state of before the evidence round (step seeds it)
+    if (o?.alerted === undefined || o.alerted === null || typeof o.alerted !== "object") {
+      return { seen, queue: list(o?.queue), since, reminded: list(o?.reminded), day };
+    }
+    const alerted: Record<string, string> = {};
+    for (const [id, at] of Object.entries(o.alerted)) {
+      if (ID.test(id) && typeof at === "string" && !Number.isNaN(Date.parse(at))) {
+        alerted[id] = at;
+      }
+    }
+    return { seen, queue: list(o?.queue), since, reminded: list(o?.reminded), day, ...alerted_kept(alerted) };
   } catch {
     return null;
   }

@@ -189,3 +189,75 @@ export function reaches<T extends Dep>(tasks: T[], from: string[], to: string, i
   }
   return false;
 }
+
+// Status, next step and its due time (the evidence round)
+// --------------------------------------------------------
+// An open task has a status beside its state: open (being worked on),
+// waiting_user (Unii's, waiting for something only the user can give:
+// its why says what), blocked (its why, and what unblocks it). A task
+// of someone else's (Unii's) has a next step and when it's due
+// (next_due); none given, it's due STALL after it last moved (moved:
+// Tasks.task_moves). Past its due, not blocked by other tasks and not
+// waiting for the user, it's overdue: the views say so, Unii's block
+// lists it and the user's phones are told once (TaskPush). STALL is the
+// server's setting (config task_stall, in hours; 4 by default): the
+// views get each task's due from the server (Tasks.tasks_view), so they
+// never read the setting themselves.
+
+export type Status = "open" | "waiting_user" | "blocked";
+export const STATUSES: Status[] = ["open", "waiting_user", "blocked"];
+
+// how long a task of Unii's may stand still with no next_due (ms)
+export const STALL_DEFAULT = 4 * H;
+let stall = STALL_DEFAULT;
+
+// the server's setting (ms, more than 0; else the default kept)
+export function stall_set(ms: number): void {
+  stall = Number.isFinite(ms) && ms > 0 ? ms : STALL_DEFAULT;
+}
+
+export function stall_ms(): number {
+  return stall;
+}
+
+// what the due time reads of a task (an older list's: none of these)
+export type Due = Dep & { assignee?: string; status?: Status | null; next_due?: string | null; moved?: string | null; changed?: string | null; made: string; due?: string | null };
+
+// a task's status (none, or not one: open)
+export function status_of(t: { status?: Status | null }): Status {
+  return t.status != null && STATUSES.includes(t.status) ? t.status : "open";
+}
+
+// when a task's next step is due (ISO): an open one of someone else's
+// (not the user's), not waiting for the user: its next_due, else STALL
+// after it last moved; the server's (t.due, Tasks.tasks_view) wins in a
+// view. null: none (closed, the user's, waiting for the user)
+export function due_at(t: Due, ms = stall): string | null {
+  if (t.state !== "open" || (t.assignee ?? "user") === "user" || status_of(t) === "waiting_user") {
+    return null;
+  }
+  if (t.due !== undefined) {
+    return t.due;
+  }
+  if (typeof t.next_due === "string" && !Number.isNaN(Date.parse(t.next_due))) {
+    return new Date(Date.parse(t.next_due)).toISOString();
+  }
+  const from = Date.parse(t.moved ?? t.changed ?? t.made);
+  return Number.isNaN(from) ? null : new Date(from + ms).toISOString();
+}
+
+// how long a task is past its due (ms), if it is and isn't waiting for
+// other open tasks; else 0
+export function overdue_ms<T extends Due>(tasks: T[], t: T, now: number, ms = stall): number {
+  const due = due_at(t, ms);
+  if (due === null || blocked(tasks, t)) {
+    return 0;
+  }
+  const late = now - Date.parse(due);
+  return late > 0 ? late : 0;
+}
+
+// the ids of the tasks overdue now, in their number's order
+export function overdue_ids<T extends Due>(tasks: T[], now: number, ms = stall): string[] {
+  return tasks.filter((t) => overdue_ms(tasks, t, now, ms) > 0).map((t) => t.id).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+}

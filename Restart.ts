@@ -113,12 +113,16 @@ export function check(h: How, working: string[], task: Tasks.Task | null, given:
     if (task.kind !== "restart") {
       return task.id + " is not of kind restart: only such a task lets a restart while agents are at work.";
     }
-    if (task.state !== "done" || Tasks.task_act(task) !== "unii") {
+    // the user's pick of an option of Unii's: an order received (open, the
+    // evidence round: only the user's pick makes one), or, closed before
+    // that round, done by the user with it
+    const ordered = Tasks.task_ordered(task) && Tasks.task_act(task, task.order?.answer ?? null) === "unii";
+    if (!ordered && (task.state !== "done" || Tasks.task_act(task) !== "unii")) {
       return task.id + " doesn't let it: the user hasn't picked an option of yours (" + (Object.entries(task.acts).filter(([, a]) => a === "unii").map(([c]) => c).join(" | ") || "none") + ").";
     }
     // the user's pick only (the Mesa, the terminal): one Unii set itself
     // (task_edit) is no leave
-    if (task.closed_by !== "user") {
+    if (!ordered && task.closed_by !== "user") {
       return task.id + " doesn't let it: it was closed by you (task_edit), not by the user. Only the user's pick (the Mesa or the terminal) lets a restart while agents are at work: open it again for them, or wait for the agents' reports.";
     }
     if (used.includes(task.id)) {

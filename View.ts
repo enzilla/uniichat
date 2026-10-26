@@ -15,7 +15,7 @@ import * as Md from "./Md.ts";
 import { LABELS, type Fall, type Move, Pick } from "./Pick.ts";
 import { GLYPH, WHO } from "./Theme.ts";
 import type { Timer } from "./Timer.ts";
-import type { Field, PrCheck, Task, Values } from "./Tasks.ts";
+import type { Evidence, Field, PrCheck, Task, Values } from "./Tasks.ts";
 import * as Deps from "./TaskDeps.ts";
 import type { Ci, Front, FrontPr, Live as PipeLive, Role, Sevs, Stage } from "./Pipeline.ts";
 
@@ -592,7 +592,14 @@ export function view_act(v: View, act: Act): Client[] {
         v.notes.push("A pendência " + t.id + " não tem a opção “" + act.answer + "”.");
         return [];
       }
-      if (act.state === "dropped" && t.state === "open" && t.assignee !== "user") {
+      // an order received (the evidence round): canceled (dropped), never
+      // closed by the user; Unii closes it with evidence of the execution
+      const ordered = t.state === "open" && (t.order ?? null) !== null;
+      if (ordered && act.state === "done") {
+        v.notes.push("A pendência " + t.id + " é uma ordem sua já recebida pelo Unii: ela só fecha com a evidência da execução. Para desistir dela, cancele-a (/descartar " + t.id + ").");
+        return [];
+      }
+      if (act.state === "dropped" && t.state === "open" && t.assignee !== "user" && !ordered) {
         v.notes.push("A pendência " + t.id + " está com o Unii: use “Cobrar agora” ou “Pode fechar”.");
         return [];
       }
@@ -989,7 +996,7 @@ export function desk_group(t: Task, blocked: Set<string>): Desk {
   if (blocked.has(t.id)) {
     return "waiting";
   }
-  return t.assignee === "user" || t.talk === "user" ? "now" : "others";
+  return t.assignee === "user" || t.talk === "user" || Deps.status_of(t) === "waiting_user" ? "now" : "others";
 }
 
 // whether a task is the user's move now (the Mesa opens on it: P19)
@@ -1205,6 +1212,101 @@ export function task_agent_said(t: Task): string {
   return a !== null ? "agente " + a : t.state === "open" && t.assignee !== "user" ? "sem agente" : "";
 }
 
+// The evidence round
+// ------------------
+// Each task says its status beside its state (Tasks.ts, TaskDeps.ts):
+// an order received, waiting for the user, blocked; once closed, the
+// evidence that closed it, or "sem evidência" (closed before the round);
+// one of Unii's, its next step and when it's due, overdue past it.
+
+// an evidence as the views say it (pt-BR)
+export function evidence_said(e: Evidence): string {
+  const sum = e.summary === undefined ? "" : " — " + e.summary;
+  switch (e.type) {
+    case "slack":
+      return "Mensagem enviada no Slack (canal " + e.channel + ", ts " + e.ts + ")" + sum;
+    case "pr_merged": {
+      const m = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)$/.exec(e.url ?? "");
+      const merge = (e.confirmed ?? "").split(" ")[1];
+      return "PR mesclado: " + (m === null ? e.url : m[2] + "#" + m[3]) + (merge === undefined ? "" : " (merge " + merge.slice(0, 12) + ")") + sum;
+    }
+    case "commit_tests":
+      return "Commit " + (e.sha ?? "").slice(0, 12) + " em " + e.repo + ": " + e.passed + " " + (e.passed === 1 ? "teste passou" : "testes passaram") + ", " + e.failed + " falhas (" + e.command + ")" + sum;
+    case "tfc":
+      return "Run do Terraform Cloud " + e.run + ": " + e.status + sum;
+    case "file":
+      return "Arquivo " + e.path + (e.size === undefined ? "" : " (" + e.size + " bytes)") + sum;
+    case "reason":
+      return "Motivo: " + e.text;
+    case "user":
+      return (e.migrated ? "Resolução do usuário (registro anterior)" : "Resolução do usuário") + (e.answer == null ? "" : ": " + e.answer) + (e.note == null ? "" : " — “" + e.note + "”");
+    case "restart":
+      return "Serve reiniciado pelo Unii, como o usuário ordenou" + sum;
+  }
+}
+
+// a task's status as the views say it: "ordem recebida", "aguardando
+// você", "bloqueada", "aberta"; closed: "concluída", "descartada"
+export function task_status_said(t: Task): string {
+  if (t.state !== "open") {
+    return t.state === "done" ? "concluída" : "descartada";
+  }
+  if ((t.order ?? null) !== null) {
+    return "ordem recebida";
+  }
+  const st = Deps.status_of(t);
+  return st === "blocked" ? "bloqueada" : st === "waiting_user" ? "aguardando você" : "aberta";
+}
+
+// whether a closed task has no evidence ("sem evidência")
+export function task_unproven(t: Task): boolean {
+  return t.state !== "open" && (t.evidence ?? []).length === 0;
+}
+export const UNPROVEN_SAID = "sem evidência";
+
+// a task's marks of the evidence round, each [class, text]: an order
+// received ("ordem recebida: Sim, reinicie"), waiting for the user
+// ("aguardando você: o token"), blocked ("bloqueada: …; desbloqueia:
+// …"), overdue ("prazo vencido há 3 h"), closed without evidence
+export function task_marks(t: Task, tasks: Task[], now: number): [string, string][] {
+  const out: [string, string][] = [];
+  if (t.state !== "open") {
+    return task_unproven(t) ? [["unproven", UNPROVEN_SAID]] : [];
+  }
+  if ((t.order ?? null) !== null) {
+    out.push(["order", "ordem recebida" + (t.order!.answer === null ? "" : ": " + t.order!.answer)]);
+  }
+  const st = Deps.status_of(t);
+  if (st === "waiting_user") {
+    out.push(["waiting-user", "aguardando você" + ((t.status_why ?? null) === null ? "" : ": " + t.status_why)]);
+  }
+  if (st === "blocked") {
+    out.push(["blocked", "bloqueada" + ((t.status_why ?? null) === null ? "" : ": " + t.status_why) + ((t.unblock ?? null) === null ? "" : "; desbloqueia: " + t.unblock)]);
+  }
+  const late = Deps.overdue_ms(tasks, t, now);
+  if (late > 0) {
+    out.push(["late overdue", "prazo vencido há " + (late < 3600e3 ? Math.max(1, Math.floor(late / 60e3)) + " min" : hours_said(late))]);
+  }
+  return out;
+}
+
+// a task's next step and when it's due ("Próximo passo: revisar o PR ·
+// prazo 27/10 14:00"); "" for none (closed, or neither)
+export function task_next_said(t: Task): string {
+  if (t.state !== "open") {
+    return "";
+  }
+  const due = Deps.due_at(t);
+  const when = due === null ? "" : "prazo " + new Date(due).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const step = t.next_step ?? null;
+  return step === null && when === "" ? "" : step === null ? "Próximo passo não informado · " + when : "Próximo passo: " + step + (when === "" ? "" : " · " + when);
+}
+
+// what makes a task done, as the views say it ("" for none said)
+export function task_done_when_said(t: Task): string {
+  return (t.done_when ?? null) === null ? "" : "Pronto quando: " + t.done_when;
+}
+
 // Recommendations
 // ---------------
 // Unii recommends a task's choice (recommend) and a field's answer
@@ -1361,6 +1463,7 @@ export function desk_md(v: View, ref = ""): string {
       ...(g === "waiting" ? ["aguarda " + Deps.waits(v.tasks, t).join(", ")] : []),
       ...(task_waits_for_said(t) === "" ? [] : [task_waits_for_said(t)]),
       ...(g === "closed" ? [t.state === "done" ? "concluída" : "descartada"] : []),
+      ...task_marks(t, v.tasks, Date.now()).map(([, x]) => "**" + x + "**"),
       ...(g === "closed" || g === "waiting" || task_frees_said(v, t) === "" ? [] : [task_frees_said(v, t)]),
     ];
     return "- **" + t.id + "** " + t.title + (more.length === 0 ? "" : " · " + more.join(" · "));
@@ -1375,7 +1478,7 @@ export function desk_md(v: View, ref = ""): string {
 // user's, nor breaks on what it lacks
 export function task_whole(t: any): Task {
   const named = typeof t?.assignee === "string" && t.assignee !== "";
-  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined && Array.isArray(t.prs) && t.acts !== undefined) {
+  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined && Array.isArray(t.prs) && t.acts !== undefined && Array.isArray(t.evidence) && t.status !== undefined && t.order !== undefined) {
     return t;
   }
   return {
@@ -1397,6 +1500,14 @@ export function task_whole(t: any): Task {
     answers    : t?.answers ?? null,
     thread     : Array.isArray(t?.thread) ? t.thread : [],
     talk       : t?.talk ?? null,
+    done_when  : t?.done_when ?? null,
+    evidence   : Array.isArray(t?.evidence) ? t.evidence : [],
+    status     : t?.status ?? "open",
+    status_why : t?.status_why ?? null,
+    unblock    : t?.unblock ?? null,
+    order      : t?.order ?? null,
+    next_step  : t?.next_step ?? null,
+    next_due   : t?.next_due ?? null,
   };
 }
 
@@ -1414,15 +1525,19 @@ export function tasks_md(v: View, one: Task | null = null, waiting = false): str
     const talk = task_talk_said(one) === "" ? "" : " · " + task_talk_said(one);
     const kind = task_kind_said(one) === "" ? "" : " · " + task_kind_said(one);
     const outside = task_waits_for_said(one) === "" ? "" : " · " + task_waits_for_said(one);
-    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + " · " + assignee_said(one) + tag(one) + kind + deps + outside + talk + opts(one);
+    const marks = task_marks(one, v.tasks, Date.now()).map(([, x]) => " · **" + x + "**").join("");
+    const head = "**" + one.id + "** " + one.title + "\n\n" + STATE[one.state] + marks + " · " + assignee_said(one) + tag(one) + kind + deps + outside + talk + opts(one);
+    const round = [task_done_when_said(one), task_next_said(one)].filter((x) => x !== "").join("\n");
+    const proof = one.state === "open" ? "" : (one.evidence ?? []).length === 0 ? "**Evidência:** nenhuma registrada (" + UNPROVEN_SAID + "). `/reabrir " + one.id + "` reabre." : "**Evidência**\n\n" + one.evidence.map((e) => "- " + evidence_said(e)).join("\n");
     const acts = one.state === "open" && one.choices.some((c) => act_unii(one, c)) ? "_As opções marcadas “" + ACT_SAID + "” avisam o Unii na hora, com `/ok " + one.id + " opção`._" : "";
     const prs = (one.prs ?? []).length === 0 ? "" : "**Verificação**\n\n" + one.prs.map(pr_md).join("\n");
-    return [head, acts, said, prs, one.detail, fields_md(one), thread_md(one)].filter((x) => x !== "").join("\n\n");
+    return [head, acts, said, round, proof, prs, one.detail, fields_md(one), thread_md(one)].filter((x) => x !== "").join("\n\n");
   }
   const { open, waiting: wait, closed } = view_tasks(v);
   const frees = (t: Task) => (task_frees_said(v, t) === "" ? "" : " · **" + task_frees_said(v, t) + "**");
   const extra = (t: Task) => ((t.fields ?? []).length === 0 ? "" : " · " + t.fields.length + (t.fields.length === 1 ? " campo" : " campos")) + (task_talk_said(t) === "" ? "" : " · **" + task_talk_said(t) + "**");
-  const line = (t: Task) => "- **" + t.id + "** " + t.title + frees(t) + tag(t) + opts(t) + extra(t);
+  const marks = (t: Task) => task_marks(t, v.tasks, Date.now()).map(([, x]) => " · **" + x + "**").join("");
+  const line = (t: Task) => "- **" + t.id + "** " + t.title + marks(t) + frees(t) + tag(t) + opts(t) + extra(t);
   const whose = (t: Task | undefined) => (t === undefined || t.assignee === "user" ? "" : " (" + assignee_said(t) + ")");
   const who = (id: string) => id + whose(v.tasks.find((t) => t.id === id));
   const waits = (t: Task) => "- " + t.id + " " + t.title + whose(t) + " — aguarda " + Deps.waits(v.tasks, t).map(who).join(", ");
@@ -1430,7 +1545,7 @@ export function tasks_md(v: View, one: Task | null = null, waiting = false): str
   if (waiting) {
     return wait.length === 0 ? "Nenhuma pendência aguardando outras." : "**Aguardando outras pendências (" + wait.length + ")**\n\n" + wait.map(waits).join("\n");
   }
-  const done = (t: Task) => "- " + t.id + " " + STATE[t.state] + ": " + t.title + (t.answer === null ? "" : " — resposta: " + t.answer);
+  const done = (t: Task) => "- " + t.id + " " + STATE[t.state] + ": " + t.title + (t.answer === null ? "" : " — resposta: " + t.answer) + (task_unproven(t) ? " — **" + UNPROVEN_SAID + "**" : "");
   const parts = [
     open.length === 0 ? tasks_none_said(wait.length) : tasks_by_assignee(open).map(group).join("\n\n"),
     wait.length === 0 ? "" : "_" + tasks_waiting_said(wait.length) + "_ · `/p aguardando` mostra quais",

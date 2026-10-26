@@ -48,9 +48,28 @@
 // the thread (task_reply) or the turn ends (its last reply goes there,
 // tasks_talked): then it's the user's turn ("sua vez").
 
+// The evidence round (Evidence.ts): no task is closed without a
+// concrete, documented solution. Unii closes one (task_edit, done or
+// dropped) only with evidence, checked (a message sent on Slack, a PR
+// merged as GitHub says, a commit and its tests, a Terraform Cloud run,
+// a file that exists; a reason only to drop); the user's resolution is
+// its own evidence (user), kept with it. A choice that's an order to
+// Unii (acts: unii) doesn't close the task: it becomes Unii's, an order
+// received (order), open till Unii closes it with evidence of the
+// execution (Unii can't drop it; the user may cancel it). Each task
+// says when it's done (done_when, given as it's made by Unii's tools);
+// one of Unii's has its next step and when it's due (next_step,
+// next_due; TaskDeps.due_at), and a status: open, waiting for the user,
+// blocked (why, and what unblocks it). One closed before this round
+// with no evidence is said "sem evidência" (task_unproven): it may get
+// evidence (task_edit evidence) or be opened again; nothing is erased.
+
 import * as fs from "node:fs";
 import { Disk } from "./Disk.ts";
 import * as Deps from "./TaskDeps.ts";
+import * as Ev from "./Evidence.ts";
+import type { Evidence } from "./Evidence.ts";
+export type { Evidence } from "./Evidence.ts";
 
 // Types
 // =====
@@ -116,7 +135,19 @@ export type Task = {
   answers : Values | null;
   thread  : Talk[];
   talk    : Who | null;
+  done_when : string | null; // what makes it done, said as it's made (null: made before the evidence round, or from outside)
+  evidence  : Evidence[]; // what closed it (Evidence.ts): checked as given; none on an open one
+  status    : Deps.Status; // an open one's: open, waiting_user (Unii's, waiting for something of the user's), blocked
+  status_why: string | null; // what it waits for of the user, or why it's blocked
+  unblock   : string | null; // what unblocks it (blocked)
+  order     : Order | null; // the user's order (a choice of acts unii), received and not yet executed with evidence
+  next_step : string | null; // Unii's next step on it
+  next_due  : string | null; // when that step is due (ISO; null: STALL after it last moved, TaskDeps.due_at)
+  due?      : string | null; // as views get it (tasks_view): when its next step is due, by the server's setting
 };
+
+// the user's order: the choice picked (acts: unii), the comment, when
+export type Order = { answer: string | null; note: string | null; at: string };
 
 // a pull request as verified (R5, the task's contract): its link (a
 // GitHub pull), the head verified (7 to 40 hex), the verdict, the
@@ -132,7 +163,7 @@ export type Act = "user" | "unii";
 
 // the user's last change as they made it, kept till Unii is told of it:
 // Unii changing the state meanwhile (task_edit) doesn't hide it
-export type Heard = { state: State; answer: string | null; note: string | null; answers?: Values | null };
+export type Heard = { state: State; answer: string | null; note: string | null; answers?: Values | null; order?: boolean };
 
 // a question of a task: its id (letters, digits, - and _), its label,
 // its kind (one choice, many, a text, yes or no), its choices (yes or
@@ -179,6 +210,13 @@ export type Edit = {
   note?    : unknown;
   after?   : unknown;
   fields?  : unknown;
+  done_when? : unknown;
+  evidence?  : unknown;
+  status?    : unknown;
+  status_why?: unknown;
+  unblock?   : unknown;
+  next_step? : unknown;
+  next_due?  : unknown;
 };
 
 // Constants
@@ -193,6 +231,13 @@ export const CHOICE  = 80;
 export const MEANS   = 300;
 export const CHOICES = 9;
 export const REF     = 100;
+
+// the evidence round: the longest done_when, next step, status's why
+// and what unblocks it; the most a next_due may be ahead
+export const DONE_WHEN = 300;
+export const NEXT_STEP = 300;
+export const WHY       = 300;
+export const DUE_MOST  = 30 * 24 * 3600e3;
 
 // those a task may be assigned to; its origins, an agent's by name; the
 // longest origin and source link
@@ -327,6 +372,12 @@ export function task_read(x: unknown, now: number): Task | null {
   const at = new Date(now).toISOString();
   const made = time_read(o.made, at);
   const changed = time_read(o.changed, made);
+  const acts = acts_clean(o.acts, choices);
+  const order = order_read(o.order, choices);
+  const status = state === "open" && Deps.STATUSES.includes(o.status as Deps.Status) ? (o.status as Deps.Status) : "open";
+  const why = text(o.status_why, WHY, text_line);
+  const unblock = text(o.unblock, WHY, text_line);
+  const closed_by = state !== "open" && (o.closed_by === "user" || o.closed_by === "unii") ? o.closed_by : null;
   return {
     id      : "P" + Number(m[1]),
     title   : text(o.title, TITLE, text_line) || "(sem título)",
@@ -340,7 +391,7 @@ export function task_read(x: unknown, now: number): Task | null {
     choices,
     descriptions,
     recommend : typeof o.recommend === "string" && choices.includes(o.recommend) ? o.recommend : null,
-    answer  : state === "done" && choices.includes(answer) ? answer : null,
+    answer  : (state === "done" || order !== null) && choices.includes(answer) ? answer : null,
     note    : note === "" ? null : note,
     ref     : ref === "" ? null : ref,
     made,
@@ -349,11 +400,11 @@ export function task_read(x: unknown, now: number): Task | null {
     kind    : Deps.KINDS.includes(o.kind as Deps.TaskKind) ? (o.kind as Deps.TaskKind) : null,
     priority: Deps.PRIORITIES.includes(o.priority as Deps.Priority) ? (o.priority as Deps.Priority) : "normal",
     prs     : prs_read(o.prs).prs,
-    acts    : acts_clean(o.acts, choices),
+    acts,
     waits_for : text(o.waits_for, WAITS_FOR, text_line) || null,
     ready   : time_read(o.ready, made),
     closed  : state === "open" ? null : time_read(o.closed, changed),
-    closed_by : state !== "open" && (o.closed_by === "user" || o.closed_by === "unii") ? o.closed_by : null,
+    closed_by,
     told    : o.told !== false,
     rev     : count_read(o.rev),
     after   : after_raw(o.after, "P" + Number(m[1])),
@@ -364,7 +415,53 @@ export function task_read(x: unknown, now: number): Task | null {
     answers : state === "done" && fields.length > 0 && typeof o.answers === "object" && o.answers !== null ? values_clean(fields, o.answers) : null,
     thread  : thread_read(o.thread),
     talk    : state === "open" && (o.talk === "unii" || o.talk === "user") ? o.talk : null,
+    done_when : text(o.done_when, DONE_WHEN, text_line) || null,
+    evidence  : state === "open" ? [] : evidence_migrated(Ev.evidence_clean(o.evidence), { state, closed_by, acts, answer: choices.includes(answer) ? answer : null, note: note === "" ? null : note, closed: time_read(o.closed, changed) }),
+    status,
+    status_why: status === "open" || why === "" ? null : why,
+    unblock   : status === "blocked" && unblock !== "" ? unblock : null,
+    order,
+    next_step : state === "open" ? text(o.next_step, NEXT_STEP, text_line) || null : null,
+    next_due  : state === "open" && typeof o.next_due === "string" && !Number.isNaN(Date.parse(o.next_due)) ? new Date(Date.parse(o.next_due)).toISOString() : null,
   };
+}
+
+// an order as read: its answer one of the choices (else none), its note,
+// when; null: none
+function order_read(x: unknown, choices: string[]): Order | null {
+  if (typeof x !== "object" || x === null || Array.isArray(x)) {
+    return null;
+  }
+  const o = x as Record<string, unknown>;
+  const answer = typeof o.answer === "string" && choices.includes(o.answer) ? o.answer : null;
+  const note = typeof o.note === "string" ? text_body(o.note, NOTE) : "";
+  return { answer, note: note === "" ? null : note, at: time_read(o.at, new Date(0).toISOString()) };
+}
+
+// a closed task's evidence as read: what it holds; none, one closed
+// before the evidence round: the user's own resolution of a choice they
+// said they act on (acts: user) is its evidence, so marked (migrated);
+// any other (Unii's close, an order the user gave, one whose closer
+// isn't known) stays without: "sem evidência" (task_unproven)
+function evidence_migrated(had: Evidence[], t: { state: State; closed_by: "user" | "unii" | null; acts: Record<string, Act>; answer: string | null; note: string | null; closed: string }): Evidence[] {
+  if (had.length > 0 || t.state === "open") {
+    return had;
+  }
+  if (t.closed_by === "user" && t.answer !== null && t.acts[t.answer] === "user") {
+    return [{ type: "user", at: t.closed, answer: t.answer, note: t.note, migrated: true }];
+  }
+  return [];
+}
+
+// whether a task is closed with no evidence ("sem evidência": closed
+// before the evidence round, or by hand)
+export function task_unproven(t: { state: State; evidence?: Evidence[] | null }): boolean {
+  return t.state !== "open" && (t.evidence ?? []).length === 0;
+}
+
+// whether a task is an order of the user's received, not yet executed
+export function task_ordered(t: { state: State; order?: Order | null }): boolean {
+  return t.state === "open" && (t.order ?? null) !== null;
 }
 
 // an assignee as given (one of ASSIGNEES, any case, spaces around);
@@ -485,7 +582,7 @@ function heard_read(x: unknown, fields: Field[]): Heard | null {
   const answer = typeof o.answer === "string" ? text_line(o.answer, CHOICE) : "";
   const note = typeof o.note === "string" ? text_body(o.note, NOTE) : "";
   const answers = typeof o.answers === "object" && o.answers !== null ? values_clean(fields, o.answers) : null;
-  return { state: o.state as State, answer: answer === "" ? null : answer, note: note === "" ? null : note, ...(answers === null ? {} : { answers }) };
+  return { state: o.state as State, answer: answer === "" ? null : answer, note: note === "" ? null : note, ...(answers === null ? {} : { answers }), ...(o.order === true ? { order: true } : {}) };
 }
 
 // an after list as tasks.json holds it: its ids "P<n>" (or n, as the
@@ -573,6 +670,12 @@ export function tasks_load(dir: string, now = Date.now()): Store {
           console.error("unii: " + file + ": " + left + " item(s) left out (no id P<n>, or an id twice); the file as it was kept as " + file + ".bad");
         }
         fs.copyFileSync(file, file + ".bad");
+      }
+      const unproven = tasks.filter(task_unproven).length;
+      const migrated = tasks.filter((t) => t.evidence.some((e) => e.migrated === true)).length;
+      // said once: as a list of before the evidence round is first read
+      if (unproven + migrated > 0 && !got.tasks.some((x: any) => x !== null && typeof x === "object" && "evidence" in x)) {
+        console.error("unii: " + file + ": evidence round: " + unproven + " closed task(s) without evidence, said \"sem evidência\" (they may get evidence or be opened again); " + migrated + " with the user's own resolution as their evidence");
       }
       s.tasks = tasks;
       s.next = Math.max(1, count_read(got.next), ...tasks.map((t) => Number(t.id.slice(1)) + 1));
@@ -895,12 +998,34 @@ export function pr_sound(t: { title: string; detail?: string; assignee?: Assigne
 
 // what Unii's tools hold a task to besides (R5): task_add needs its
 // origin given, never taken from the turn (turn: where it came from, said
-// only to help); a ref, of either, one of the list's fronts. The args
+// only to help); a ref, of either, one of the list's fronts. And (the
+// evidence round) task_add needs done_when (what makes it done); one of
+// Unii's, its next_step; one with choices, who acts on each (acts: every
+// choice named), so an order to Unii is never taken for the user's own
+// act. The args
 // with the ref as the list writes it, and the front to add once the task
 // is kept (null: none); else why not
 export function tool_args(s: Store, name: string, args: Edit, turn: Origin | null): { args: Edit; added: string | null } | string {
   if (name === "task_add" && (args.origin === undefined || args.origin === null || String(args.origin).trim() === "")) {
     return "Give origin: where this task came from: chat (the user asked for it), timer (a schedule's turn), agent:<name> (a subagent's report), slack or github. It's not taken from the turn" + (turn === null ? "" : " (this one came from " + turn + ")") + ": say who it really came from.";
+  }
+  if (name === "task_add") {
+    if (text_line(args.done_when, DONE_WHEN) === "") {
+      return "Give done_when: what concretely makes this task done (\"PR #19 mesclado e serve reiniciado\", \"resposta enviada a Enzo no Slack\"). It's what its evidence must show when it's closed.";
+    }
+    const mine = assignee_read(args.assignee ?? args.who) === "unii";
+    if (mine && text_line(args.next_step, NEXT_STEP) === "") {
+      return "Give next_step: your next concrete step on this task (and next_due, when it's due; none: " + Deps.stall_ms() / 3600e3 + " h after it last moved).";
+    }
+    const read = choices_read(args.choices);
+    const choices = typeof read === "string" ? [] : read.choices;
+    if (choices.length > 0 && !String(args.kind ?? "").trim().toLowerCase().startsWith("restart")) {
+      const acts = acts_read(args.acts, choices);
+      const left = typeof acts === "string" ? [] : choices.filter((c) => acts[c] === undefined);
+      if (left.length > 0) {
+        return "Give acts for every choice: who acts once it's picked, user (it reports what they did or decided) or unii (an order to you, which stays open as an order received until you close it with evidence). Not said: " + left.map((c) => JSON.stringify(c)).join(", ") + ".";
+      }
+    }
   }
   const ref = ref_args(s, args);
   if (typeof ref === "string") {
@@ -914,6 +1039,123 @@ export function tool_args(s: Store, name: string, args: Edit, turn: Origin | nul
 // depois" (the user does)
 export const RESTART_YES   = "Sim, reinicie";
 export const RESTART_LATER = "Eu reinicio depois";
+// whether an order's answer asks the restart now: the template's "Sim,
+// reinicie", or a restart choice of its own read the other way round
+// (SmoothDove): now only with a plain sign of it. A restart with no task
+// (Server.ts Chat.back) closes only such orders: one for later stays
+// open, for Unii to close with its own restart. In order:
+// 1. no word of restarting: no
+// 2. a hard wait (RESTART_WAIT: a refusal, a clock time, an event, a day,
+//    a condition, "depois", "em seguida"...): later, even beside "agora"
+// 3. a word of now ("agora", "já", "now", "imediatamente", or a wait
+//    denied: "sem esperar", "não espere", "don't wait"): now, whatever
+//    else it says ("Reinicie agora, de manhã já está", "Restart the early
+//    worker now")
+// 4. else now only if every other word is a plain one (RESTART_PLAIN:
+//    "sim", "pode", "e avise", "o serve", "a 1 instância"...): any other,
+//    a time of its own ("ao almoço", "de tardinha", "hoje", "logo",
+//    "outro dia", "afterwards") or a name it doesn't know ("o night
+//    worker"), keeps the order open: the safe side
+// By design (PaperWaffle, baixa 3): a bare "Reinicie" is now (the verb
+// alone asks nothing else), and a count is plain only in one or two
+// digits: "a 100 instâncias" stays open (no serve runs that many)
+export function restart_now(answer: string | null): boolean {
+  // any run of blanks (two spaces, a line break, a tab) reads as one
+  // space, so "quem  sabe" or "em\nseguida" match as "quem sabe" (PaperWaffle)
+  const lower = (answer ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  const a = lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (a === RESTART_YES.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()) {
+    return true;
+  }
+  // "sem esperar", "não espere": the restart asked now, its words of
+  // waiting said only to deny them (read as "agora")
+  const b = a.replace(RESTART_NO_WAIT, " agora ");
+  if (!/\b(?:reinici\w*|restart\w*)\b/.test(b)) {
+    return false;
+  }
+  // "à uma", "à 1": the accent tells the hour from the article
+  if (RESTART_AT_HOUR.test(lower) || RESTART_WAIT.some((w) => w.test(b))) {
+    return false;
+  }
+  if (RESTART_NOW.test(b)) {
+    return true;
+  }
+  // a number is plain only as a count ("a 3 instâncias"): a digit on its
+  // own ("o 2º", "Reinicie 2") may be a date or an order: open (PeachCow)
+  const words = b.split(/[^a-z0-9']+/).filter((w) => w !== "");
+  return words.every((w, k) => RESTART_PLAIN.has(w) || /^(?:reinici|restart)/.test(w) || (/^\d{1,2}$/.test(w) && RESTART_COUNTED.has(words[k + 1] ?? "")));
+}
+
+// the nouns a count goes with (already without accents, lower): "a 3
+// instâncias", "a segunda instância", "the 2 instances"
+const RESTART_COUNTED = new Set(["instancia", "instancias", "instance", "instances", "vez", "vezes", "time", "times", "servidor", "servidores", "server", "servers", "servico", "servicos", "worker", "workers", "processo", "processos", "process", "processes"]);
+
+// a wait denied (already without accents, lower): "sem esperar", "não
+// espere", "nem aguarde", "don't wait", "without waiting". Limits: "Reinicie
+// já, não depois" still reads "não depois" as a wait, and "Reinicie sem
+// esperar não" reads its trailing "não" as a refusal (both stay open: the
+// safe side)
+const RESTART_NO_WAIT = /\b(?:sem (?:esperar|aguardar|demora|demorar)|(?:nao|nem) (?:espere|esperar|espera|aguarde|aguardar|aguarda)|don'?t wait|do not wait|without waiting|no wait(?:ing)?)\b/g;
+
+// a plain sign of now (already without accents, lower). "já já" is a
+// soon, not a now: RESTART_WAIT takes it first
+const RESTART_NOW = /\b(?:agora|ja|now|imediatamente|immediately|asap|right away)\b/;
+
+// the hour by its accent (lower, accents kept): "à uma", "à 1", "à uma e
+// meia". "a" with no accent is the article ("a 1 instância"), read as an
+// hour only at the end or before "h", "hora", "e meia" (RESTART_WAIT)
+const RESTART_AT_HOUR = /(?:^|[^\p{L}\p{N}])à (?:uma|\d{1,2})(?![\p{L}\p{N}])/u;
+
+// the words a restart asked now may carry besides its verb (already
+// without accents, lower): a yes, a courtesy, an "e avise", an object
+// ("o serve", "a 1 instância", "as duas instâncias", "de novo"). Numbers
+// of one or two digits too (restart_now). Any other word keeps it open
+const RESTART_PLAIN = new Set([
+  "sim", "s", "yes", "y", "ok", "okay", "pode", "podes", "voce", "vc", "you", "can", "may", "please", "pls", "por", "favor", "pf", "vai", "go", "ahead", "la", "entao", "so",
+  "e", "and", "avise", "avisa", "avisar", "me", "notify", "tell", "let", "know",
+  "o", "a", "os", "as", "the", "it", "this", "isso", "ele", "serve", "servidor", "server", "service", "servico", "unii", "chat", "8788",
+  "instancia", "instancias", "instance", "instances", "um", "uma", "dois", "duas", "tres", "one", "two", "three", "tudo", "all", "both", "ambos", "ambas", "de", "novo", "again",
+  // an ordinal before a counted noun ("a segunda instância"): RESTART_WAIT
+  // reads "segunda" as a day unless such a noun follows it
+  "primeira", "primeiro", "segunda", "segundo", "terceira", "terceiro", "first", "second", "third",
+  // "vez" too, the noun RESTART_WAIT lets follow "segunda" ("Reinicie a
+  // segunda vez", "uma vez"): plain like "instância" (PaperWaffle)
+  "vez", "vezes",
+]);
+
+// what puts off a restart asked, even beside "agora" (already without
+// accents, lower): a word of waiting or refusal, a time ("às 22h",
+// "22:30", "em 1 hora", "daqui a pouco"), an event to wait for ("ao
+// terminar o PR", "assim que os agentes acabarem"), a day or a condition.
+// "agora" is no wait: "hora" is whole. A part of the day ("manhã",
+// "cedo", "night", "early"), "hoje", "logo", "em breve" are no hard wait:
+// without a word of now they keep the order open (not plain words), with
+// one ("Reinicie agora, de manhã já está") they don't. "tarde" and
+// "noite" stay hard: "agora à tarde" is this afternoon
+const RESTART_WAIT: RegExp[] = [
+  /\b(?:depois|apos|quando|mais tarde|amanha|noite|tarde|antes|ao fim|ao final|no fim|no final|fim do|so se|somente|nao|nunca|ate|daqui|assim que|logo que|enquanto|em seguida|outro dia|outra hora|ja ja|later|after|afterwards|afterward|when|tomorrow|tonight|until|before|once|soon|next|don'?t|not|never|as soon)\b/,
+  // a time: "às 22h", "22:30", "22 h", "at 10", "em 1 hora", "em uma hora", "in an hour"
+  /\bas \d|\b\d{1,2} ?h\b|\b\d{1,2}h\d{2}\b|\b\d{1,2}:\d{2}\b|\bat \d|\bem (?:\d+|um|uma|meia|duas|dois|tres|alguns|algumas|poucos|poucas)\b|\bin (?:\d+|an?|one|two|few)\b/,
+  /\b(?:hora|horas|minuto|minutos|min|hour|hours|minute|minutes)\b/,
+  // an event: "ao terminar", "os agentes acabarem", "concluir o PR"
+  /\b(?:termin\w*|acab\w*|conclu\w*|finaliz\w*|finish\w*|complet\w*|esper\w*|aguard\w*|wait\w*)\b/,
+  // a day: "na sexta", "segunda-feira", "dia 27", "27/10", "no fim de
+  // semana", "monday", "weekend"
+  /\bsegunda(?! (?:instancia|instancias|vez|vezes|servidor|servico|worker|processo)\b)|\b(?:terca|quarta|quinta|sexta|sabado|domingo|feira|semana|mes|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|week|month)\b|\bdia (?:\d|primeiro|um|dois|tres)|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)\b|\bon the\b/,
+  // a time in words: "ao meio-dia", "à meia-noite", "às dez", "às três e
+  // meia", "a uma" at the end, "a 1h", "a 1 hora", "at noon". "a uma
+  // instância", "a 2 instâncias" are counts, no hour ("à uma":
+  // RESTART_AT_HOUR). A limit: "as" is also the article ("Reinicie as
+  // duas instâncias" stays open: the safe side)
+  /\bmei[oa][- ](?:dia|noite)\b|\ba (?:uma|\d{1,2})(?= ?h\b| ?hora| e meia|\s*[,.;:!?](?!\s*(?:agora|ja|now|imediatamente|immediately)\b)|\s*$)|\bas (?:uma|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte)\b|\b(?:noon|midnight|o'?clock)\b|\bat (?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
+  // a condition: "se puder", "se der", "se possível", "if you can"
+  /\bse (?:puder|pude\w*|der|possivel|conseguir|for possivel)\b|\bif (?:you can|possible)\b/,
+  // a doubt: "agora, quem sabe", "talvez", "quiçá", "sei lá", "depende",
+  // "provavelmente", "maybe", "who knows" (PeachCow, PaperWaffle). The
+  // blanks between words are already one space (restart_now)
+  /\b(?:quem sabe|talvez|quica|porventura|sei la|depend\w*|provavel\w*|maybe|perhaps|possibly|probably|who knows|it depends)\b/,
+];
+
 export const RESTART_DETAIL = "Política (P8): o Unii reinicia sozinho quando nenhum agente está rodando, avisando antes e depois. Esta pendência só existe porque há agentes rodando agora, e o reinício os interrompe.";
 
 // Fields
@@ -1138,6 +1380,72 @@ function kind_args(args: Edit): { kind?: Deps.TaskKind | null; priority?: Deps.P
   return out;
 }
 
+// when a next step is due, as given: a time (ISO), or from now ("4h",
+// "30m", "2d", "90 min"); not past, at most DUE_MOST ahead. "" or null:
+// none ({ v: null }). Else why not
+export function due_read(x: unknown, now: number): { v: string | null } | string {
+  if (x === undefined || x === null || String(x).trim() === "") {
+    return { v: null };
+  }
+  const said = String(x).trim().toLowerCase();
+  const m = /^(\d{1,4})\s*(m|min|mins|minutos?|h|hs|horas?|d|dias?|days?|hours?|minutes?)$/.exec(said);
+  const unit = m === null ? 0 : m[2].startsWith("m") ? 60e3 : m[2].startsWith("h") ? 3600e3 : 86400e3;
+  const at = m !== null ? now + Number(m[1]) * unit : /^\d{4}-\d{2}-\d{2}/.test(said) ? Date.parse(String(x).trim()) : NaN;
+  if (Number.isNaN(at)) {
+    return "next_due is a time (ISO, as 2026-10-27T14:00:00-03:00) or how long from now (\"4h\", \"30m\", \"2d\").";
+  }
+  if (at < now - 60e3) {
+    return "next_due is past (" + new Date(at).toISOString() + "): give when the next step is due from now.";
+  }
+  if (at > now + DUE_MOST) {
+    return "next_due is at most 30 days ahead: a step that far is no next step; say a nearer one.";
+  }
+  return { v: new Date(at).toISOString() };
+}
+
+// the evidence round's fields as a tool gives them (done_when,
+// next_step, next_due, status with its why and what unblocks it), for a
+// task of `assignee`; each only if given; else why not
+function round_args(args: Edit, now: number, assignee: Assignee): { done_when?: string | null; next_step?: string | null; next_due?: string | null; status?: Deps.Status; status_why?: string | null; unblock?: string | null } | string {
+  const out: { done_when?: string | null; next_step?: string | null; next_due?: string | null; status?: Deps.Status; status_why?: string | null; unblock?: string | null } = {};
+  if (args.done_when !== undefined) {
+    out.done_when = text_line(args.done_when, DONE_WHEN) || null;
+  }
+  if (args.next_step !== undefined) {
+    out.next_step = text_line(args.next_step, NEXT_STEP) || null;
+  }
+  if (args.next_due !== undefined) {
+    const due = due_read(args.next_due, now);
+    if (typeof due === "string") {
+      return due;
+    }
+    out.next_due = due.v;
+  }
+  if (args.status !== undefined && args.status !== null && args.status !== "") {
+    const st = String(args.status).trim().toLowerCase() as Deps.Status;
+    if (!Deps.STATUSES.includes(st)) {
+      return "status is one of " + Deps.STATUSES.join(", ") + " (an order is the user's pick, never set; done and dropped are state).";
+    }
+    const why = text_line(args.status_why, WHY);
+    const unblock = text_line(args.unblock, WHY);
+    if (st === "blocked" && (why === "" || unblock === "")) {
+      return "status blocked needs status_why (why it's blocked) and unblock (what unblocks it).";
+    }
+    if (st === "waiting_user" && why === "") {
+      return "status waiting_user needs status_why: what of the user's it waits for.";
+    }
+    if (st === "waiting_user" && assignee === "user") {
+      return "status waiting_user is for a task of yours (assignee unii) that waits for the user; one of the user's is theirs already.";
+    }
+    out.status = st;
+    out.status_why = st === "open" ? null : why;
+    out.unblock = st === "blocked" ? unblock : null;
+  } else if (args.status_why !== undefined || args.unblock !== undefined) {
+    return "status_why and unblock go with status (waiting_user, blocked).";
+  }
+  return out;
+}
+
 // a new task made by Unii (by: "main"); else why not
 // (origin: where the turn came from, unless args give one)
 export function task_new(s: Store, args: Edit, by: string, now: number, origin: Origin | null = null): Task | string {
@@ -1183,6 +1491,10 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
   if (typeof kp === "string") {
     return kp;
   }
+  const round = round_args(args, now, whose.assignee ?? "user");
+  if (typeof round === "string") {
+    return round;
+  }
   // from outside (the inbox) a PR's link says what it's about, not that
   // it was verified: only Unii's are held to the contract
   const unsound = by === "inbox" ? null : pr_sound({ title, detail: text_body(args.detail, DETAIL), assignee: whose.assignee ?? "user", kind: kp.kind ?? null, prs: prs.prs });
@@ -1206,6 +1518,8 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
     id: "P" + s.next, title, detail: text_body(args.detail, DETAIL), state: "open", assignee: whose.assignee ?? "user", origin: whose.origin ?? origin_read(origin), origin_url: whose.origin_url ?? null, agent: whose.agent ?? null, by, ...choices, recommend: recommend.v, answer: null, note: null,
     ref: ref === "" ? null : ref, made: at, changed: at, moved: at, kind: kp.kind ?? null, priority: kp.priority ?? (kp.kind === "info" ? "low" : "normal"), prs: prs.prs, acts, waits_for: text_line(args.waits_for, WAITS_FOR) || null, ready: at, closed: null, closed_by: null, told: true, rev: 0, after, freed: false, heard: null,
     fields: fields.fields, draft: {}, answers: null, thread: [], talk: null,
+    done_when: round.done_when ?? null, evidence: [], status: round.status ?? "open", status_why: round.status_why ?? null, unblock: round.unblock ?? null, order: null,
+    next_step: round.next_step ?? null, next_due: round.next_due ?? null,
   };
   s.next += 1;
   s.tasks.push(task);
@@ -1226,7 +1540,7 @@ export function task_new(s: Store, args: Edit, by: string, now: number, origin: 
 // below are taken; any other, or a wrong value, is refused, said why
 
 export const INBOX_ORIGINS = ["slack", "github", "timer"];
-const INBOX_KEYS = ["title", "detail", "origin", "origin_url", "ref", "choices"];
+const INBOX_KEYS = ["title", "detail", "origin", "origin_url", "ref", "choices", "acts"];
 
 // the marks that turn text's direction (U+202A-U+202E, U+2066-U+2069,
 // U+200E, U+200F): from outside (anyone on Slack), so a title can't read
@@ -1239,14 +1553,14 @@ export function bidi_strip(x: unknown): unknown {
 
 export function task_inbox(s: Store, x: unknown, now: number): { task: Task; made: boolean } | string {
   if (typeof x !== "object" || x === null || Array.isArray(x)) {
-    return "task is an object {title, detail, origin, origin_url, ref, choices}.";
+    return "task is an object {title, detail, origin, origin_url, ref, choices, acts}.";
   }
   const o = Object.fromEntries(Object.entries(x as Record<string, unknown>).map(([k, v]) => [k, bidi_strip(v)]));
   const odd = Object.keys(o).filter((k) => !INBOX_KEYS.includes(k));
   if (odd.length > 0) {
     return "Unknown key(s): " + odd.slice(0, 5).map((k) => text_line(k, 40)).join(", ") + ".";
   }
-  const bad = INBOX_KEYS.filter((k) => k !== "choices" && o[k] !== undefined && typeof o[k] !== "string");
+  const bad = INBOX_KEYS.filter((k) => k !== "choices" && k !== "acts" && o[k] !== undefined && typeof o[k] !== "string");
   if (bad.length > 0) {
     return bad.join(", ") + " must be text.";
   }
@@ -1273,10 +1587,16 @@ export function task_inbox(s: Store, x: unknown, now: number): { task: Task; mad
   if (typeof choices === "string") {
     return choices;
   }
+  // who acts on each choice (the evidence round): "Enviar rascunho" an
+  // order to Unii (unii), so picking it doesn't close the task untold
+  const acts = acts_read(o.acts, choices.choices);
+  if (typeof acts === "string") {
+    return acts;
+  }
   const detail = text_body(o.detail, DETAIL);
   const had = s.tasks.find((t) => t.state === "open" && t.assignee === "user" && t.origin === origin && t.ref === ref);
   if (had === undefined) {
-    const t = task_new(s, { title, detail, choices: choices.choices, ref, origin, origin_url: url, assignee: "user" }, "inbox", now);
+    const t = task_new(s, { title, detail, choices: choices.choices.map((label, k) => ({ label, description: choices.descriptions[k] ?? "" })), acts, ref, origin, origin_url: url, assignee: "user" }, "inbox", now);
     return typeof t === "string" ? t : { task: t, made: true };
   }
   const twin = s.tasks.find((t) => t !== had && t.state === "open" && t.title.toLowerCase() === title.toLowerCase());
@@ -1288,6 +1608,8 @@ export function task_inbox(s: Store, x: unknown, now: number): { task: Task; mad
   had.origin_url = url ?? had.origin_url;
   if (choices.choices.length > 0) {
     [had.choices, had.descriptions] = [choices.choices, choices.descriptions];
+    had.acts = acts_clean(o.acts === undefined ? had.acts : acts, choices.choices);
+    had.recommend = had.recommend != null && choices.choices.includes(had.recommend) ? had.recommend : null;
   }
   had.changed = new Date(now).toISOString();
   had.moved = had.changed;
@@ -1376,6 +1698,18 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
     return kp;
   }
   Object.assign(next, kp);
+  const round = round_args(args, now, next.assignee);
+  if (typeof round === "string") {
+    return round;
+  }
+  Object.assign(next, round);
+  if (round.next_step !== undefined && round.next_due === undefined && round.next_step !== task.next_step) {
+    next.next_due = null;
+  }
+  if (next.assignee === "user" && next.status === "waiting_user") {
+    next.status = "open";
+    next.status_why = null;
+  }
   // the contract held once the edit touches it (an older task, made
   // before it, keeps being edited otherwise)
   const unsound = args.kind !== undefined || args.prs !== undefined || args.title !== undefined || args.detail !== undefined || args.assignee !== undefined ? pr_sound(next) : null;
@@ -1427,19 +1761,63 @@ export function task_edit(s: Store, args: Edit & { id?: unknown }, now: number):
   // staying closed) keeps its kind, choices and who acts on each; else
   // Unii could turn the user's pick into a leave they never gave
   // (Restart.check: a restart with agents at work). Open it again first
-  const fixed = task.state !== "open" && next.state !== "open";
+  // (so is an order received: the user picked from them as they were)
+  const fixed = (task.state !== "open" && next.state !== "open") || task_ordered(task);
   const was = { kind: task.kind ?? null, choices: task.choices, acts: acts_clean(task.acts, task.choices) };
   const moved = (k: "kind" | "choices" | "acts"): boolean => same_json(was[k], next[k] ?? null) === false;
-  const touched = fixed ? (["kind", "choices", "acts"] as const).filter(moved) : [];
+  const touched: string[] = fixed ? (["kind", "choices", "acts"] as const).filter(moved) : [];
+  if (task_ordered(task) && next.answer !== task.answer) {
+    touched.unshift("answer");
+  }
+  // an order received is Unii's to execute: handing it to the user
+  // (assignee user) would leave it in limbo as theirs, neither executed
+  // nor closed with evidence (what isn't Unii's to do goes in a task of
+  // its own, for the user)
+  if (task_ordered(task) && next.assignee !== task.assignee) {
+    return task.id + " is the user's order received (" + (task.order?.answer ?? "their pick") + "): it stays yours (assignee " + task.assignee + ") till you close it with evidence of the execution. If something of the user's is needed, set status waiting_user (why) or add a task of theirs for it. Nothing was changed.";
+  }
   if (touched.length > 0) {
-    return task.id + " is closed (" + task.state + "): its " + touched.join(", ") + " can't change, the user picked from them as they were. Open it again (state open) to change them; the user picks again.";
+    return task.id + (task_ordered(task) ? " is the user's order received" : " is closed (" + task.state + ")") + ": its " + touched.join(", ") + " can't change, the user picked from them as they were." + (task_ordered(task) ? " Execute it and close it with evidence; for another decision, add a new task." : " Open it again (state open) to change them; the user picks again.");
   }
   const waits = Deps.waits(s.tasks, next);
   if (next.state === "done" && task.state === "open" && waits.length > 0) {
     return task.id + " waits for " + waits.join(", ") + ", still open: it can't be done before them. Close those first, change its after, or drop it if it no longer applies.";
   }
+  // the evidence round: an order of the user's is never dropped by Unii;
+  // a close needs evidence (Evidence.ts), checked; one closed already
+  // may get evidence (one "sem evidência" proven); one opened again
+  // loses its close's evidence and order, its status open again
+  if (task_ordered(task) && next.state === "dropped") {
+    return task.id + " is the user's order (" + (task.order?.answer ?? "their pick") + "): you can't drop it. Execute it and close it done with evidence of the execution; if you can't, set status waiting_user or blocked (why, what unblocks it) and tell the user, who may cancel it. Nothing was changed.";
+  }
+  const closing = next.state !== "open" && (task.state === "open" || next.state !== task.state);
+  if (closing) {
+    const ev = Ev.evidence_read(args.evidence, next.state as "done" | "dropped", now);
+    if (typeof ev === "string") {
+      return task.id + ": " + ev;
+    }
+    next.evidence = ev;
+  } else if (args.evidence !== undefined && args.evidence !== null) {
+    if (next.state === "open") {
+      return "evidence goes with closing a task (state done or dropped), or on one closed already (sem evidência: it's added). " + task.id + " stays open. Nothing was changed.";
+    }
+    const ev = Ev.evidence_read(args.evidence, next.state as "done" | "dropped", now);
+    if (typeof ev === "string") {
+      return task.id + ": " + ev;
+    }
+    next.evidence = [...(task.evidence ?? []), ...ev].slice(-Ev.EVIDENCES);
+  }
+  if (next.state === "open" && task.state !== "open") {
+    next.evidence = [];
+    next.order = null;
+  }
   if (next.state !== "open") {
     next.talk = null;
+    next.status = "open";
+    next.status_why = null;
+    next.unblock = null;
+    next.next_step = null;
+    next.next_due = null;
   }
   const untold = !task.told && !task.freed;
   return task_put(s, task, next, now, next.state !== task.state && !untold ? true : null);
@@ -1453,6 +1831,10 @@ function same_json(a: unknown, b: unknown): boolean {
 
 // what a task of Unii's closed by the user says, with no comment typed
 export const CLOSE = "Pode fechar";
+// what an order canceled by the user says, with no comment typed; an
+// order's first next step (its choice after it)
+export const CANCEL = "Ordem cancelada pelo usuário";
+export const ORDER_STEP = "Executar a ordem do usuário: ";
 
 // a task resolved by the user: done (answer: one of its choices), dropped
 // or opened again, with a comment; null: so already (an act done again
@@ -1473,11 +1855,17 @@ export function task_resolve(s: Store, id: unknown, state: unknown, answer: unkn
   // a task of Unii's (P6): the user tells it to close it ("Pode fechar",
   // done) or asks after it in its thread ("Cobrar agora"); not dropped
   const theirs = task.assignee !== "user" && task.state === "open";
-  if (theirs && to === "dropped") {
+  // an order received (the evidence round): it closes only with the
+  // evidence of its execution, by Unii; the user may cancel it (dropped)
+  const ordered = task_ordered(task);
+  if (ordered && to === "done") {
+    return said === null || said === task.order?.answer ? null : "A pendência " + task.id + " já é uma ordem sua recebida pelo Unii (" + (task.order?.answer ?? "") + "): ela só fecha com a evidência da execução. Para mudar a ordem, cancele-a. Nada foi alterado.";
+  }
+  if (theirs && to === "dropped" && !ordered) {
     return "A pendência " + task.id + " está com o Unii: use “Cobrar agora” ou “Pode fechar”. Nada foi alterado.";
   }
   const typed = note === undefined || note === null ? null : text_body(note, NOTE) || null;
-  const comment = theirs && to === "done" && typed === null ? CLOSE : typed;
+  const comment = theirs && to === "done" && typed === null ? CLOSE : ordered && to === "dropped" && typed === null ? CANCEL : typed;
   const waits = Deps.waits(s.tasks, task);
   if (to !== "open" && task.state === "open" && waits.length > 0) {
     return "A pendência " + task.id + " aguarda " + waits.join(", ") + ": resolva " + (waits.length === 1 ? "essa pendência" : "essas pendências") + " antes. Nada foi alterado.";
@@ -1489,7 +1877,7 @@ export function task_resolve(s: Store, id: unknown, state: unknown, answer: unkn
     if (s.tasks.filter((t) => t.state === "open").length >= OPEN) {
       return "Há " + OPEN + " pendências abertas, o máximo: conclua alguma antes.";
     }
-    return task_put(s, task, { ...task, state: "open", answer: null, note: comment, answers: null }, now, false);
+    return task_put(s, task, { ...task, state: "open", answer: null, note: comment, answers: null, evidence: [], order: null, status: "open", status_why: null, unblock: null }, now, false);
   }
   const draft = to === "done" ? values_merge(task, values) : task.draft;
   if (typeof draft === "string") {
@@ -1503,7 +1891,26 @@ export function task_resolve(s: Store, id: unknown, state: unknown, answer: unkn
   if (task.state === to && task.answer === said && (comment === null || comment === task.note) && JSON.stringify(task.answers) === JSON.stringify(answers ?? task.answers)) {
     return null;
   }
-  return task_put(s, task, { ...task, state: to, answer: to === "done" ? said : null, note: comment ?? task.note, draft, answers: to === "done" ? (answers ?? task.answers) : null, talk: null }, now, false);
+  const at = new Date(now).toISOString();
+  // a choice that's an order to Unii: not closed, an order received,
+  // Unii's from now on, till it closes it with evidence of the execution
+  if (to === "done" && task.state === "open" && !theirs && said !== null && task_act(task, said) === "unii") {
+    return task_put(s, task, { ...task, state: "open", assignee: "unii", order: { answer: said, note: comment, at }, answer: said, note: comment ?? task.note, draft, answers: answers ?? task.answers, talk: null, status: "open", status_why: null, unblock: null, next_step: ORDER_STEP + said, next_due: null }, now, false);
+  }
+  // the user's resolution is its own evidence: what they picked, said
+  const evidence: Evidence[] = [{ type: "user", at, answer: to === "done" ? said : null, note: comment }];
+  return task_put(s, task, { ...task, state: to, answer: to === "done" ? said : null, note: comment ?? task.note, draft, answers: to === "done" ? (answers ?? task.answers) : null, talk: null, evidence, status: "open", status_why: null, unblock: null, next_step: null, next_due: null }, now, false);
+}
+
+// a task closed by the system itself (done), with its own evidence (a
+// restart the user ordered: Server.ts Chat.back); null: none such, or
+// not open
+export function task_close_system(s: Store, id: string, evidence: Evidence[], now: number): Task | null {
+  const task = task_find(s, id);
+  if (task === null || task.state !== "open") {
+    return null;
+  }
+  return task_put(s, task, { ...task, state: "done", evidence, talk: null, status: "open", status_why: null, unblock: null, next_step: null, next_due: null }, now, true);
 }
 
 // whether a change moves a task on: anything but its agent (linking,
@@ -1535,7 +1942,7 @@ function task_put(s: Store, task: Task, next: Task, now: number, told: boolean |
   next.closed_by = next.state === "open" ? null : reclosed ? (told === false ? "user" : "unii") : (task.closed_by ?? null);
   next.told = told ?? task.told;
   next.freed = told === null ? task.freed : false;
-  next.heard = told === null ? task.heard : told ? null : { state: next.state, answer: next.answer, note: next.note, answers: next.answers };
+  next.heard = told === null ? task.heard : told ? null : { state: next.state, answer: next.answer, note: next.note, answers: next.answers, ...(task_ordered(next) && !task_ordered(task) ? { order: true } : {}) };
   if (told === false) {
     s.rev += 1;
     next.rev = s.rev;
@@ -1703,7 +2110,9 @@ export function tasks_view(s: Store, now: number): Task[] {
   const all = tasks_sort(s.tasks);
   const open = all.filter((t) => t.state === "open");
   const closed = all.filter((t) => t.state !== "open" && now - Date.parse(t.closed ?? t.changed) <= RECENT).slice(0, VIEW);
-  return [...open, ...closed].map((t) => (t.thread.length > VIEW_TALK ? { ...t, thread: t.thread.slice(-VIEW_TALK) } : t));
+  // each with when its next step is due, by the server's setting (the
+  // views never read it: TaskDeps.due_at)
+  return [...open, ...closed].map((t) => ({ ...t, due: Deps.due_at({ ...t, due: undefined }), ...(t.thread.length > VIEW_TALK ? { thread: t.thread.slice(-VIEW_TALK) } : {}) }));
 }
 
 // how long ago: "5m", "3h", "2d"
@@ -1718,10 +2127,12 @@ export function task_said(t: Task): string {
   if (t.freed && t.state === "open") {
     return "Pendência " + t.id + " liberada: “" + t.title + "”. As pendências de que dependia (" + t.after.join(", ") + ") foram resolvidas.";
   }
-  const answer = t.answer === null ? "" : " Resposta: " + t.answer + "." + (t.state === "done" && task_act(t) === "unii" ? " Essa opção é uma ordem: cabe ao Unii executá-la." : "");
-  const answers = t.state === "done" ? values_said(t.fields, t.answers) : "";
+  const ordered = task_ordered(t);
+  const answer = t.answer === null ? "" : " Resposta: " + t.answer + "." + (ordered ? " Essa opção é uma ordem: cabe ao Unii executá-la; a pendência fica com o Unii e só fecha com a evidência da execução." : "");
+  const answers = t.state === "done" || ordered ? values_said(t.fields, t.answers) : "";
   const note = t.note === null ? "" : " Comentário: “" + t.note + "”.";
-  return "Pendência " + t.id + " " + SAID[t.state] + " pelo usuário: “" + t.title + "”." + answer + (answers === "" ? "" : " Respostas: " + answers + ".") + note;
+  const how = ordered ? "recebida como ordem do usuário" : SAID[t.state] + " pelo usuário";
+  return "Pendência " + t.id + " " + how + ": “" + t.title + "”." + answer + (answers === "" ? "" : " Respostas: " + answers + ".") + note;
 }
 
 // resolutions already said by their notes (each without go has one), as
@@ -1729,7 +2140,7 @@ export function task_said(t: Task): string {
 // how and its answer, not the title, the fields or the comment again
 // (R4: the batch half as long, the notes holding the whole)
 export function tasks_noted_said(tasks: Task[]): string {
-  const one = (t: Task) => t.id + " " + SAID[t.state] + (t.answer === null ? "" : " (" + t.answer + (t.state === "done" && task_act(t) === "unii" ? ", ordem ao Unii" : "") + ")");
+  const one = (t: Task) => t.id + " " + (task_ordered(t) ? "recebida como ordem" : SAID[t.state]) + (t.answer === null ? "" : " (" + t.answer + (task_ordered(t) ? ", ordem ao Unii: só fecha com evidência da execução" : "") + ")");
   return "O usuário resolveu, como dizem as notas acima: " + tasks.map(one).join("; ") + ".";
 }
 
@@ -1745,7 +2156,18 @@ export function task_line(t: Task, now: number, whole = false, all: Task[] | nul
   const talk = t.talk === "unii" ? " [the user wrote in its thread: reply with task_reply]" : "";
   const acted = Object.entries(t.acts ?? {}).filter(([, a]) => a === "unii").map(([c]) => c);
   const opts = (t.choices.length === 0 ? "" : " options: " + choices_said(t) + (t.recommend == null ? "" : " (recommended: " + t.recommend + ")") + (acted.length === 0 ? "" : " (you act on: " + acted.join(" | ") + ")")) + fields + deps + talk;
-  const tail = [t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), (t.agent ?? null) === null ? "" : "agent " + t.agent, t.kind == null ? "" : "kind " + t.kind, Deps.priority_of(t) === "normal" ? "" : "priority " + Deps.priority_of(t), (t.waits_for ?? null) === null ? "" : "waits for " + JSON.stringify(t.waits_for), ...(t.prs ?? []).map(pr_line), ago(t.made, now)].filter((x) => x !== "").join(", ");
+  const st = Deps.status_of(t);
+  const round = [
+    task_ordered(t) ? "ORDER received: " + JSON.stringify(t.order!.answer) + " (execute it; close it done only with evidence of the execution)" : "",
+    st === "open" ? "" : "status " + st + ": " + JSON.stringify(t.status_why ?? "") + (st === "blocked" ? " unblock: " + JSON.stringify(t.unblock ?? "") : ""),
+    // what makes it done and its next step: in its whole line; overdue
+    // in any
+    !whole || (t.done_when ?? null) === null ? "" : "done when " + JSON.stringify(t.done_when),
+    !whole || (t.next_step ?? null) === null ? "" : "next " + JSON.stringify(t.next_step),
+    Deps.overdue_ms(all ?? [t], t, now) > 0 ? "OVERDUE since " + Deps.due_at(t) : !whole || Deps.due_at(t) === null ? "" : "due " + Deps.due_at(t),
+    t.state === "open" ? "" : task_unproven(t) ? "NO EVIDENCE (sem evidência)" : "evidence: " + (t.evidence ?? []).map(Ev.evidence_line).join("; "),
+  ].filter((x) => x !== "");
+  const tail = [...round, t.ref === null ? "" : "ref " + t.ref, t.origin === null ? "" : "from " + t.origin + (t.origin_url === null ? "" : " " + t.origin_url), (t.agent ?? null) === null ? "" : "agent " + t.agent, t.kind == null ? "" : "kind " + t.kind, Deps.priority_of(t) === "normal" ? "" : "priority " + Deps.priority_of(t), (t.waits_for ?? null) === null ? "" : "waits for " + JSON.stringify(t.waits_for), ...(t.prs ?? []).map(pr_line), ago(t.made, now)].filter((x) => x !== "").join(", ");
   const how   = [t.state, t.answer === null ? "" : "answer: " + t.answer, t.note === null ? "" : "note: " + JSON.stringify(t.note)].filter((x) => x !== "");
   const state = t.state === "open" ? "" : " (" + how.join(", ") + ")";
   const head = "- " + t.id + " [" + t.assignee + "] " + t.title + state + opts + " (" + tail + ")";
@@ -1770,7 +2192,11 @@ export function pr_line(p: PrCheck): string {
 
 // the tasks tool: the open ones (all: and those closed lately), or those
 // of a ref, or one whole
-export function tasks_list(s: Store, args: { all?: unknown; ref?: unknown; id?: unknown }, now: number): string {
+export function tasks_list(s: Store, args: { all?: unknown; ref?: unknown; id?: unknown; unproven?: unknown }, now: number): string {
+  if (args.unproven === true || args.unproven === "true") {
+    const none = tasks_sort(s.tasks).filter(task_unproven);
+    return none.length === 0 ? "No closed task without evidence." : "Closed without evidence (sem evidência; give it with task_edit evidence, or open it again):\n" + none.map((t) => task_line(t, now)).join("\n");
+  }
   if (args.id !== undefined) {
     const t = task_find(s, args.id);
     return t === null ? "No task " + task_id(args.id) + "." : task_line(t, now, true);
@@ -1805,6 +2231,10 @@ export function tasks_block(s: Store, now: number): string {
       return "- " + t.id + " freed: every task it waited for (" + t.after.join(", ") + ") is closed; the user sees it now: " + JSON.stringify(t.title);
     }
     const h = t.heard ?? { state: t.state, answer: t.answer, note: t.note };
+    if (h.order === true && task_ordered(t)) {
+      const said = values_said(t.fields, h.answers === undefined ? t.answers : h.answers);
+      return "- " + t.id + " ORDERED by user: " + JSON.stringify(t.title) + " — answer: " + h.answer + (said === "" ? "" : " — fields: " + said) + (h.note === null ? "" : " — note: " + JSON.stringify(h.note)) + " (an order: execute it now; it stays open as yours until you close it with task_edit state done and evidence of the execution)";
+    }
     const what = h.state === "open" ? "reopened" : h.state;
     const answer = h.answer === null ? "" : " — answer: " + h.answer + (h.state === "done" && task_act(t, h.answer) === "unii" ? " (an order: you act on it now)" : "");
     const note = h.note === null ? "" : " — note: " + JSON.stringify(h.note);
@@ -1820,8 +2250,10 @@ export function tasks_block(s: Store, now: number): string {
   // the tasks whose thread waits for Unii: whole, so a message about one
   // is read with all it has (not only its title, as the message's mark)
   const talking = open.filter((t) => t.talk === "unii");
+  const late = Deps.overdue_ids(s.tasks, now);
   const lines = [
     "Tasks (your pending list; the user sees it beside the chat and resolves items there):",
+    ...(late.length === 0 ? [] : ["OVERDUE (yours, past their next step's due; the user was alerted): " + late.join(", ") + ". Do the step, or give a new next_step and next_due, or set status blocked/waiting_user, or close with evidence."]),
     ...(changed.length === 0 ? [] : ["Changed since your last turn (by the user, or freed):", ...changed.map(did)]),
     ...(open.length === 0 ? ["Open: none."] : ["Open (" + (open.length - waiting.size) + "; those that free others first, then the user's):", ...free.map(line)]),
     ...(wait.length === 0 ? [] : ["Waiting for other tasks (" + waiting.size + "; hidden from the user until freed):", ...wait.map(line)]),
@@ -1829,4 +2261,97 @@ export function tasks_block(s: Store, now: number): string {
     ...(talking.length === 0 ? [] : ["The user is talking with you about these (each whole: its detail, the draft, its thread; reply in it with task_reply):", ...talking.map((t) => task_line(t, now, true, s.tasks))]),
   ];
   return lines.join("\n") + "\n\n";
+}
+
+// Promises
+// ========
+// What Unii says it will do later ("vou revisar", "em seguida eu
+// assino", "I'll check") is a task of its own, or it ends in limbo (the
+// evidence round): a turn whose last reply promises with no task of
+// Unii's made or moved in it gets a note (Server.ts Chat.promised).
+
+// a promise: "vou"/"irei"/"vamos" and a verb (an infinitive: -ar, -er,
+// -ir, -or, with a pronoun or not), "em seguida", "depois eu", "I'll"
+const PROMISE = /(?:^|[^\p{L}])((?:(?:eu|n[óo]s)\s+)?(?:vou|irei|vamos|iremos)\s+(?:(?:j[áa]|logo|agora|depois|ainda|tamb[ée]m)\s+)?(?:(?:te|lhe|o|a|os|as|me|se)\s+)?[\p{L}]+(?:ar|er|ir|or|[áéíô]-l[oa]s?|-l[oa]s?|-lhe|-me|-se)\b[^.!?\n]{0,80}|em seguida[^.!?\n]{0,80}|depois eu\s[^.!?\n]{0,80}|\bI(?:'ll| will)\s+[a-z]+[^.!?\n]{0,80})/giu;
+// what reads as a promise but isn't one: past or present, a question, a
+// condition ("se quiser, vou..."), what's done in the turn already
+const NOT_PROMISE = /^(?:vou\s+(?:bem|indo)|vamos\s+l[áa])\b/i;
+
+// the promises in a text (each a phrase, at most 3), outside code
+export function promises_in(text: string): string[] {
+  const plain = text.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, "…").replace(/^>.*$/gm, " ");
+  const out: string[] = [];
+  for (const m of plain.matchAll(PROMISE)) {
+    const said = text_line(m[1], 120);
+    const before = plain.slice(Math.max(0, (m.index ?? 0) - 40), (m.index ?? 0) + 1);
+    if (NOT_PROMISE.test(said) || /\b(?:se|caso)\s+(?:voc[êe]\s+)?(?:quiser|preferir|aprovar|concordar|mandar)\b[^.!?\n]*$/i.test(before) || /\?\s*$/.test(plain.slice(m.index ?? 0, (m.index ?? 0) + m[0].length + 2))) {
+      continue;
+    }
+    if (!out.includes(said)) {
+      out.push(said);
+    }
+    if (out.length >= 3) {
+      break;
+    }
+  }
+  return out;
+}
+
+// whether any task of Unii's was made or moved since `since` (ms); with
+// the promises said, only one related to them: its id said in one, or a
+// word of one in its title, detail, next step or done when, whole
+// (4 letters or more, no accents, not a filler nor a word any task may
+// have, as "pendência", "infra" or a verb of action in any form,
+// "revisar", "atualizo", "verificação": PROMISE_GENERIC). Whole:
+// "infraestrutura" isn't "infra" (the note asks for a task then:
+// harmless). A heuristic: a task registered for the
+// promise in other words isn't seen, and one sharing a distinct word by
+// chance hides a promise (rare: the words must be in the same turn).
+// The ref isn't compared (NeatFinch): it's a project's or a channel's
+// name any task of it has ("slack", "fractal-ritsu"), so "Vou ajustar o
+// slack" would relate any task with ref slack. Limits, known: a verb out
+// of PROMISE_GENERIC relates ("Vou documentar o fluxo" a task saying
+// "documentar"), and so does a common noun ("fluxo", "serviço") a task
+// shares by chance: the note is then missed, never wrongly given
+export function tasks_moved_since(s: Store, since: number, said: string[] | null = null): boolean {
+  const moved = s.tasks.filter((t) => t.assignee !== "user" && (Date.parse(t.made) >= since || Date.parse(t.moved ?? t.changed) >= since));
+  if (said === null) {
+    return moved.length > 0;
+  }
+  const keys = new Set(said.flatMap(promise_words));
+  const ids = new Set(said.flatMap((x) => (x.match(/\bP\d{1,15}\b/g) ?? [])));
+  return moved.some((t) => ids.has(t.id) || [t.title, t.detail, t.next_step, t.done_when].some((x) => typeof x === "string" && promise_words(x).some((w) => keys.has(w))));
+}
+
+// what reads as no subject of a promise: its fillers, in Portuguese and
+// English (already without accents)
+const PROMISE_FILLER = new Set(["agora", "ainda", "depois", "seguida", "tambem", "logo", "isso", "isto", "esse", "essa", "este", "esta", "aquilo", "para", "pelo", "pela", "sobre", "como", "voce", "vamos", "iremos", "irei", "fazer", "fazendo", "feito", "quando", "mais", "will", "then", "that", "this", "with", "later", "after", "soon"]);
+
+// what any task may say, so relates none to a promise (already without
+// accents)
+const PROMISE_GENERIC = new Set([
+  "pendencia", "pendencias", "tarefa", "tarefas", "infra", "item", "itens", "coisa", "coisas", "assunto", "task", "tasks", "issue", "issues", "todo", "todos",
+  // verbs of action any task may start with, and their forms: a promise
+  // to "atualizar o serviço" isn't the task "Atualizar documentação"
+  ...promise_verbs(["atualiz", "verific", "revis", "corrig", "corrij", "confer", "respond", "analis", "investig", "implement", "test", "valid", "ajust", "resolv", "termin", "conclu", "finaliz", "cri", "abr", "fech", "envi", "mand", "registr", "olh", "cheg", "cobr", "acompanh", "rod", "execut", "aplic", "mescl", "junt", "trat", "prepar", "redig", "escrev", "faz", "fiz", "ver", "vej", "ler", "le", "leio", "lend", "checar", "chec", "reinici", "retom", "continu", "segu", "busc", "procur", "confirm", "avis", "pergunt", "pedi", "ped"]),
+  "correcao", "correcoes", "resposta", "respostas", "conclusao", "envio", "envios",
+  "update", "updates", "updating", "check", "checks", "checking", "review", "reviews", "reviewing", "verify", "verifying", "send", "sending", "answer", "reply", "look", "read", "write", "test", "tests", "testing", "open", "close", "merge", "apply", "run", "handle", "resolve", "finish", "start",
+]);
+
+// a verb's forms from its stems (no accents): the infinitive and the
+// usual inflections of the first, second and third conjugations
+function promise_verbs(stems: string[]): string[] {
+  const ends = ["ar", "er", "ir", "o", "a", "e", "as", "es", "am", "em", "ei", "ou", "ao", "amos", "emos", "imos", "ando", "endo", "indo", "ado", "ada", "ados", "adas", "ido", "ida", "idos", "idas", "arei", "erei", "irei", "ara", "era", "ira", "arao", "erao", "irao", "aria", "eria", "iria", "acao", "acoes", "icao", "icoes", "isao", "isoes", "ao", "oes", "ia", "ias"];
+  return stems.flatMap((s) => [s, ...ends.map((e) => s + e)]).filter((w) => w.length >= 4);
+}
+
+// a text's words as compared (no accents, lower, whole, 4 letters or
+// more, not a filler nor generic)
+function promise_words(text: string): string[] {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !PROMISE_FILLER.has(w) && !PROMISE_GENERIC.has(w));
+}
+
+// the note a promise without a task gets (the user's language)
+export function promises_said(said: string[]): string {
+  return "Compromisso sem pendência: o Unii disse " + said.map((x) => "“" + x + "”").join(", ") + " e não registrou nem atualizou, neste turno, nenhuma pendência sua ligada " + (said.length === 1 ? "a ele" : "a eles") + ". Unii: registre-" + (said.length === 1 ? "o" : "os") + " com task_add (assignee unii, next_step e next_due) ou diga que não vai " + (said.length === 1 ? "fazê-lo" : "fazê-los") + ".";
 }

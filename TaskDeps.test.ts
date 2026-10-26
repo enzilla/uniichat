@@ -11,6 +11,9 @@ import * as T from "./Tasks.ts";
 import * as View from "./View.ts";
 import * as Html from "./web/src/Html.ts";
 
+// evidence that closes a task (the evidence round): a file that exists
+const EV = { type: "file", path: import.meta.path };
+
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-deps-");
 const NOW  = Date.parse("2026-10-23T12:00:00Z");
 let dir    = "";
@@ -71,7 +74,7 @@ test("blocked: can't be resolved by the user; freed once all close, told to Unii
   expect(T.task_find(s, "P3")!.told).toBe(true);
   T.tasks_told(s, new Map([["P1", T.task_find(s, "P1")!.rev]]));
   // Unii closes its own: P3 freed, a change to tell
-  T.task_edit(s, { id: "P2", state: "done" }, NOW);
+  T.task_edit(s, { id: "P2", state: "done", evidence: EV }, NOW);
   const p3 = T.task_find(s, "P3")!;
   expect(p3.freed).toBe(true);
   expect(p3.told).toBe(false);
@@ -201,7 +204,7 @@ test("archived dependencies leave the after lists", () => {
   const s = T.tasks_load(dir);
   add(s, { title: "A" });
   add(s, { title: "B", after: ["P1"] });
-  T.task_edit(s, { id: "P1", state: "done" }, NOW - 40 * 86400000);
+  T.task_edit(s, { id: "P1", state: "done", evidence: EV }, NOW - 40 * 86400000);
   T.task_edit(s, { id: "P2", title: "B2" }, NOW);
   expect(s.tasks.map((t) => t.id)).toEqual(["P2"]);
   expect(s.tasks[0].after).toEqual([]);

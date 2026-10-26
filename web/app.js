@@ -2063,6 +2063,33 @@ function frees_ids(tasks, t) {
   seen.delete(t.id);
   return [...seen].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
 }
+var STATUSES = ["open", "waiting_user", "blocked"];
+var STALL_DEFAULT = 4 * H;
+var stall = STALL_DEFAULT;
+function status_of(t) {
+  return t.status != null && STATUSES.includes(t.status) ? t.status : "open";
+}
+function due_at(t, ms = stall) {
+  if (t.state !== "open" || (t.assignee ?? "user") === "user" || status_of(t) === "waiting_user") {
+    return null;
+  }
+  if (t.due !== undefined) {
+    return t.due;
+  }
+  if (typeof t.next_due === "string" && !Number.isNaN(Date.parse(t.next_due))) {
+    return new Date(Date.parse(t.next_due)).toISOString();
+  }
+  const from = Date.parse(t.moved ?? t.changed ?? t.made);
+  return Number.isNaN(from) ? null : new Date(from + ms).toISOString();
+}
+function overdue_ms(tasks, t, now, ms = stall) {
+  const due = due_at(t, ms);
+  if (due === null || blocked(tasks, t)) {
+    return 0;
+  }
+  const late = now - Date.parse(due);
+  return late > 0 ? late : 0;
+}
 
 // View.ts
 var PACE = 0.0001;
@@ -2334,7 +2361,12 @@ function view_act(v, act) {
         v.notes.push("A pendência " + t.id + " não tem a opção “" + act.answer + "”.");
         return [];
       }
-      if (act.state === "dropped" && t.state === "open" && t.assignee !== "user") {
+      const ordered = t.state === "open" && (t.order ?? null) !== null;
+      if (ordered && act.state === "done") {
+        v.notes.push("A pendência " + t.id + " é uma ordem sua já recebida pelo Unii: ela só fecha com a evidência da execução. Para desistir dela, cancele-a (/descartar " + t.id + ").");
+        return [];
+      }
+      if (act.state === "dropped" && t.state === "open" && t.assignee !== "user" && !ordered) {
         v.notes.push("A pendência " + t.id + " está com o Unii: use “Cobrar agora” ou “Pode fechar”.");
         return [];
       }
@@ -2493,7 +2525,7 @@ function desk_group(t, blocked2) {
   if (blocked2.has(t.id)) {
     return "waiting";
   }
-  return t.assignee === "user" || t.talk === "user" ? "now" : "others";
+  return t.assignee === "user" || t.talk === "user" || status_of(t) === "waiting_user" ? "now" : "others";
 }
 function desk_turn(tasks) {
   const blocked2 = blocked_ids(tasks);
@@ -2625,6 +2657,67 @@ function task_agent_said(t) {
   const a = t.agent ?? null;
   return a !== null ? "agente " + a : t.state === "open" && t.assignee !== "user" ? "sem agente" : "";
 }
+function evidence_said(e) {
+  const sum = e.summary === undefined ? "" : " — " + e.summary;
+  switch (e.type) {
+    case "slack":
+      return "Mensagem enviada no Slack (canal " + e.channel + ", ts " + e.ts + ")" + sum;
+    case "pr_merged": {
+      const m = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)$/.exec(e.url ?? "");
+      const merge = (e.confirmed ?? "").split(" ")[1];
+      return "PR mesclado: " + (m === null ? e.url : m[2] + "#" + m[3]) + (merge === undefined ? "" : " (merge " + merge.slice(0, 12) + ")") + sum;
+    }
+    case "commit_tests":
+      return "Commit " + (e.sha ?? "").slice(0, 12) + " em " + e.repo + ": " + e.passed + " " + (e.passed === 1 ? "teste passou" : "testes passaram") + ", " + e.failed + " falhas (" + e.command + ")" + sum;
+    case "tfc":
+      return "Run do Terraform Cloud " + e.run + ": " + e.status + sum;
+    case "file":
+      return "Arquivo " + e.path + (e.size === undefined ? "" : " (" + e.size + " bytes)") + sum;
+    case "reason":
+      return "Motivo: " + e.text;
+    case "user":
+      return (e.migrated ? "Resolução do usuário (registro anterior)" : "Resolução do usuário") + (e.answer == null ? "" : ": " + e.answer) + (e.note == null ? "" : " — “" + e.note + "”");
+    case "restart":
+      return "Serve reiniciado pelo Unii, como o usuário ordenou" + sum;
+  }
+}
+function task_unproven(t) {
+  return t.state !== "open" && (t.evidence ?? []).length === 0;
+}
+var UNPROVEN_SAID = "sem evidência";
+function task_marks(t, tasks, now) {
+  const out = [];
+  if (t.state !== "open") {
+    return task_unproven(t) ? [["unproven", UNPROVEN_SAID]] : [];
+  }
+  if ((t.order ?? null) !== null) {
+    out.push(["order", "ordem recebida" + (t.order.answer === null ? "" : ": " + t.order.answer)]);
+  }
+  const st = status_of(t);
+  if (st === "waiting_user") {
+    out.push(["waiting-user", "aguardando você" + ((t.status_why ?? null) === null ? "" : ": " + t.status_why)]);
+  }
+  if (st === "blocked") {
+    out.push(["blocked", "bloqueada" + ((t.status_why ?? null) === null ? "" : ": " + t.status_why) + ((t.unblock ?? null) === null ? "" : "; desbloqueia: " + t.unblock)]);
+  }
+  const late = overdue_ms(tasks, t, now);
+  if (late > 0) {
+    out.push(["late overdue", "prazo vencido há " + (late < 3600000 ? Math.max(1, Math.floor(late / 60000)) + " min" : hours_said(late))]);
+  }
+  return out;
+}
+function task_next_said(t) {
+  if (t.state !== "open") {
+    return "";
+  }
+  const due = due_at(t);
+  const when = due === null ? "" : "prazo " + new Date(due).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const step = t.next_step ?? null;
+  return step === null && when === "" ? "" : step === null ? "Próximo passo não informado · " + when : "Próximo passo: " + step + (when === "" ? "" : " · " + when);
+}
+function task_done_when_said(t) {
+  return (t.done_when ?? null) === null ? "" : "Pronto quando: " + t.done_when;
+}
 var REC_MARK = /\(\s*recomendad[oa]s?\s*\)/i;
 function rec_marked(c) {
   return REC_MARK.test(c);
@@ -2719,7 +2812,7 @@ function task_prs(t) {
 }
 function task_whole(t) {
   const named = typeof t?.assignee === "string" && t.assignee !== "";
-  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined && Array.isArray(t.prs) && t.acts !== undefined) {
+  if (named && Array.isArray(t.after) && Array.isArray(t.fields) && Array.isArray(t.thread) && Array.isArray(t.choices) && t.draft !== undefined && t.origin !== undefined && t.agent !== undefined && Array.isArray(t.prs) && t.acts !== undefined && Array.isArray(t.evidence) && t.status !== undefined && t.order !== undefined) {
     return t;
   }
   return {
@@ -2740,7 +2833,15 @@ function task_whole(t) {
     draft: t?.draft ?? {},
     answers: t?.answers ?? null,
     thread: Array.isArray(t?.thread) ? t.thread : [],
-    talk: t?.talk ?? null
+    talk: t?.talk ?? null,
+    done_when: t?.done_when ?? null,
+    evidence: Array.isArray(t?.evidence) ? t.evidence : [],
+    status: t?.status ?? "open",
+    status_why: t?.status_why ?? null,
+    unblock: t?.unblock ?? null,
+    order: t?.order ?? null,
+    next_step: t?.next_step ?? null,
+    next_due: t?.next_due ?? null
   };
 }
 function view_body(v) {
@@ -3785,6 +3886,21 @@ function task_meta(t, more) {
 function task_button(t, state, text, cls, answer) {
   return `<button class="${cls}"${act_html({ $: "Task", task: t.id, state, ...answer === undefined ? {} : { answer } })}>${esc(text)}</button>`;
 }
+function marks_html(t, tasks, now) {
+  return task_marks(t, tasks, now).map(([cls, text]) => `<span class="mark ${esc(cls)}">${esc(text)}</span>`);
+}
+function round_html(t) {
+  const done = task_done_when_said(t);
+  const next = task_next_said(t);
+  return (done === "" ? "" : `<p class="done-when">${esc(done)}</p>`) + (next === "" ? "" : `<p class="next-step">${esc(next)}</p>`);
+}
+function evidence_html(t) {
+  const all = t.evidence ?? [];
+  if (all.length === 0) {
+    return `<p class="evidence none"><span class="mark unproven">${esc(UNPROVEN_SAID)}</span> Fechada sem evidência registrada. Reabra-a se o problema não foi resolvido.</p>`;
+  }
+  return `<section class="evidence" aria-label="Evidência"><p class="sub">Evidência</p><ul>${all.map((e) => `<li>${esc(evidence_said(e))}</li>`).join("")}</ul></section>`;
+}
 function task_detail(t, desk) {
   if (t.detail === "") {
     return "";
@@ -3808,19 +3924,23 @@ function task_open_html(t, tasks, desk, now = Date.now(), turn = null) {
     ...frees2 === "" ? [] : [`<span class="frees">${esc(frees2)}</span>`],
     ...mine ? [] : [esc(assignee_said(t))],
     ...agent === "" ? [] : [`<span class="agent${t.agent == null ? " none" : ""}">${esc(agent)}</span>`],
-    ...stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`]
+    ...stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`],
+    ...marks_html(t, tasks, now)
   ];
   const said = desk ? task_talk_wait_said(t, now, turn) : task_talk_said(t);
   const talk = said === "" ? [] : [`<span class="talk ${esc(t.talk ?? "")}">${esc(said)}</span>`];
   const cls = "task " + (mine ? "user" : "other " + t.assignee) + (t.talk === null ? "" : " talk-" + t.talk);
   const tag = desk ? "article" : "li";
-  const head = `${task_head(t, !desk)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
+  const head = `${task_head(t, !desk)}${task_meta(t, [...talk, ...who, `<time>${esc(task_when(t.made))}</time>`])}${round_html(t)}${desk ? task_prs_html(t) : ""}${task_detail(t, desk)}`;
   if (!mine) {
     const asked = t.talk === "unii";
     const why = `chase-why-${desk ? "desk" : "list"}-${esc(t.id)}`;
     const chase = `<button class="chase"${asked ? ` disabled aria-describedby="${why}"` : ""}${act_html({ $: "TaskSay", task: t.id, text: CHASE })}>${asked ? "Cobrado: aguardando o Unii" : "Cobrar agora"}</button>`;
-    const close = task_button(t, "done", "Pode fechar", "close");
-    const hint = asked ? `<span class="hint" id="${why}">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>` : `<span class="hint">Com o Unii. Você pode cobrar o andamento ou liberá-lo para fechar.</span>`;
+    const ordered = t.state === "open" && (t.order ?? null) !== null;
+    const close = ordered ? task_button(t, "dropped", "Cancelar ordem", "drop cancel") : task_button(t, "done", "Pode fechar", "close");
+    const waiting = status_of(t) === "waiting_user" ? `O Unii aguarda você: ${esc(t.status_why ?? "")}. Responda na conversa desta pendência. ` : "";
+    const free = ordered ? "Ordem recebida: o Unii a executa e só a fecha com a evidência da execução. Você pode cobrar ou cancelar a ordem." : "Com o Unii. Você pode cobrar o andamento ou liberá-lo para fechar.";
+    const hint = asked ? `<span class="hint" id="${why}">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>` : `<span class="hint">${waiting}${free}</span>`;
     const acts2 = `<div class="acts unii">${hint}${chase}${close}</div>`;
     return `<${tag} class="${esc(cls)}" data-task="${esc(t.id)}">${head}${acts2}${thread_html(t, desk)}</${tag}>`;
   }
@@ -3865,12 +3985,13 @@ function task_links_html(prs) {
   return prs.length === 0 ? "" : `<p class="prs"><span class="lead">${prs.length === 1 ? "PR" : "PRs"}:</span> ${prs.map(one).join(" ")}</p>`;
 }
 function task_closed_html(t, desk) {
-  const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii será avisado em até 1 min"]];
+  const how = [t.state === "done" ? "Concluída" : "Descartada", ...t.answer === null ? [] : ["resposta: " + esc(t.answer)], ...t.note === null ? [] : ["“" + esc(t.note) + "”"], ...t.told ? [] : ["o Unii será avisado em até 1 min"], ...marks_html(t, [], Date.now())];
   const acts = `<div class="acts">${task_button(t, "open", "Reabrir", "reopen")}</div>`;
   if (!desk) {
-    return `<li class="task closed" data-task="${esc(t.id)}">${task_head(t, true)}${task_meta(t, how)}${acts}</li>`;
+    return `<li class="task closed${task_unproven(t) ? " unproven" : ""}" data-task="${esc(t.id)}">${task_head(t, true)}${task_meta(t, how)}${acts}</li>`;
   }
-  return `<article class="task closed" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
+  const done = task_done_when_said(t);
+  return `<article class="task closed${task_unproven(t) ? " unproven" : ""}" data-task="${esc(t.id)}">${task_head(t)}${task_meta(t, how)}${done === "" ? "" : `<p class="done-when">${esc(done)}</p>`}${evidence_html(t)}${task_prs_html(t)}${task_detail(t, true)}${answers_html(t)}${acts}${thread_read_html(t)}</article>`;
 }
 function task_waiting_html(t, tasks, desk) {
   const waits2 = waits(tasks, t);
@@ -3933,7 +4054,8 @@ function desk_html(tasks, q, ref, sel, now = Date.now(), opts = {}) {
       ...stalled.text === "" ? [] : [`<span class="${stalled.late ? "late" : "stalled"}">${esc(stalled.text)}</span>`],
       ...frees2 === "" ? [] : [`<span class="frees">${esc(frees2)}</span>`],
       ...g === "waiting" ? [esc(task_waits_named(tasks, t2))] : [],
-      ...g === "closed" ? [t2.state === "done" ? "concluída" : "descartada"] : []
+      ...g === "closed" ? [t2.state === "done" ? "concluída" : "descartada"] : [],
+      ...marks_html(t2, tasks, now)
     ];
     const on = t2.id === sel;
     return `<button class="row ${g}${on ? " sel" : ""}" role="option" aria-selected="${on}" data-desk="${esc(t2.id)}"><span class="head"><span class="id">${esc(t2.id)}</span><span class="title">${esc(t2.title)}</span></span>${more.length === 0 ? "" : `<span class="meta">${more.join(" · ")}</span>`}</button>`;

@@ -8,6 +8,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as T from "./Tasks.ts";
 
+// evidence that closes a task (the evidence round): a file that exists
+const EV = { type: "file", path: import.meta.path };
+
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-tasks-");
 const NOW  = Date.parse("2026-10-23T12:00:00Z");
 const H    = 3600000;
@@ -90,7 +93,7 @@ test("edit by Unii: fields, close, reopen; told stays true", () => {
   expect(e.ref).toBe("numih");
   expect(e.changed).toBe(new Date(NOW + H).toISOString());
   expect(T.task_edit(s, { id: "P1", answer: "c" }, NOW)).toContain("No choice");
-  const d = T.task_edit(s, { id: "1", state: "done", answer: "b", note: "feito" }, NOW + 2 * H) as T.Task;
+  const d = T.task_edit(s, { id: "1", state: "done", evidence: EV, answer: "b", note: "feito" }, NOW + 2 * H) as T.Task;
   expect([d.state, d.answer, d.note, d.told]).toEqual(["done", "b", "feito", true]);
   expect(d.closed).toBe(new Date(NOW + 2 * H).toISOString());
   const o = T.task_edit(s, { id: "P1", state: "open" }, NOW + 3 * H) as T.Task;
@@ -134,11 +137,13 @@ test("block: changes, then the open ones, the user's first; told once the call e
   const block = T.tasks_block(s, NOW);
   expect(block).toBe([
     "Tasks (your pending list; the user sees it beside the chat and resolves items there):",
+    // (the evidence round: Unii's, still 26 h on, past its due, 4 h after it moved)
+    "OVERDUE (yours, past their next step's due; the user was alerted): P1. Do the step, or give a new next_step and next_due, or set status blocked/waiting_user, or close with evidence.",
     "Changed since your last turn (by the user, or freed):",
     '- P3 done by user: "Abrir PR?" — answer: sim — note: "pode"',
     "Open (2; those that free others first, then the user's):",
     "- P2 [user] Reiniciar serve (ref uniichat, 5h)",
-    "- P1 [unii] Conferir o Job (ref numih-3151, 1d)",
+    "- P1 [unii] Conferir o Job (OVERDUE since " + new Date(NOW - 22 * H).toISOString() + ", ref numih-3151, 1d)",
   ].join("\n") + "\n\n");
   // a change during the call stays to tell
   add(s, { title: "Nova" }, NOW);
@@ -182,7 +187,7 @@ test("tasks tool: open, all, by ref, one whole", () => {
   add(s, { title: "B", ref: "numih" });
   T.task_resolve(s, "P2", "done", null, "ok", NOW);
   expect(T.tasks_list(s, {}, NOW)).toBe("- P1 [user] A (ref uniichat, 0m)\n  linha 1\n  linha 2");
-  expect(T.tasks_list(s, { all: true }, NOW)).toContain('- P2 [user] B (done, note: "ok") (ref numih, 0m)');
+  expect(T.tasks_list(s, { all: true }, NOW)).toContain('- P2 [user] B (done, note: "ok") (evidence: user\'s resolution, ref numih, 0m)');
   expect(T.tasks_list(s, { all: true, ref: "NUMIH" }, NOW)).not.toContain("P1");
   expect(T.tasks_list(s, { id: "2" }, NOW)).toStartWith("- P2 ");
   expect(T.tasks_list(s, { id: "P7" }, NOW)).toBe("No task P7.");
@@ -194,15 +199,15 @@ test("views get the open ones and those closed in 7 days", () => {
   add(s, { title: "recent" }, NOW - 10 * 24 * H);
   add(s, { title: "open unii", who: "unii" });
   add(s, { title: "open user" });
-  T.task_edit(s, { id: "P1", state: "done" }, NOW - 8 * 24 * H);
-  T.task_edit(s, { id: "P2", state: "dropped" }, NOW - 24 * H);
+  T.task_edit(s, { id: "P1", state: "done", evidence: EV }, NOW - 8 * 24 * H);
+  T.task_edit(s, { id: "P2", state: "dropped", evidence: EV }, NOW - 24 * H);
   expect(T.tasks_view(s, NOW).map((t) => t.id)).toEqual(["P4", "P3", "P2"]);
 });
 
 test("archive: told closed ones older than 30 days, or past 200, leave tasks.json", () => {
   const s = T.tasks_load(dir);
   add(s, { title: "velha" }, NOW - 40 * 24 * H);
-  T.task_edit(s, { id: "P1", state: "done" }, NOW - 35 * 24 * H);
+  T.task_edit(s, { id: "P1", state: "done", evidence: EV }, NOW - 35 * 24 * H);
   add(s, { title: "nova" });
   T.task_resolve(s, "P2", "done", null, null, NOW);
   expect(s.tasks.map((t) => t.id)).toEqual(["P2"]);
@@ -215,7 +220,7 @@ test("archive: told closed ones older than 30 days, or past 200, leave tasks.jso
   expect(s.tasks.map((t) => t.id)).toEqual(["P2"]);
   for (let k = 0; k < T.KEEP + 3; k++) {
     add(s, { title: "c" + k });
-    T.task_edit(s, { id: "P" + (s.next - 1), state: "done" }, NOW + k);
+    T.task_edit(s, { id: "P" + (s.next - 1), state: "done", evidence: EV }, NOW + k);
   }
   expect(s.tasks.filter((t) => t.state !== "open" && t.told).length).toBe(T.KEEP);
   expect(s.next).toBe(3 + T.KEEP + 3);
@@ -319,7 +324,7 @@ test("Unii editing a task the user resolved, unseen, keeps it to tell, a change 
   expect([e.told, e.state, e.answer]).toEqual([false, "done", "sim"]);
   expect(T.tasks_block(s, NOW + 3)).toContain("P1 done by user");
   // a state set again (the same) is no change of state
-  expect((T.task_edit(s, { id: "P1", state: "done" }, NOW + 4) as T.Task).told).toBe(false);
+  expect((T.task_edit(s, { id: "P1", state: "done", evidence: EV }, NOW + 4) as T.Task).told).toBe(false);
   // shown, then edited by Unii during the call: still told when it ends well
   expect(T.tasks_told(s)).toBe(1);
   T.task_resolve(s, "P2", "dropped", null, null, NOW + 5);
@@ -329,7 +334,7 @@ test("Unii editing a task the user resolved, unseen, keeps it to tell, a change 
   expect(T.tasks_told(s)).toBe(1);
   expect(T.tasks_untold(s)).toEqual([]);
   // told, a change of state by Unii is its own: nothing to tell
-  const d = T.task_edit(s, { id: "P2", state: "dropped" }, NOW + 8) as T.Task;
+  const d = T.task_edit(s, { id: "P2", state: "dropped", evidence: EV }, NOW + 8) as T.Task;
   expect([d.told, d.heard]).toEqual([true, null]);
 });
 
