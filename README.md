@@ -76,7 +76,13 @@ Features
   what unblocks it) or **waiting for you** (in your Agora). One closed
   before this, without evidence, reads "sem evidência": Unii may prove
   it, or it's opened again; nothing is erased. A reply of Unii's that
-  promises something for later with no task of its own gets a note.
+  promises something for later with no task of its own gets a note; one
+  that asks you something (a question, a decision, an order to give) with
+  no task of yours made or moved in that turn gets one, "Pergunta sem
+  pendência" (a decision with a text field for your answer, the question in
+  its detail), made by the serve, and a note (`Tasks.questions_in`: a
+  heuristic; quotes, code, headings and questions Unii answers itself
+  don't count).
   Terminal: `/mesa [projeto]`, `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
   `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
   `/descartar`, `/reabrir`, `/avisar`.

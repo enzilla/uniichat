@@ -2438,3 +2438,120 @@ function promise_words(text: string): string[] {
 export function promises_said(said: string[]): string {
   return "Compromisso sem pendência: o Unii disse " + said.map((x) => "“" + x + "”").join(", ") + " e não registrou nem atualizou, neste turno, nenhuma pendência sua ligada " + (said.length === 1 ? "a ele" : "a eles") + ". Unii: registre-" + (said.length === 1 ? "o" : "os") + " com task_add (assignee unii, next_step e next_due) ou diga que não vai " + (said.length === 1 ? "fazê-lo" : "fazê-los") + ".";
 }
+
+// Questions
+// =========
+// What Unii asks of the user (a question, a decision, an order to give)
+// is a task of the user's, or it ends lost in the chat (P87): a turn
+// whose last reply asks the user something with no task of the user's
+// made or moved in it (talked in too) gets one, "Pergunta sem
+// pendência", made by the serve, and a note (Server.ts Chat.asked).
+//
+// A heuristic, in Portuguese (some English), on the reply outside code
+// (``` blocks, `inline`), quotes (> lines, “…”, "…", «…») and headings
+// (# lines). A sentence asks if:
+// - it ends in "?", unless it's one Unii asks itself to answer: it
+//   starts with a question word ("por que", "o que", "como", "qual",
+//   "quando", "onde", "quem", "quantos", "why", "what", "how") and has
+//   no mark of the user ("você", "quer", "prefere", "posso", "devo",
+//   "sua"…: ASK_YOU), or reports another's ("Enzo perguntou: …?");
+// - or, without "?", it asks in words: "quer que eu", "aguardo sua
+//   ordem", "me diga", "me avise", "me confirme", "diga se", "preciso
+//   da sua decisão", "depende de ordem sua", "se quiser, posso …",
+//   "let me know", "should I", "want me to" (ASK_WORDS);
+// - but a question tied to an open task of the user's by its id in the
+//   same paragraph ("A P86 segue aberta: mesclo?") is that task's.
+// Limits, known: a rhetorical question with a mark of the user ("Você
+// viu o que houve? Foi o lint.") counts (a needless task, which the user
+// drops); a request in other words ("fico no aguardo") isn't seen.
+
+// marks that a question is put to the user (no accents, lower, whole)
+const ASK_YOU = /\b(?:voce|voces|vc|vcs|senhor|quer|queira|queres|prefere|prefira|posso|podemos|devo|devemos|deseja|desejas|confirma|confirme|autoriza|autorize|aprova|aprove|concorda|topa|pode|poderia|consegue|sigo|seguimos|mesclo|aplico|reinicio|fecho|envio|mando|abro|crio|faco|publico|respondo|ignoro|descarto|aguardo|seu|sua|seus|suas|te|lhe|contigo|you|your|shall|should i|can i|may i|que tal)\b/;
+// a question word Unii's own questions start with
+const ASK_SELF = /^(?:e\s+)?(?:por\s*que|porque|pq|o\s+que|que|como|qual|quais|quando|onde|aonde|quem|quanto|quantos|quantas|para\s+que|why|what|how|which|when|where|who)\b/;
+// another's question reported ("Enzo perguntou: …?", "ele pergunta se")
+const ASK_REPORTED = /\b(?:perguntou|perguntaram|pergunta|perguntava|asked|asks)\b\s*(?:[:,]|se\b|if\b)/;
+// a request in words, without "?" (no accents, lower)
+const ASK_WORDS = /\b(?:quer|queira|prefere) que eu\b|\baguardo (?:a |o )?(?:sua|seu|tua|teu|suas|seus) |\baguardo (?:a |o )?(?:ordem|decisao|resposta|confirmacao|aval|ok|retorno|escolha)\b|\bme (?:diga|diz|avise|avisa|fale|fala|confirme|confirma|responda|responde|mande|manda|passe|passa) |\b(?:diga|digam|confirme|responda|escolha|decida) se\b|\bpreciso (?:da|de) (?:sua|seu|uma) (?:ordem|decisao|resposta|confirmacao|aval|ok|escolha)|\b(?:depende|dependem|depende so|dependem so) (?:de|da|do) (?:uma )?(?:ordem|decisao|resposta|confirmacao|aval|escolha) (?:sua|tua)\b|\b(?:depende|dependem) de voce\b|\bse (?:voce )?(?:quiser|preferir|autorizar|mandar|aprovar|concordar)\b[^.!?\n]{0,40}\b(?:posso|vou|faco|mesclo|sigo|abro|crio)\b|\blet me know\b|\bshould i\b|\bwant me to\b|\bdo you want\b/;
+
+// the text as the heuristic reads it: outside code, quotes and headings
+function ask_plain(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, "\n")
+    .replace(/`[^`\n]*`/g, "…")
+    .replace(/^\s*(?:>|#).*$/gm, "\n")
+    .replace(/“[^”\n]*”|"[^"\n]*"|«[^»\n]*»/g, "…");
+}
+
+// a text as compared: no accents, lower
+function ask_fold(x: string): string {
+  return x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+// the questions to the user in a text (each a sentence, at most 3), but
+// those tied by id to a task in `open_ids` (the user's open ones)
+export function questions_in(text: string, open_ids: Set<string> = new Set()): string[] {
+  const out: string[] = [];
+  for (const para of ask_plain(text).split(/\n\s*\n/)) {
+    const ids = para.match(/\bP\d{1,15}\b/g) ?? [];
+    if (ids.some((id) => open_ids.has(id))) {
+      continue;
+    }
+    for (const m of para.matchAll(/(?:[^.!?\n]|[.!?]+(?=[^\s.!?]))+(?:[.!?]+(?=\s|$)|\n|$)/g)) {
+      const raw = m[0].replace(/^[\s\-*•\d.)]+/, "").trim();
+      const s = ask_fold(raw);
+      if (s.length < 2) {
+        continue;
+      }
+      const q = /\?\s*$/.test(s) && !ASK_REPORTED.test(s) && (!ASK_SELF.test(s) || ASK_YOU.test(s));
+      if (!q && !ASK_WORDS.test(s)) {
+        continue;
+      }
+      const said = text_line(raw, 200);
+      if (said !== "" && !out.includes(said)) {
+        out.push(said);
+      }
+      if (out.length >= 3) {
+        return out;
+      }
+    }
+  }
+  return out;
+}
+
+// whether a task of the user's, open, was made, moved or talked in by
+// Unii since `since` (ms): the turn's question has its task
+export function tasks_asked_since(s: Store, since: number): boolean {
+  return s.tasks.some((t) => t.assignee === "user" && t.state === "open" && (Date.parse(t.made) >= since || Date.parse(t.moved ?? t.changed) >= since || Date.parse(t.changed) >= since || t.thread.some((x) => x.who === "unii" && Date.parse(x.at) >= since)));
+}
+
+export const ASKED_TITLE = "Pergunta sem pendência";
+
+// the task a question without one gets (the user's, a decision from the
+// chat, a text field for the answer): one open already gets these
+// questions added (its title is one); else why not (a full list)
+export function task_asked(s: Store, said: string[], now: number): Task | string {
+  const lines = said.map((x) => "“" + x + "”").join("\n");
+  const detail = "O Unii terminou o turno perguntando ou pedindo algo a você sem abrir pendência (trava da P87):\n" + lines + "\nResponda no campo abaixo; a resposta chega ao Unii.";
+  const had = s.tasks.find((t) => t.state === "open" && t.assignee === "user" && t.title === ASKED_TITLE);
+  if (had !== undefined) {
+    const at = new Date(now).toISOString();
+    const next: Task = { ...had, detail: detail_join(had.detail, lines, DETAIL), changed: at, moved: at, ready: at };
+    s.tasks[s.tasks.indexOf(had)] = next;
+    tasks_save(s);
+    return next;
+  }
+  return task_new(s, {
+    title: ASKED_TITLE, detail, assignee: "user", origin: "chat", kind: "decision",
+    fields: [{ id: "resposta", label: "Sua resposta", kind: "text", required: true }],
+    done_when: "o usuário responder; o Unii executa o que foi decidido",
+  }, "trava", now);
+}
+
+// the note the turn gets (the user's language)
+export function questions_said(said: string[], task: Task | string): string {
+  const q = said.map((x) => "“" + x + "”").join(", ");
+  return typeof task === "string"
+    ? "Pergunta sem pendência: o Unii perguntou " + q + " sem abrir pendência, e não foi possível abri-la (" + task + "). Unii: abra-a com task_add (assignee user, com as opções)."
+    : "Pergunta sem pendência: o Unii perguntou " + q + " sem abrir nem atualizar, neste turno, uma pendência sua. Registrei na " + task.id + ", para não se perder. Unii: da próxima vez, abra a pendência (task_add, assignee user, com as opções) no mesmo turno da pergunta.";
+}
