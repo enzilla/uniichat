@@ -1022,8 +1022,21 @@ export function restart_now(answer: string | null): boolean {
   if (a === plain(RESTART_YES)) {
     return true;
   }
-  return /\b(?:reinici\w*|restart\w*)\b/.test(a) && !/\b(?:depois|apos|quando|mais tarde|amanha|noite|antes|ao fim|ao final|so se|somente|nao|later|after|when|tomorrow|tonight|until|before|don'?t|not)\b/.test(a);
+  return /\b(?:reinici\w*|restart\w*)\b/.test(a) && !RESTART_WAIT.some((w) => w.test(a));
 }
+
+// what puts off a restart asked (already without accents, lower): a
+// word of waiting or refusal, a time ("às 22h", "22:30", "em 1 hora",
+// "daqui a pouco"), or an event to wait for ("ao terminar o PR", "assim
+// que os agentes acabarem"). "agora" is no wait: "hora" is whole
+const RESTART_WAIT: RegExp[] = [
+  /\b(?:depois|apos|quando|mais tarde|amanha|noite|tarde|antes|ao fim|ao final|no fim|no final|fim do|so se|somente|nao|ate|daqui|assim que|logo que|enquanto|later|after|when|tomorrow|tonight|until|before|once|soon|don'?t|not|as soon)\b/,
+  // a time: "às 22h", "22:30", "22 h", "at 10", "em 1 hora", "em uma hora", "in an hour"
+  /\bas \d|\b\d{1,2} ?h\b|\b\d{1,2}h\d{2}\b|\b\d{1,2}:\d{2}\b|\bat \d|\bem (?:\d+|um|uma|meia|duas|dois|tres|alguns|algumas|poucos|poucas)\b|\bin (?:\d+|an?|one|two|few)\b/,
+  /\b(?:hora|horas|minuto|minutos|min|hour|hours|minute|minutes)\b/,
+  // an event: "ao terminar", "os agentes acabarem", "concluir o PR"
+  /\b(?:termin\w*|acab\w*|conclu\w*|finaliz\w*|finish\w*|complet\w*|esper\w*|wait\w*)\b/,
+];
 
 export const RESTART_DETAIL = "Política (P8): o Unii reinicia sozinho quando nenhum agente está rodando, avisando antes e depois. Esta pendência só existe porque há agentes rodando agora, e o reinício os interrompe.";
 
@@ -2163,9 +2176,10 @@ export function promises_in(text: string): string[] {
 // the promises said, only one related to them: its id said in one, or a
 // word of one in its title, detail, next step, done when or ref, whole
 // (4 letters or more, no accents, not a filler nor a word any task may
-// have, as "pendência" or "infra": PROMISE_GENERIC). Whole:
-// "infraestrutura" isn't "infra", nor "revisão" "revisar" (the note asks
-// for a task then: harmless). A heuristic: a task registered for the
+// have, as "pendência", "infra" or a verb of action in any form,
+// "revisar", "atualizo", "verificação": PROMISE_GENERIC). Whole:
+// "infraestrutura" isn't "infra" (the note asks for a task then:
+// harmless). A heuristic: a task registered for the
 // promise in other words isn't seen, and one sharing a distinct word by
 // chance hides a promise (rare: the words must be in the same turn)
 export function tasks_moved_since(s: Store, since: number, said: string[] | null = null): boolean {
@@ -2184,7 +2198,21 @@ const PROMISE_FILLER = new Set(["agora", "ainda", "depois", "seguida", "tambem",
 
 // what any task may say, so relates none to a promise (already without
 // accents)
-const PROMISE_GENERIC = new Set(["pendencia", "pendencias", "tarefa", "tarefas", "infra", "item", "itens", "coisa", "coisas", "assunto", "task", "tasks", "issue", "issues", "todo", "todos"]);
+const PROMISE_GENERIC = new Set([
+  "pendencia", "pendencias", "tarefa", "tarefas", "infra", "item", "itens", "coisa", "coisas", "assunto", "task", "tasks", "issue", "issues", "todo", "todos",
+  // verbs of action any task may start with, and their forms: a promise
+  // to "atualizar o serviço" isn't the task "Atualizar documentação"
+  ...promise_verbs(["atualiz", "verific", "revis", "corrig", "corrij", "confer", "respond", "analis", "investig", "implement", "test", "valid", "ajust", "resolv", "termin", "conclu", "finaliz", "cri", "abr", "fech", "envi", "mand", "registr", "olh", "cheg", "cobr", "acompanh", "rod", "execut", "aplic", "mescl", "junt", "trat", "prepar", "redig", "escrev", "faz", "fiz", "ver", "vej", "ler", "le", "leio", "lend", "checar", "chec", "reinici", "retom", "continu", "segu", "busc", "procur", "confirm", "avis", "pergunt", "pedi", "ped"]),
+  "correcao", "correcoes", "resposta", "respostas", "conclusao", "envio", "envios",
+  "update", "updates", "updating", "check", "checks", "checking", "review", "reviews", "reviewing", "verify", "verifying", "send", "sending", "answer", "reply", "look", "read", "write", "test", "tests", "testing", "open", "close", "merge", "apply", "run", "handle", "resolve", "finish", "start",
+]);
+
+// a verb's forms from its stems (no accents): the infinitive and the
+// usual inflections of the first, second and third conjugations
+function promise_verbs(stems: string[]): string[] {
+  const ends = ["ar", "er", "ir", "o", "a", "e", "as", "es", "am", "em", "ei", "ou", "ao", "amos", "emos", "imos", "ando", "endo", "indo", "ado", "ada", "ados", "adas", "ido", "ida", "idos", "idas", "arei", "erei", "irei", "ara", "era", "ira", "arao", "erao", "irao", "aria", "eria", "iria", "acao", "acoes", "icao", "icoes", "isao", "isoes", "ao", "oes", "ia", "ias"];
+  return stems.flatMap((s) => [s, ...ends.map((e) => s + e)]).filter((w) => w.length >= 4);
+}
 
 // a text's words as compared (no accents, lower, whole, 4 letters or
 // more, not a filler nor generic)

@@ -425,7 +425,9 @@ test("a promise and the tasks moved in its turn: only one related (its id, a wor
   const s = T.tasks_load(dir);
   const t = mine(s, "Revisar o ritsu.lock", { ref: "fractal-ritsu", next_step: "ler o diff" }, NOW);
   expect(T.tasks_moved_since(s, NOW)).toBe(true);
-  expect(T.tasks_moved_since(s, NOW, ["Vou revisar o … em seguida"])).toBe(true);
+  // the verb alone ("revisar") is generic: the subject relates
+  expect(T.tasks_moved_since(s, NOW, ["Vou revisar o … em seguida"])).toBe(false);
+  expect(T.tasks_moved_since(s, NOW, ["Vou revisar o ritsu.lock em seguida"])).toBe(true);
   expect(T.tasks_moved_since(s, NOW, ["vou conferir o diff"])).toBe(true);
   expect(T.tasks_moved_since(s, NOW, ["Vou responder o Enzo depois"])).toBe(false);
   expect(T.tasks_moved_since(s, NOW, ["vou fechar a " + t.id + " agora"])).toBe(true);
@@ -444,6 +446,29 @@ test("a promise and the tasks moved in its turn: only one related (its id, a wor
   expect(T.tasks_moved_since({ ...s, tasks: [g] }, NOW, ["vou fechar a " + g.id])).toBe(true);
   // a word's start alone isn't the word: "revisão" isn't "revisar"
   expect(T.tasks_moved_since({ ...s, tasks: [t] }, NOW, ["vou fazer a revisão"])).toBe(false);
+});
+
+test("a promise's verbs of action, in any form, relate nothing (BrownOctopus): its subject, a name or the exact id do", () => {
+  const s = T.tasks_load(dir);
+  const up = mine(s, "Atualizar documentação", { detail: "Verificar relatos dos agentes" }, NOW);
+  const only = { ...s, tasks: [up] };
+  expect(T.tasks_moved_since(only, NOW, ["Vou atualizar o serviço"])).toBe(false);
+  expect(T.tasks_moved_since(only, NOW, ["Vou verificar o relato"])).toBe(false);
+  expect(T.tasks_moved_since(only, NOW, ["vou revisar, corrigir e testar o deploy"])).toBe(false);
+  expect(T.tasks_moved_since(only, NOW, ["Corrijo e verifico em seguida"])).toBe(false);
+  expect(T.tasks_moved_since(only, NOW, ["vou responder e conferir a correção"])).toBe(false);
+  expect(T.tasks_moved_since(only, NOW, ["I'll update and check it"])).toBe(false);
+  // their subject still relates: "documentação", "relatos", "agentes"
+  expect(T.tasks_moved_since(only, NOW, ["Vou atualizar a documentação"])).toBe(true);
+  expect(T.tasks_moved_since(only, NOW, ["Vou verificar os relatos"])).toBe(true);
+  // a name relates through a generic verb and "pendência"
+  const enzo = mine(s, "Slack Enzo: responder sobre os PRs", {}, NOW);
+  expect(T.tasks_moved_since({ ...s, tasks: [enzo] }, NOW, ["Vou responder a pendência do Enzo"])).toBe(true);
+  // the id, exact: P55 isn't P5, nor P5 P55
+  const p5 = { ...up, id: "P5" };
+  expect(T.tasks_moved_since({ ...s, tasks: [p5] }, NOW, ["vou fechar a P55"])).toBe(false);
+  expect(T.tasks_moved_since({ ...s, tasks: [p5] }, NOW, ["vou fechar a P5"])).toBe(true);
+  expect(T.tasks_moved_since({ ...s, tasks: [{ ...up, id: "P55" }] }, NOW, ["vou atualizar a P5 agora"])).toBe(false);
   expect(T.promises_said(["vou A", "vou B"])).toBe("Compromisso sem pendência: o Unii disse “vou A”, “vou B” e não registrou nem atualizou, neste turno, nenhuma pendência sua ligada a eles. Unii: registre-os com task_add (assignee unii, next_step e next_due) ou diga que não vai fazê-los.");
 });
 
@@ -559,4 +584,15 @@ test("a restart's order taken as one to restart now: the template's yes, or its 
   expect(T.restart_now(T.RESTART_LATER)).toBe(false);
   expect(T.restart_now("Mesclar o PR")).toBe(false);
   expect(T.restart_now(null)).toBe(false);
+});
+
+test("a restart for later (BrownOctopus): a time or an event to wait for keeps the order open; its own words with no wait are now", () => {
+  expect(T.restart_now("Reinicie e avise")).toBe(true);
+  expect(T.restart_now("Sim, pode reiniciar agora")).toBe(true);
+  expect(T.restart_now("Reinicia já")).toBe(true);
+  expect(T.restart_now("Restart now")).toBe(true);
+  // a time or an event to wait for: later, the order stays open
+  for (const later of ["Reinicie às 22h", "Reinicie as 22h", "Reinicie às 22:30", "Reinicie 22h30", "Reinicie ao terminar o PR", "Reinicie em 1 hora", "Reinicie em uma hora", "Reinicie em 30 minutos", "Reinicie daqui a pouco", "Reinicie assim que os agentes acabarem", "Reinicie logo que o GrandDove terminar", "Reinicie ao fim do dia", "Reinicie à tarde", "Reinicie quando puder", "Reinicie até as 18h", "Espere e reinicie", "Reinicie depois", "Restart at 10", "Restart in an hour", "Restart once the agents finish", "Restart as soon as they're done"]) {
+    expect([later, T.restart_now(later)]).toEqual([later, false]);
+  }
 });
