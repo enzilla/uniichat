@@ -6,9 +6,10 @@
 // Windows, its install.ps1 to PowerShell), telling it to replace this
 // very executable (UNII_BIN).
 
-// this unii's version: each release ships one, a new one for every
-// change to Term.ts or what it imports. The fork's release script reads
-// it here and tags the release with it, as is ("20")
+// this unii's version, as a local build reports it. A release build
+// stamps the vX.Y.Z tag over this line and does not commit that stamp
+// (scripts/ci/next-version.ts). `unii update` still downloads
+// /releases/latest/download, so the tag is not part of the URL.
 export const VERSION = "31-enzilla.1";
 
 export const REPO        = "https://github.com/enzilla/uniichat";
