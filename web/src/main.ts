@@ -116,10 +116,6 @@ const P = {
   back  : null as { a: number; top: number } | null,
   after : false,
   at    : "",
-  // the drawer over the box: the task in it (null: shut); asked: the
-  // tasks seen, so one asked anew opens it (null: none seen yet)
-  drawer: null as string | null,
-  asked : null as Set<string> | null,
 };
 
 // the Mesa and the list side by side, above this width (style.css)
@@ -265,7 +261,7 @@ function chat(): void {
     }
   };
   document.onclick = click;
-  for (const root of [$("#tasks"), $("#desk"), $("#drawer")]) {
+  for (const root of [$("#desk")]) {
     root.addEventListener("change", task_draft);
     root.addEventListener("keydown", (ev) => {
       const el = ev.target as HTMLElement;
@@ -291,8 +287,6 @@ function chat(): void {
       }
     });
   }
-  $("#tasks").addEventListener("toggle", thread_toggle, true);
-  document.addEventListener("keydown", drawer_keys);
   desk_wire();
   // a phone's keyboard up or down: the box's last line stays in sight, if
   // the caret is there; the page's bottom, if at it
@@ -474,7 +468,7 @@ function act(a: View.Act): void {
 // menu's row (Html.ts), unless it ends a selection dragged in its element
 function click(ev: MouseEvent): void {
   const target = ev.target as HTMLElement;
-  const el = target.closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], [data-drawer], [data-drawer-close], .choices > button");
+  const el = target.closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], .choices > button");
   const sel = getSelection();
   // a picture opens in the page (Viewer.ts); with a key held, as a link
   const pic = Viewer.viewer_pic(target);
@@ -512,17 +506,6 @@ function click(ev: MouseEvent): void {
     desk_back();
     return;
   }
-  if (el.dataset.drawer !== undefined) {
-    drawer_open(el.dataset.drawer);
-    if ($("#tasks").matches(":popover-open")) {
-      $("#tasks").hidePopover();
-    }
-    return;
-  }
-  if (el.dataset.drawerClose !== undefined) {
-    drawer_shut();
-    return;
-  }
   el.closest<HTMLElement>(".choices")?.hidePopover();
   const { act: a, copy: text, go: path } = el.dataset;
   const menu = el.closest("#menu") !== null;
@@ -538,7 +521,7 @@ function click(ev: MouseEvent): void {
     if (made.$ === "TaskSay" && made.text !== "") {
       act(made);
     } else if (made.$ === "TaskSay") {
-      task_say(made.task, el.closest<HTMLElement>("#tasks, #desk, #drawer") ?? $("#tasks"));
+      task_say(made.task, $("#desk"));
     } else if (made.$ === "TaskAccept") {
       task_accept(el, made.task);
     } else if (made.$ === "Task" && made.state === "done" && task_missing(el)) {
@@ -723,8 +706,8 @@ function task_draft(ev: Event): void {
   act({ $: "TaskDraft", task: item.dataset.task!, fields: { [set.dataset.field!]: field_value(set) } });
 }
 
-// a message in a task's thread (its box's text, in root: the aside or
-// the Mesa): the box emptied, its text back in it if the server refuses
+// a message in a task's thread (its box's text, in root: the Mesa's
+// task): the box emptied, its text back in it if the server refuses
 // (and it's still empty)
 function task_say(task: string, root: HTMLElement): void {
   const box = () => root.querySelector<HTMLTextAreaElement>(`[data-task="${CSS.escape(task)}"] textarea.say`);
@@ -748,7 +731,7 @@ function task_say(task: string, root: HTMLElement): void {
   draw(false);
 }
 
-// what's typed in the list (root: the aside or the Mesa's task) and not
+// what's typed in a task (root: the Mesa's task) and not
 // sent (data-keep: a comment, a text field, a thread's box, a box
 // checked), and where the focus is, taken before its items are made
 // again and put back in the new ones
@@ -789,30 +772,10 @@ function keep_put(root: HTMLElement, kept: Map<string, Kept>): void {
   }
 }
 
-// a thread opened or shut by hand stays so, its item made again, till
-// a message comes to it (THREADS: by task, how and at how many messages)
-const THREADS = new Map<string, { open: boolean; n: number }>();
-function thread_toggle(ev: Event): void {
-  const el = ev.target as HTMLElement;
-  const item = el.closest<HTMLElement>("#tasks li[data-task]");
-  if (!(el instanceof HTMLDetailsElement) || !el.classList.contains("thread") || item === null) {
-    return;
-  }
-  THREADS.set(item.dataset.task!, { open: el.open, n: el.querySelectorAll("ol > li").length });
-}
-function threads_put(): void {
-  for (const el of document.querySelectorAll<HTMLDetailsElement>("#tasks li[data-task] details.thread")) {
-    const task = el.closest<HTMLElement>("li[data-task]")!.dataset.task!;
-    const was = THREADS.get(task);
-    if (was !== undefined && was.n === el.querySelectorAll("ol > li").length && el.open !== was.open) {
-      el.open = was.open;
-    }
-  }
-}
-
 // the user's count of tasks (the Mesa's "Agora"), wherever it shows
-// besides the list: the tab's title ("(2) UniiChat"), the ✓ marked, the
-// app's badge (an installed app: sw.js sets it too, as pushes come); none,
+// besides the list: the tab's title ("(2) UniiChat"), the header's
+// "Mesa · N" marked (on the Conversa, the only notice of the pending
+// list: the list itself shows on the Mesa alone), the app's badge (an installed app: sw.js sets it too, as pushes come); none,
 // all cleared. Set only as it changes
 let TURN = -1;
 const TITLE = document.title;
@@ -822,123 +785,9 @@ function turn_show(n: number): void {
   }
   TURN = n;
   document.title = View.turn_title(TITLE, n);
-  $(".tasks").classList.toggle("turn", n > 0);
   $(".mode").classList.toggle("turn", n > 0);
   const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
   (n === 0 ? nav.clearAppBadge?.() : nav.setAppBadge?.(n))?.catch(() => {});
-}
-
-// the pending list: the header's ✓ (on a wide screen, an aside instead:
-// style.css), its items made again only as the list changes (a state)
-// (those that wait for others: out of the count, a summary that opens
-// to them)
-let TASKS: { of: unknown; day: number; html: { open: string[]; now: string[]; old: string[]; waiting: string[]; closed: string[] } } = { of: null, day: 0, html: { open: [], now: [], old: [], waiting: [], closed: [] } };
-function tasks_bar(): void {
-  // made again as the list changes, and each hour (a task grows old)
-  const hour = Math.floor(Date.now() / 3600e3);
-  if (TASKS.of !== v.tasks || TASKS.day !== hour) {
-    TASKS = { of: v.tasks, day: hour, html: Html.tasks_html(v.tasks, Date.now()) };
-  }
-  const { open, now, old, waiting, closed } = TASKS.html;
-  markup($("#tasks .old ul"), old);
-  $("#tasks .old").hidden = old.length === 0;
-  $("#tasks .old summary").textContent = "Antigas (" + old.length + ") · sem mudança há 7 dias";
-  const untold = View.view_untold(v).length;
-  document.body.classList.toggle("tasking", v.tasks.length > 0);
-  $(".tasks").hidden = v.tasks.length === 0;
-  $(".tasks span").textContent = View.tasks_count_said(open.length, waiting.length);
-  $("#tasks .n").textContent = open.length === 0 ? "" : "(" + open.length + ")";
-  $("#tasks .none").hidden = open.length > 0;
-  $("#tasks .none").textContent = View.tasks_none_said(waiting.length);
-  const kept = keep_take($("#tasks"));
-  markup($("#tasks ul.now"), now);
-  keep_put($("#tasks"), kept);
-  threads_put();
-  markup($("#tasks .waiting ul"), waiting);
-  $("#tasks .waiting").hidden = waiting.length === 0;
-  $("#tasks .waiting summary").textContent = View.tasks_waiting_said(waiting.length);
-  markup($("#tasks .closed ul"), closed);
-  $("#tasks .closed").hidden = closed.length === 0;
-  $("#tasks .tell").hidden = untold === 0;
-  $("#tasks .tell span").textContent = String(untold);
-  if (v.tasks.length === 0 && $("#tasks").matches(":popover-open")) {
-    $("#tasks").hidePopover();
-  }
-}
-
-// Drawer
-// ======
-// A task answered over the box, the chat in sight above it (as the
-// Mesa's pane, its parts the list's: Html.drawer_html): opened by a
-// task's title in the list, or by itself as Unii asks something new
-// (a task of the user's with choices or fields), unless one is open or
-// something is being typed; shut by ✕ or Esc, or as the task leaves
-// the list or is resolved. Never on the Mesa
-
-let DRAWN: { of: unknown; id: string | null; html: string[] } = { of: null, id: null, html: [] };
-function drawer_draw(): void {
-  drawer_asks();
-  const el = $("#drawer");
-  const t = P.drawer === null ? undefined : v.tasks.find((x) => x.id === P.drawer);
-  if (t === undefined || t.state !== "open") {
-    P.drawer = null;
-  }
-  if (P.drawer === null || t === undefined || P.mode === "desk") {
-    el.hidden = true;
-    return;
-  }
-  if (DRAWN.of !== v.tasks || DRAWN.id !== t.id) {
-    DRAWN = { of: v.tasks, id: t.id, html: Html.drawer_html(t, v.tasks) };
-  }
-  const was = keep_take(el);
-  markup(el, DRAWN.html);
-  keep_put(el, was);
-  el.hidden = false;
-}
-
-// a question asked anew (a task of the user's, open, with choices or
-// fields) opens the drawer, unless it shows one or the box has text
-function drawer_asks(): void {
-  const asks = v.tasks.filter((t) => t.state === "open" && t.assignee === "user" && (t.choices.length > 0 || (t.fields ?? []).length > 0));
-  if (P.asked === null) {
-    if (v.up) {
-      P.asked = new Set(v.tasks.map((t) => t.id));
-    }
-    return;
-  }
-  for (const t of asks) {
-    if (P.asked.has(t.id)) {
-      continue;
-    }
-    P.asked.add(t.id);
-    if (P.drawer === null && Box.box_blank()) {
-      P.drawer = t.id;
-    }
-  }
-}
-
-function drawer_open(id: string): void {
-  P.drawer = id;
-  if (P.mode === "desk") {
-    desk_mode("chat");
-  }
-  draw(true);
-  requestAnimationFrame(() => $("#drawer").querySelector<HTMLElement>(".opts button, input, textarea, button:not(.shut)")?.focus({ preventScroll: true }));
-}
-
-function drawer_shut(): void {
-  P.drawer = null;
-  draw(true);
-  Box.box_focus();
-}
-
-// Esc shuts the drawer (but over a menu, a popover or the picture)
-function drawer_keys(ev: KeyboardEvent): void {
-  if (ev.key !== "Escape" || ev.defaultPrevented || $("#drawer").hidden || document.querySelector("[popover]:popover-open, dialog[open]") !== null) {
-    return;
-  }
-  ev.preventDefault();
-  drawer_shut();
 }
 
 // Mesa
@@ -1024,13 +873,7 @@ function desk_choose(): void {
   }
   P.chose = true;
   const was = sessionStorage.getItem(kept("mode"));
-  const mode = was === "desk" ? "desk" : "chat";
-  // the user's turn: the first such task in the drawer, the chat in sight
-  // (the Mesa, a screen of its own, only by its button or m)
-  const first = View.desk_list(v.tasks, "", "", Date.now()).find((g) => g.group === "now")?.tasks[0];
-  if (mode === "chat" && first !== undefined && View.desk_turn(v.tasks)) {
-    P.drawer = first.id;
-  }
+  const mode = was === "desk" || was === "chat" ? was : View.desk_turn(v.tasks) ? "desk" : "chat";
   if (mode !== P.mode && PAGES.includes(location.pathname) === false && location.pathname !== PIPE && location.pathname !== TREE) {
     desk_mode(mode, false);
   }
@@ -1764,20 +1607,11 @@ function bars(): void {
   if (v.timers.length === 0 && $("#timers").matches(":popover-open")) {
     $("#timers").hidePopover();
   }
-  tasks_bar();
-  drawer_draw();
-  const doing = View.activity_of(v);
-  $("#doing").hidden = doing === null;
-  if (doing !== null) {
-    const html = Html.activity_html(doing);
-    if ($("#doing").innerHTML !== html) {
-      $("#doing").innerHTML = html;
-    }
-  }
-  const turn = View.desk_list(v.tasks, "", "", Date.now()).find((g) => g.group === "now")?.tasks.length ?? 0;
+  const turn = View.desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
   turn_show(turn);
   $(".mode").hidden = false;
   $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
+  $(".mode").setAttribute("aria-label", P.mode === "desk" ? "Voltar à Conversa" : turn === 0 ? "Mesa: nenhuma pendência na sua vez" : "Mesa: " + turn + (turn === 1 ? " pendência" : " pendências") + " na sua vez");
   send.classList.toggle("stop", stop);
   // an agent's page has no box: messages go to UniiChat
   $(".composer").hidden = !on;

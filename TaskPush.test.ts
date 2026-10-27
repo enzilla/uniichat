@@ -222,7 +222,10 @@ test("a try again goes only to the browsers it didn't; gone ones forgotten", asy
 test("the user's count is the Mesa's Agora", () => {
   const tasks = [task("P1"), task("P2", { assignee: "unii" }), task("P3", { assignee: "unii", talk: "user" }), task("P4", { talk: "unii" }), task("P5", { after: ["P1"] }), task("P6", { state: "done" })];
   expect(TaskPush.turn_count(tasks)).toBe(View.desk_list(tasks).find((g) => g.group === "now")!.tasks.length);
-  expect(TaskPush.turn_count(tasks)).toBe(2);
+  // P3: Unii replied in the thread of a task of Unii's: news, no move of
+  // the user's (it stayed "sua vez" for good before: Mesa visual)
+  expect(TaskPush.turn_count(tasks)).toBe(1);
+  expect(TaskPush.actionable(tasks)).toEqual(["P1"]);
   expect(View.turn_title("UniiChat", 2)).toBe("(2) UniiChat");
   expect(View.turn_title("UniiChat", 0)).toBe("UniiChat");
 });

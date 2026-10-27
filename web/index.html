@@ -24,8 +24,7 @@
   <span class="net">offline</span>
   <button class="imping" popovertarget="import" hidden><span></span><progress max="1" value="0"></progress></button>
   <button class="timers" popovertarget="timers" title="Schedules" hidden>⏰ <span></span></button>
-  <button class="mode" type="button" title="Alternar entre a Mesa e a Conversa (m)" hidden>Mesa</button>
-  <button class="tasks" popovertarget="tasks" title="Pendências" hidden>✓ <span></span></button>
+  <button class="mode" type="button" title="Pendências: alternar entre a Mesa e a Conversa (m)" hidden>Mesa</button>
   <button class="menu" popovertarget="menu">☰</button>
 </header>
 <main id="log"><div class="rows"></div><div class="tail"></div></main>
@@ -55,8 +54,6 @@
   <!-- what Unii is doing while it works (main.ts bars) -->
   <p id="doing" role="status" aria-live="polite" hidden></p>
   <nav id="pick"></nav>
-  <!-- a task answered over the box, the chat in sight (main.ts drawer_draw) -->
-  <section id="drawer" aria-label="Pendência" hidden></section>
   <form class="composer">
     <button class="attach" type="button" aria-label="attach files"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
     <input type="file" multiple hidden>
@@ -69,22 +66,6 @@
   <p class="title">Schedules</p>
   <ul></ul>
 </div>
-<!-- the pending list, set by Unii's task tools (Tasks.ts): an aside on a
-     wide screen, else the header's ✓ popover (style.css) -->
-<aside id="tasks" popover>
-  <p class="title">Pendências <span class="n"></span></p>
-  <p class="none">Nenhuma pendência aberta.</p>
-  <ul class="now"></ul>
-  <details class="old" hidden><summary></summary><ul></ul></details>
-  <details class="waiting" hidden><summary></summary><ul></ul></details>
-  <button class="tell" type="button" data-act='{"$":"TasksTell"}' title="Suas respostas já estão salvas; o Unii as vê quando voltar a trabalhar. Este botão o chama agora." hidden>Avisar o Unii agora (<span></span>)</button>
-  <details class="closed" hidden><summary>Resolvidas recentemente</summary><ul></ul></details>
-</aside>
-<!-- a picture seen whole, over the chat (web/src/Viewer.ts) -->
-<dialog id="viewer" aria-label="Picture">
-  <div class="bar"><p class="name"></p><span class="zoom"></span><a class="get" title="Download" aria-label="Download"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg></a><button class="shut" type="button" title="Close" aria-label="Close" autofocus><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
-  <div class="stage"><img alt="" draggable="false"><p class="why" hidden>Could not load this picture.</p><button class="prev" type="button" aria-label="Previous picture" hidden><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><button class="next" type="button" aria-label="Next picture" hidden><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button></div>
-</dialog>
 <div id="menu" popover>
   <button data-go="/settings">Settings</button>
   <button data-go="/pipeline">Pipeline</button>

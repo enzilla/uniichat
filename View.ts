@@ -733,12 +733,6 @@ export function turn_title(title: string, n: number): string {
   return n > 0 ? "(" + n + ") " + title : title;
 }
 
-// the header's ✓ count: the open free to resolve; none, but some that
-// wait: "+2" (so never a bare 0 beside a list that isn't empty)
-export function tasks_count_said(open: number, waiting: number): string {
-  return open === 0 && waiting > 0 ? "+" + waiting : String(open);
-}
-
 // what the list says with none open free to resolve
 export function tasks_none_said(waiting: number): string {
   return waiting === 0 ? "Nenhuma pendência aberta." : "Nenhuma pendência para resolver agora.";
@@ -860,9 +854,25 @@ export function fields_args(t: Task, words: string): { fields: Record<string, un
 }
 
 // a task's thread state: "aguardando o Unii" (the user wrote), "sua vez"
-// (Unii replied); "" neither
-export function task_talk_said(t: Task): string {
-  return t.talk === "unii" ? "aguardando o Unii" : t.talk === "user" ? "sua vez" : "";
+// (Unii replied, and the task is the user's move: TaskDeps.user_move),
+// "Unii respondeu" (Unii replied in the thread of a task that isn't the
+// user's move: one of Unii's, one waiting for others: news to read, no
+// step of theirs); "Unii não respondeu" (the turn ended with no reply
+// to the user's message: Deps.task_missed; whoever's move it is, not
+// said as if Unii had answered); "" neither. blocked: the ids waiting for others
+// (Deps.blocked_ids; not given: worked out from t alone, none)
+export const MISSED = "Unii não respondeu";
+export function task_talk_said(t: Task, blocked: Set<string> = new Set()): string {
+  if (t.talk === "unii") {
+    return "aguardando o Unii";
+  }
+  if (t.talk !== "user") {
+    return "";
+  }
+  if (Deps.task_missed(t)) {
+    return MISSED;
+  }
+  return Deps.user_move(t, blocked) ? "sua vez" : "Unii respondeu";
 }
 
 // Copy
@@ -925,9 +935,9 @@ export function turn_why(turn: Turn): string {
 // a task the user wrote about and Unii hasn't answered: "aguardando o
 // Unii há 5 min · compactando mensagens antigas" (no turn known: the
 // time alone); else as task_talk_said ("sua vez", or "")
-export function task_talk_wait_said(t: Task, now: number, turn: Turn | null = null): string {
+export function task_talk_wait_said(t: Task, now: number, turn: Turn | null = null, blocked: Set<string> = new Set()): string {
   if (t.state !== "open" || t.talk !== "unii") {
-    return task_talk_said(t);
+    return task_talk_said(t, blocked);
   }
   const ms = Math.max(0, now - Date.parse(task_talk_since(t)));
   const ago = Number.isFinite(ms) ? " há " + (ms < 3600e3 ? Math.floor(ms / 60e3) + " min" : hours_said(ms)) : "";
@@ -973,7 +983,8 @@ export function tasks_by_assignee(open: Task[]): [string, Task[]][] {
 // Html.desk_html), each task in one group, by whose move it is: "now",
 // the user's (theirs and free, or Unii answered in its thread); "unii",
 // the user wrote in its thread and Unii hasn't answered; "others",
-// someone else's (Unii's, an agent's) at work; "waiting", waiting for
+// someone else's (Unii's, an agent's) at work, or one waiting for
+// something outside the list (waits_for, P85); "waiting", waiting for
 // other open tasks (TaskDeps.ts); "closed", resolved lately
 export type Desk = "now" | "unii" | "others" | "old" | "waiting" | "closed";
 export const DESK: [Desk, string][] = [
@@ -996,7 +1007,127 @@ export function desk_group(t: Task, blocked: Set<string>): Desk {
   if (blocked.has(t.id)) {
     return "waiting";
   }
-  return t.assignee === "user" || t.talk === "user" || Deps.status_of(t) === "waiting_user" ? "now" : "others";
+  // the user's move (TaskDeps.user_move): theirs, or Unii's waiting for
+  // them; Unii's reply in its thread alone doesn't make it so
+  return Deps.user_move(t, blocked) ? "now" : "others";
+}
+
+// how long ago a time was, as the ficha says it: "agora", "há 5 min",
+// "há 3 h", "há 4 d"; in the future, "em 5 min" ("" for no time)
+export function ago_said(iso: string, now: number): string {
+  const ms = now - Date.parse(iso);
+  if (!Number.isFinite(ms)) {
+    return "";
+  }
+  const n = Math.abs(ms);
+  const said = n < 60e3 ? "" : n < 3600e3 ? Math.floor(n / 60e3) + " min" : hours_said(n);
+  return said === "" ? "agora" : (ms >= 0 ? "há " : "em ") + said;
+}
+
+// a task's limit, as the ficha says it: one of the user's, when it's
+// late by its kind (TaskDeps.late_after: "vence 27/10 14:00 (em 3 h)",
+// "atrasada há 30 h; venceu 25/10 11:00", its late said as the list and
+// the push say it, task_late_said; "sem prazo"); one of someone
+// else's, its next step's due (TaskDeps.due_at: "próximo passo até 27/10
+// 14:00 (em 3 h)", "vencido há 2 h"); waiting for others or for the
+// user, or closed: ""
+export function task_limit_said(t: Task, tasks: Task[], now: number, blocked: Set<string> = Deps.blocked_ids(tasks)): string {
+  if (t.state !== "open" || blocked.has(t.id)) {
+    return "";
+  }
+  const at = (ms: number) => new Date(ms).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  if (t.assignee === "user") {
+    // waiting for something outside the list (P85): no limit runs yet
+    if (Deps.outside_wait(t)) {
+      return "em espera: o prazo conta quando a espera acabar";
+    }
+    const limit = Deps.late_after(t);
+    const from = Date.parse(Deps.ready_at(t));
+    if (!Number.isFinite(limit) || Number.isNaN(from)) {
+      return "sem prazo";
+    }
+    const due = from + limit;
+    const late = task_late_said(t, blocked, now);
+    if (late !== "") {
+      return late + "; venceu " + at(due);
+    }
+    // past it but not late (the user wrote, Unii hasn't answered: not
+    // theirs to be late on)
+    return (due < now ? "venceu " : "vence ") + at(due) + " (" + ago_said(new Date(due).toISOString(), now) + (due < now && t.talk === "unii" ? "; aguardando o Unii" : "") + ")";
+  }
+  const due = Deps.due_at(t);
+  if (due === null) {
+    return "";
+  }
+  const ms = Date.parse(due);
+  return "próximo passo até " + at(ms) + " (" + (ms < now ? "vencido " : "") + ago_said(due, now) + ")";
+}
+
+// the class of a task's thread state as the views mark it: "user" its
+// "sua vez" (in relief), "unii" waiting for Unii, "replied" Unii's reply
+// on a task that isn't the user's move (quiet), "missed" no reply came
+// (MISSED), "" none
+export function talk_cls(said: string): string {
+  return said === "sua vez" ? "user" : said.startsWith("aguardando o Unii") ? "unii" : said === "Unii respondeu" ? "replied" : said === MISSED ? "missed" : "";
+}
+
+// the required fields of an open task of the user's not answered yet in
+// its draft (what keeps Concluir from going)
+export function task_fields_left(t: Task): Field[] {
+  const draft = t.draft ?? {};
+  return (t.fields ?? []).filter((f) => f.required && value_empty(Object.hasOwn(draft, f.id) ? draft[f.id] : undefined));
+}
+
+// The Mesa's analysis: whose move it is, said first
+// --------------------------------------------------
+// A task shown on the Mesa opens with one line that says whose move it
+// is and what's expected (the group of the list it's in, desk_group):
+// cls (user: the user's move; unii: waiting for Unii's reply; others:
+// someone else's at work, or blocked; waiting: waiting for other tasks;
+// closed), its lead ("Sua vez", "Com o Unii") and what to do, or why
+// nothing (pt-BR). blocked: Deps.blocked_ids of the list
+export type TurnSaid = { cls: Desk | "user"; lead: string; text: string };
+export function task_turn_said(t: Task, tasks: Task[], now: number, turn: Turn | null = null, blocked: Set<string> = Deps.blocked_ids(tasks)): TurnSaid {
+  if (t.state !== "open") {
+    return { cls: "closed", lead: t.state === "done" ? "Concluída" : "Descartada", text: task_unproven(t) ? "Fechada sem evidência registrada: reabra-a se o problema não foi resolvido." : "Nada a fazer: a evidência está registrada abaixo." };
+  }
+  if (blocked.has(t.id)) {
+    return { cls: "waiting", lead: "Aguardando outras pendências", text: "Só pode ser resolvida depois de " + and_said(Deps.waits(tasks, t).map((id) => id_whose(tasks, id))) + "." };
+  }
+  if (t.talk === "unii") {
+    const ago = ago_said(task_talk_since(t), now);
+    return { cls: "unii", lead: "Aguardando o Unii", text: "Você escreveu na conversa" + (ago === "" ? "" : " " + ago) + " e o Unii ainda não respondeu" + (turn === null ? "" : " (" + turn_why(turn) + ")") + ". A resposta chega aqui quando ele responder nesta conversa ou quando o turno dele terminar; se o servidor reiniciar sem turno a retomar, ela volta marcada “Unii não respondeu”. Nada a fazer até lá." };
+  }
+  // waiting for something outside the list (P85): a wait, not the user's move
+  if (Deps.outside_wait(t)) {
+    const missed_wait = Deps.task_missed(t) ? " O Unii não respondeu à sua última mensagem na conversa (o turno terminou sem resposta)." : "";
+    return { cls: "waiting", lead: "Aguardando", text: "Espera algo fora da lista: " + t.waits_for!.trim() + ". Nada a fazer até lá; volta para Agora quando a espera for retirada." + missed_wait };
+  }
+  if (Deps.status_of(t) === "blocked") {
+    return { cls: "others", lead: "Bloqueada", text: (t.status_why ?? "sem motivo informado") + ((t.unblock ?? null) === null ? "" : ". Desbloqueia: " + t.unblock) + "." };
+  }
+  const missed = Deps.task_missed(t) ? "O Unii não respondeu à sua última mensagem na conversa (o turno terminou sem resposta); escreva de novo para tentar outra vez. " : "";
+  if (Deps.user_move(t, blocked)) {
+    if (t.assignee !== "user") {
+      return { cls: "user", lead: "Sua vez", text: missed + "O Unii aguarda você: " + (t.status_why ?? "algo seu") + ". Responda na conversa desta pendência." };
+    }
+    const left = task_fields_left(t);
+    const one = left.length === 1 ? left[0] : undefined;
+    const fill = left.length === 0 ? "" : "preencha " + (one !== undefined ? "o campo obrigatório “" + one.label + "”" : left.length + " campos obrigatórios") + " e ";
+    const rec = task_rec(t);
+    const pick = t.choices.length === 0 ? "conclua ou descarte" : t.choices.length === 1 ? "conclua como “" + t.choices[0] + "” ou descarte" : "escolha uma das " + t.choices.length + " opções" + (rec === null ? "" : " (recomendada: “" + rec + "”)");
+    const late = task_late_said(t, blocked, now);
+    const kind = task_kind_said(t);
+    const tail = [kind, late].filter((x) => x !== "").join("; ");
+    const said = fill + pick;
+    return { cls: "user", lead: "Sua vez", text: missed + said.charAt(0).toUpperCase() + said.slice(1) + "." + (tail === "" ? "" : " " + tail.charAt(0).toUpperCase() + tail.slice(1) + ".") };
+  }
+  const replied = missed !== "" ? " " + missed.trim() : t.talk === "user" ? " O Unii respondeu na conversa." : "";
+  if ((t.order ?? null) !== null) {
+    return { cls: "others", lead: "Ordem recebida", text: "O Unii executa “" + (t.order!.answer ?? "sua escolha") + "” e só fecha com a evidência da execução: nada a fazer agora." + replied + " Você pode cobrar ou cancelar a ordem." };
+  }
+  const step = (t.next_step ?? null) === null ? "" : " Próximo passo: " + t.next_step + ".";
+  return { cls: "others", lead: assignee_said(t).replace(/^c/, "C"), text: "Nada a fazer agora." + replied + step + " Você pode cobrar o andamento ou liberar para fechar." };
 }
 
 // whether a task is the user's move now (the Mesa opens on it: P19)
@@ -1098,7 +1229,7 @@ export const TASK_LATE = Deps.LATE;
 // else "". Late, it stays where it is (P5: none expires)
 export function task_late_said(t: Task, blocked: Set<string>, now: number): string {
   const age = now - Date.parse(Deps.ready_at(t));
-  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || !(age > Deps.late_after(t))) {
+  if (t.state !== "open" || t.assignee !== "user" || blocked.has(t.id) || t.talk === "unii" || Deps.outside_wait(t) || !(age > Deps.late_after(t))) {
     return "";
   }
   return "atrasada há " + hours_said(age);
@@ -1383,7 +1514,7 @@ export function task_fill_said(t: Task): string {
 }
 
 // an answer not given: none, an empty text, no choice
-function value_empty(x: unknown): boolean {
+export function value_empty(x: unknown): boolean {
   return x === undefined || x === null || (typeof x === "string" && x.trim() === "") || (Array.isArray(x) && x.length === 0);
 }
 
@@ -1522,7 +1653,8 @@ export function tasks_md(v: View, one: Task | null = null, waiting = false): str
     const waits = Deps.waits(v.tasks, one);
     const frees = task_frees_said(v, one);
     const deps = (one.state === "open" && waits.length > 0 ? " · aguarda " + waits.join(", ") : "") + (frees === "" ? "" : " · " + frees);
-    const talk = task_talk_said(one) === "" ? "" : " · " + task_talk_said(one);
+    const talked = task_talk_said(one, Deps.blocked_ids(v.tasks));
+    const talk = talked === "" ? "" : " · " + talked;
     const kind = task_kind_said(one) === "" ? "" : " · " + task_kind_said(one);
     const outside = task_waits_for_said(one) === "" ? "" : " · " + task_waits_for_said(one);
     const marks = task_marks(one, v.tasks, Date.now()).map(([, x]) => " · **" + x + "**").join("");
@@ -1531,11 +1663,12 @@ export function tasks_md(v: View, one: Task | null = null, waiting = false): str
     const proof = one.state === "open" ? "" : (one.evidence ?? []).length === 0 ? "**Evidência:** nenhuma registrada (" + UNPROVEN_SAID + "). `/reabrir " + one.id + "` reabre." : "**Evidência**\n\n" + one.evidence.map((e) => "- " + evidence_said(e)).join("\n");
     const acts = one.state === "open" && one.choices.some((c) => act_unii(one, c)) ? "_As opções marcadas “" + ACT_SAID + "” avisam o Unii na hora, com `/ok " + one.id + " opção`._" : "";
     const prs = (one.prs ?? []).length === 0 ? "" : "**Verificação**\n\n" + one.prs.map(pr_md).join("\n");
-    return [head, acts, said, round, proof, prs, one.detail, fields_md(one), thread_md(one)].filter((x) => x !== "").join("\n\n");
+    return [head, acts, said, round, proof, prs, one.detail, fields_md(one), thread_md(one, Deps.blocked_ids(v.tasks))].filter((x) => x !== "").join("\n\n");
   }
   const { open, waiting: wait, closed } = view_tasks(v);
   const frees = (t: Task) => (task_frees_said(v, t) === "" ? "" : " · **" + task_frees_said(v, t) + "**");
-  const extra = (t: Task) => ((t.fields ?? []).length === 0 ? "" : " · " + t.fields.length + (t.fields.length === 1 ? " campo" : " campos")) + (task_talk_said(t) === "" ? "" : " · **" + task_talk_said(t) + "**");
+  const blocked = Deps.blocked_ids(v.tasks);
+  const extra = (t: Task) => ((t.fields ?? []).length === 0 ? "" : " · " + t.fields.length + (t.fields.length === 1 ? " campo" : " campos")) + (task_talk_said(t, blocked) === "" ? "" : " · **" + task_talk_said(t, blocked) + "**");
   const marks = (t: Task) => task_marks(t, v.tasks, Date.now()).map(([, x]) => " · **" + x + "**").join("");
   const line = (t: Task) => "- **" + t.id + "** " + t.title + marks(t) + frees(t) + tag(t) + opts(t) + extra(t);
   const whose = (t: Task | undefined) => (t === undefined || t.assignee === "user" ? "" : " (" + assignee_said(t) + ")");
@@ -1575,12 +1708,12 @@ function fields_md(t: Task): string {
 }
 
 // a task's thread as Markdown, its newest messages; "" for none
-function thread_md(t: Task): string {
+function thread_md(t: Task, blocked: Set<string> = new Set()): string {
   const thread = t.thread ?? [];
   if (thread.length === 0) {
     return "";
   }
-  const talk = task_talk_said(t);
+  const talk = task_talk_said(t, blocked);
   return "**Conversa**" + (talk === "" ? "" : " · " + talk) + "\n\n" + thread.map((m) => "- **" + (m.who === "user" ? "Você" : "Unii") + ":** " + m.text.replace(/\n+/g, " ")).join("\n");
 }
 

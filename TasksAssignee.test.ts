@@ -133,26 +133,22 @@ test("views: the open by assignee, the user's first; a task not the user's has o
   const tasks = T.tasks_view(s, NOW);
   // the agent's name isn't one (<): no origin
   expect(tasks.find((t) => t.id === "P1")!.origin).toBeNull();
-  const html = Html.tasks_html(tasks);
-  expect(html.open.length).toBe(3);
-  expect(html.now.length).toBe(5);
-  expect(html.now[0]).toBe('<li class="group" data-assignee="user">Com você <span class="n">(2)</span></li>');
-  expect(html.now[3]).toBe('<li class="group" data-assignee="unii">Com o Unii <span class="n">(1)</span></li>');
-  expect(html.now[1]).toContain('data-task="P2"');
-  expect(html.now[1]).toContain('<a class="origin" title="Origem" href="https://numih.slack.com/archives/C1/p2?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">Slack</a>');
-  const full = (id: string) => Html.drawer_html(tasks.find((t) => t.id === id)!, tasks).join("");
-  expect(html.now[1]).toContain('<p class="ask">');
-  expect(full("P2")).toContain('class="done"');
-  expect(html.now[2]).toContain('<span class="origin" title="Origem">agendamento</span>');
-  expect(full("P1")).toContain('class="chase"');
-  expect(full("P1")).toContain('>Pode fechar</button>');
-  expect(full("P1")).not.toContain(">Concluir<");
-  expect(full("P1")).not.toContain(">Descartar<");
-  expect(html.now[4]).toContain("com o Unii");
-  expect(html.now[4]).toContain('class="task other unii brief"');
-  // the user's alone: no heading
-  const mine = Html.tasks_html(tasks.filter((t) => t.assignee === "user"));
-  expect(mine.now).toEqual(mine.open);
+  // the Mesa: the user's in Agora, Unii's at work (the Conversa shows
+  // no list: Mesa visual)
+  expect(View.desk_list(tasks).map((g) => [g.group, g.tasks.map((t) => t.id)])).toEqual([["now", ["P2", "P3"]], ["others", ["P1"]]]);
+  const shown = (id: string) => Html.desk_html(tasks, "", "", id, NOW).detail.join("");
+  expect(shown("P2")).toContain('<a class="origin" title="Origem" href="https://numih.slack.com/archives/C1/p2?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">Slack</a>');
+  expect(shown("P2")).toContain('class="done"');
+  expect(shown("P2")).toContain("<dt>Responsável</dt><dd>Você</dd>");
+  expect(shown("P3")).toContain('<span class="origin" title="Origem">agendamento</span>');
+  const unii = shown("P1");
+  expect(unii).toContain('class="chase"');
+  expect(unii).toContain(">Pode fechar</button>");
+  expect(unii).not.toContain(">Concluir<");
+  expect(unii).not.toContain(">Descartar<");
+  expect(unii).toContain("<dt>Responsável</dt><dd>Unii</dd>");
+  expect(unii).toContain('<p class="turn-line others"><strong>Com o Unii</strong> Nada a fazer agora.');
+  expect(unii).toContain('class="task other unii"');
   // terminal
   const v = View.view_new();
   v.tasks = tasks;

@@ -114,9 +114,6 @@ test("ids past 9 digits: made and read back; past MAXID: refused, nothing made",
 });
 
 test("the ✓ never says a bare 0 when some wait; the list says none to resolve now", () => {
-  expect(View.tasks_count_said(2, 3)).toBe("2");
-  expect(View.tasks_count_said(0, 3)).toBe("+3");
-  expect(View.tasks_count_said(0, 0)).toBe("0");
   expect(View.tasks_none_said(0)).toBe("Nenhuma pendência aberta.");
   expect(View.tasks_none_said(2)).toBe("Nenhuma pendência para resolver agora.");
   const s = T.tasks_load(dir);
@@ -375,9 +372,7 @@ test("web: fields and thread drawn escaped, drafts checked, whose turn shown; Un
   T.task_draft(s, "P1", { amb: bad.slice(0, 80), dias: ["ter"], obs: "</textarea><script>alert(1)</script>" });
   T.task_say(s, "P1", "<b>oi</b>\u001b[31m", NOW);
   T.task_reply(s, "P1", "<script>alert(2)</script> **ok** [x](javascript:alert(3))", NOW);
-  const view = T.tasks_view(s, NOW);
-  const html = Html.drawer_html(view[0], view).join("");
-  expect(Html.tasks_html(view).open[0]).not.toContain("<img");
+  const html = Html.desk_html(T.tasks_view(s, NOW), "", "", "P1", NOW).detail.join("");
   expect(html).not.toContain("<img");
   expect(html).not.toContain("<script");
   expect(html).not.toContain("<b>oi");
@@ -388,10 +383,10 @@ test("web: fields and thread drawn escaped, drafts checked, whose turn shown; Un
   expect(html).toContain('<input type="checkbox" name="f-P1-dias" value="seg">');
   expect(html).toContain('<span class="talk user">sua vez</span>');
   expect(html).toContain("<strong>ok</strong>");
-  expect(html).toContain('<details class="thread" data-keep="thread" open>');
+  expect(html).toContain('<section class="thread"><p class="sub">Conversa (2)</p>');
   expect(html).toContain('class="task user talk-user"');
   T.task_say(s, "P1", "e?", NOW);
-  expect(Html.tasks_html(T.tasks_view(s, NOW)).open[0]).toContain('<span class="talk unii">aguardando o Unii</span>');
+  expect(Html.desk_html(T.tasks_view(s, NOW), "", "", "P1", NOW).detail.join("")).toContain('<span class="talk unii">aguardando o Unii há 0 min</span>');
 });
 
 test("a failed turn's why goes to the thread waiting for Unii; a reply of Unii's wins over it; an empty why reads as none", () => {

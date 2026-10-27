@@ -161,13 +161,17 @@ test("web: the waiting apart, without acts, escaped; what it frees named", () =>
   const s = T.tasks_load(dir);
   add(s, { title: "<b>Token</b>" });
   add(s, { title: "<img src=x onerror=alert(1)>", after: ["P1"] });
-  const html = Html.tasks_html(T.tasks_view(s, NOW));
-  expect(html.open.length).toBe(1);
-  expect(html.open[0]).toContain('<span class="frees">libera P2</span>');
-  expect(html.waiting.length).toBe(1);
-  expect(html.waiting[0]).toContain("aguarda P1 (sua)");
-  expect(html.waiting[0]).not.toContain("<img");
-  expect(html.waiting[0]).not.toContain("data-act"); // its title opens its window (data-open), no act
+  const tasks = T.tasks_view(s, NOW);
+  const groups = View.desk_list(tasks);
+  expect(groups.map((g) => [g.group, g.tasks.map((t) => t.id)])).toEqual([["now", ["P1"]], ["waiting", ["P2"]]]);
+  const open = Html.desk_html(tasks, "", "", "P1", NOW).detail.join("");
+  expect(open).toContain('<span class="frees">libera P2</span>');
+  const waiting = Html.desk_html(tasks, "", "", "P2", NOW).detail.join("");
+  expect(waiting).toContain('depois de: <button class="goto" data-desk="P1">P1 (sua)</button>');
+  expect(waiting).toContain("Só pode ser resolvida depois de P1 (sua).");
+  expect(waiting).not.toContain("<img");
+  expect(waiting).not.toContain('class="done"');
+  expect(waiting).not.toContain('class="opt');
   expect(View.tasks_waiting_said(1)).toBe("+1 aguardando outras pendências");
 });
 
@@ -196,7 +200,7 @@ test("hand-edited after: wrong types, ids of no task, itself, a cycle left out; 
   expect(T.tasks_block(s, NOW)).toContain("Open (2;");
   const v = view(s);
   expect(View.tasks_footer(v, 200)).toBe("Pendências: 2 abertas (P3, P5) · +4 aguardando · /p");
-  expect(Html.tasks_html(v.tasks).waiting.length).toBe(4);
+  expect(View.desk_list(v.tasks).find((g) => g.group === "waiting")!.tasks.length).toBe(4);
   expect(View.tasks_md(v, null, true)).toContain("P1 A — aguarda P2");
 });
 

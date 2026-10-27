@@ -127,7 +127,9 @@ test("waits_for: kept, cleared, said to Unii and in the views", async () => {
   const s = T.tasks_load(dir);
   const id = s.tasks[0].id;
   const v = T.tasks_view(s, NOW);
-  expect(Html.tasks_html(v).open.join("")).toContain('<span class="waits-for">aguarda: CI do #42</span>');
+  const shown = Html.desk_html(v, "", "", id, NOW).detail.join("");
+  expect(shown).toContain('<span class="waits-for">aguarda: CI do #42</span>');
+  expect(shown).toContain("<dt>Aguarda (fora da lista)</dt><dd>CI do #42</dd>");
   const view = View.view_new();
   view.tasks = v;
   expect(View.desk_md(view)).toContain("aguarda: CI do #42");
@@ -354,7 +356,11 @@ test("the Mesa's detail: each PR verified a card (head, verdict, verifier, notes
   expect(html).toContain('<li class="sev medium"><span class="sev-tag">média</span> &lt;b&gt;x&lt;/b&gt;</li>');
   expect(html).toContain('<p class="untested"><span class="lead">Não testado:</span> iPhone; Safari</p>');
   expect(html).toContain('<p class="prs"><span class="lead">PR:</span> <a class="pr" href="https://github.com/morum/uniichat/pull/17"');
-  expect(html.match(/uniichat\/pull\/18"/g)!.length).toBe(1);
+  // the card's link once in the column read, not again as a chip; the
+  // ficha names it with its verdict and head
+  const [main, ficha] = html.split('<aside class="facts"');
+  expect(main.match(/uniichat\/pull\/18"/g)!.length).toBe(1);
+  expect(ficha).toContain('>uniichat#18</a> <span class="verdict approved_with_notes">aprovado com ressalvas</span> <code>88f1899</code>');
   // the terminal's /p: the card as Markdown
   const view = View.view_new();
   view.tasks = v;

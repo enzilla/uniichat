@@ -33,13 +33,29 @@ Features
   (fields: one choice, many, a text, yes or no; each answer kept as a
   draft till you conclude), and have a thread: talk with Unii about it
   without resolving it (your message is a message of the chat, marked
-  `[Pendência P7: …]`; it shows "aguardando o Unii", then "sua vez").
+  `[Pendência P7: …]`; it shows "aguardando o Unii", then "sua vez" if
+  the next step is yours, or "Unii respondeu" on one of Unii's; "Unii
+  não respondeu" if the turn ended with no reply). "Aguardando o Unii"
+  says how long and why (a turn running, a usage limit, none), and that
+  the reply comes when Unii answers there or its turn ends; a server
+  that starts with no turn to resume gives such a task back at once,
+  "Unii não respondeu (o servidor reiniciou antes da resposta)", so it
+  never waits for a turn that may not come. A task that waits for
+  something outside the list ("aguarda: CI do #42") is a wait, not your
+  move: out of Agora, no push, not counted, never late, till the wait
+  is removed.
   On the web, the **Mesa** is the list as a screen of its own, beside
-  the **Conversa** (the header's button, or `m`): tasks grouped by whose
+  the **Conversa** (the header's button, or `m`; the Conversa shows no
+  list, only the button's count, "Mesa · 3"): tasks grouped by whose
   move it is (Agora, Aguardando o Unii, Em andamento, Aguardando outras
   pendências, Resolvidas recentemente), searched and filtered by project,
-  the one picked whole at the right (on a phone, list and task one at a
-  time); `j`/`k` or the arrows move, Enter opens, `/` searches, Esc goes
+  the one picked whole at the right: first a line saying whose move it
+  is and what's expected ("Sua vez: escolha uma das 3 opções…", "Com o
+  Unii: nada a fazer agora"), then what to read and decide, with its
+  ficha beside (whose, origin, front, kind and limit, depends on and
+  frees, PRs with verdict and head, fields left, agent, next step,
+  dates) (on a phone, list and task one at a time, the ficha after the
+  decision, the actions kept at the screen's bottom); `j`/`k` or the arrows move, Enter opens, `/` searches, Esc goes
   back. A task of yours open over a day says how late ("atrasada há
   2 d", as the late push counts it); the GitHub PRs it links show as
   `repo#n` in its row and over its detail; once one is resolved, the
@@ -63,7 +79,43 @@ Features
   what unblocks it) or **waiting for you** (in your Agora). One closed
   before this, without evidence, reads "sem evidência": Unii may prove
   it, or it's opened again; nothing is erased. A reply of Unii's that
-  promises something for later with no task of its own gets a note.
+  promises something for later with no task of its own gets a note; one
+  that asks you something (a question, a decision, an order to give) with
+  no task of yours about it gets one, "Pergunta sem pendência" (a decision
+  with a text field for your answer, the question in its detail), made by
+  the serve, and a note (`Tasks.questions_in`: a heuristic; quotes, code,
+  headings, questions Unii answers itself, another's questions reported and
+  questions to others don't count). A task of yours is the question's if
+  its id is in the question's paragraph, if it was made in that turn with
+  words of the question, or if Unii said the question in its thread; one
+  about something else doesn't count. Limits: only the turn's last reply is
+  read (a question in an earlier message of the turn, followed by tools,
+  isn't seen); at most 3 questions of a reply go in the task; a rhetorical
+  question said last, or a request in other words, may be misread; a
+  short phrase with "?" that isn't a question counts ("Rodei x? ok."
+  asks "Rodei x?"); a word in common with a task of yours made in the
+  turn about something else spares a question ("Revisar o hospitalar#700"
+  spares "Quer que eu mescle o hospitalar?"). A request negated just
+  before it ("Não depende de ordem sua.", "Nenhum agente depende de
+  ordem.") asks nothing; one on the order of your name ("Depende da ordem
+  do Guilherme.") asks you only with `owner_name` set. "Me avise se
+  falhar." and "Se falhar, me avise." (an instruction on an event) and
+  "Ele não decide, você decide." (who decides, by contrast) ask nothing;
+  "Me avise se posso seguir.", "Não está ok?" and "Falta só a sua
+  aprovação." ask, as meant ("Não falta a sua aprovação." doesn't), and
+  so do "Se quiser, me avise.", "Me avise caso aprove.", "Me avise caso
+  discorde." and "Me avise caso não queira." (the user's will, also
+  denied), "Me avise caso precise de algo." and "Me avise se não
+  gostar." (a need or a liking), and "Se mesclar, me avise." (an act of
+  the user's with no subject: mesclar, aplicar, assinar, publicar,
+  revisar, validar, confirmar, responder; "Se o CI mesclar, me avise."
+  doesn't). Limits: "Me avise quando falhar." and "Quando terminar, me
+  avise." ask ("quando" isn't read as an event), and so does "Rodei os
+  testes? ok." ("Rodei os testes?"); an event said with one of those
+  verbs and no subject ("Se publicar, me avise.", meaning the pipeline)
+  asks. "precisar" with no subject is always read as your need, so "Me
+  avise caso precise reiniciar o serve." asks you even when it is Unii
+  or the pipeline that needs the restart.
   Terminal: `/mesa [projeto]`, `/p`, `/p P7`, `/ok P7 [opção] [campo=valor…] [comentário]`,
   `/ok!`, `/rascunho P7 campo=valor`, `/conversa P7 mensagem`,
   `/descartar`, `/reabrir`, `/avisar`.
@@ -189,7 +241,10 @@ where `UNII_<KEY>` environment variables override them. One lives only
 there: `after`, a shell command to run after each turn.
 
 Also there: `task_stall`, the hours a task of Unii's may stand still,
-with no `next_due`, before it's overdue (4 by default; read at the start).
+with no `next_due`, before it's overdue (4 by default), and `owner_name`,
+your names as the chat calls you, comma-separated ("Guilherme"), so
+"depende da ordem do Guilherme" is a question to you (none by default).
+
 
 Use
 ---
