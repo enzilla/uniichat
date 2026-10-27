@@ -3004,6 +3004,28 @@ function view_fold(v) {
 function view_typing(v) {
   return v.page === null;
 }
+function activity_of(v) {
+  if (!view_running(v)) {
+    return null;
+  }
+  const agents = v.agents.map((name) => ({ name, label: agent_label(name) ?? name }));
+  if (!v.busy) {
+    return { step: agents.length === 1 ? "Um subagente em andamento" : agents.length + " subagentes em andamento", agents };
+  }
+  const live = v.live;
+  const last = live.at(-1);
+  const call = [...live].reverse().find((l) => l.kind === "tool");
+  const said = (c) => {
+    const line = call_line(c);
+    const name = c.name === "" ? "uma ferramenta" : c.name;
+    return name + (line === "" ? "" : ": " + (line.length > 120 ? line.slice(0, 119) + "…" : line));
+  };
+  const step = Object.hasOwn(v.limits ?? {}, TURN) ? "Aguardando o limite de uso para continuar" : last?.kind === "tool" ? "Executando " + said(call_parse(last.text)) : last?.kind === "mind" ? "Pensando…" : last?.kind === "unii" ? "Escrevendo a resposta…" : call !== undefined ? "Analisando o resultado de " + said(call_parse(call.text)) : v.wait === SUMMARIES ? "Resumindo mensagens para a memória…" : v.wait !== "" ? "Aguardando " + v.wait + "…" : "Trabalhando…";
+  return { step, agents };
+}
+function view_running(v) {
+  return v.busy || v.agents.length > 0;
+}
 function view_pick(v) {
   return v.pick === null ? [] : view_knobs(v, v.pick, true);
 }
@@ -3855,6 +3877,10 @@ function pick_html(fold, on, knobs, talk) {
   const heat = used >= 80 ? " hot" : used >= 50 ? " warm" : "";
   const rule = talk == null ? `<span class="rule"></span>` : `<span class="rule meter${heat}" style="--used:${used}%" title="Conversation: ${used}% of space used (${talk_tokens(talk)})" role="meter" aria-valuenow="${used}" aria-valuemin="0" aria-valuemax="100" aria-label="Conversation space used"></span>`;
   return [...all, ...modes, rule, ...parts.flatMap((part, i) => i === 0 ? part : [`<span class="dot">·</span>`, ...part])];
+}
+function activity_html(a) {
+  const agents = a.agents.length === 0 ? "" : `<span class="agents">${a.agents.length === 1 ? "subagente" : a.agents.length + " subagentes"}: ${a.agents.map((x) => `<span class="agent" title="${esc(x.name)}">${esc(x.label)}</span>`).join(", ")}</span>`;
+  return `<span class="spin" aria-hidden="true"></span><span class="step">${esc(a.step)}</span>${agents}`;
 }
 function choice_html(c) {
   const head = c.vendor === null ? "" : `<p>${esc(c.vendor)}</p>`;
@@ -6505,6 +6531,14 @@ function bars() {
   markup($2("#timers ul"), timers_html(v.timers));
   if (v.timers.length === 0 && $2("#timers").matches(":popover-open")) {
     $2("#timers").hidePopover();
+  }
+  const doing = activity_of(v);
+  $2("#doing").hidden = doing === null;
+  if (doing !== null) {
+    const html = activity_html(doing);
+    if ($2("#doing").innerHTML !== html) {
+      $2("#doing").innerHTML = html;
+    }
   }
   const turn = desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
   turn_show(turn);

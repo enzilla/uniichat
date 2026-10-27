@@ -1607,6 +1607,14 @@ function bars(): void {
   if (v.timers.length === 0 && $("#timers").matches(":popover-open")) {
     $("#timers").hidePopover();
   }
+  const doing = View.activity_of(v);
+  $("#doing").hidden = doing === null;
+  if (doing !== null) {
+    const html = Html.activity_html(doing);
+    if ($("#doing").innerHTML !== html) {
+      $("#doing").innerHTML = html;
+    }
+  }
   const turn = View.desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
   turn_show(turn);
   $(".mode").hidden = false;
