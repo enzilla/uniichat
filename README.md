@@ -158,7 +158,11 @@ What enzilla's fork adds:
   scrollback as before): the chat beside the pending list, which Ctrl+P
   focuses (arrows, space marks, 1-9 a choice, ! marks and tells Unii, d
   drops, c comments, a click on a box marks it); PageUp, PageDown and the
-  wheel scroll the chat, keeping your place as lines come.
+  wheel scroll the chat, keeping your place as lines come. Inside a
+  [Herdr](https://herdr.dev) pane it reports itself as `unii`: idle,
+  working, or blocked on a task of yours. After Herdr restarts, it runs
+  `unii` again (the server address when it is not the local one, and
+  `--classic` when this terminal was).
 - **A menu of the commands** as a `/word` is typed (the devices' skills
   too), and **a chooser** for `/model`, `/effort`, `/speed`, `/mcp` and
   `/tab` given no value. Shift+Tab steps the effort, Alt+M the speed.

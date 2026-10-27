@@ -7,6 +7,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import type { Kind } from "./AskAI.ts";
 import * as Client from "./Client.ts";
+import * as Deps from "./TaskDeps.ts";
+import * as Herdr from "./Herdr.ts";
 import * as Import from "./Import.ts";
 import * as Modal from "./Modal.ts";
 import * as Paint from "./Paint.ts";
@@ -263,7 +265,24 @@ function term_hear(t: Term, msg: View.Server): void {
     term_ended(t);
     term_idle(t);
     term_spin(t);
+    term_herdr(t);
   }
+}
+
+// a Herdr pane learns this terminal: working while a turn or a subagent
+// runs, blocked on a task of yours that you can act on now, idle at the
+// prompt. Herdr.ts does nothing unless HERDR_ENV=1. --classic in the
+// reopen command is this process (FULL), not whether a panel exists:
+// a pipe also has none.
+function term_herdr(t: Term): void {
+  const yours = View.view_tasks(t.v).open.filter((task) => task.assignee === "user" && !Deps.outside_wait(task));
+  Herdr.herdr_report({
+    env     : process.env,
+    url     : t.url,
+    classic : !FULL,
+    running : View.view_running(t.v),
+    yours   : yours.map((task) => ({ id: task.id, title: task.title })),
+  });
 }
 
 // while Unii works (its turn, a subagent), the activity line repaints,
@@ -1099,12 +1118,14 @@ async function term_get(t: Term, path: string, what: string): Promise<Response |
 }
 
 function term_quit(t: Term): void {
+  Herdr.herdr_release(process.env);
   t.v.ws?.close(View.QUIT);
   term_paint(t);
   process.stdout.write("", () => process.exit());
 }
 
 function term_bye(t: Term): void {
+  Herdr.herdr_release(process.env);
   t.v.ws?.close(View.QUIT);
   process.exit(0);
 }

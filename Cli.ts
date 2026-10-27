@@ -31,7 +31,8 @@ const CLASSIC = ARGS.includes("--classic");
 
 const USAGE = `Usage: unii [url]           the chat in this terminal (url: $UNII_URL, else
                             the last one, else http://127.0.0.1:8788), full
-                            screen with the pending list beside it
+                            screen with the pending list beside it.
+                            Inside Herdr it reports idle, working or blocked
        unii --classic [url] the same in the terminal's own scrollback
        unii device [url]    this computer as a device of the server: the
                             agent's shell and files here
