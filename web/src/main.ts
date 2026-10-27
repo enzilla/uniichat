@@ -1,92 +1,47 @@
-// UniiChat (the site)
-// ===================
-// The page around View.ts's chat: the server's messages go to
-// View.view_hear, a click's `data-act` (Html.ts) to View.view_act, and
-// both answer what to send back. The page is drawn once a frame, keeping
-// the first row in sight in place, or the bottom while the page is at it;
-// the log's rows only once a message (but a stream's piece) or an act
-// changed them, what streams in a place of its own, so typing, or a reply
-// streaming, touches no row.
-// The markup is index.html's: the header, the chat, the settings page
-// (/settings, once /account) or the memory tree (/tree: Tree.ts), and the
-// footer as the terminal's; a picture opens over them (Viewer.ts). A tab
-// is no device; a signed-out one is told how to sign in (`unii serve
-// link`). The site installs as an app
-// (manifest.webmanifest, sw.js) and may notify (Notifications); in the
-// iOS app (ios/: APP) the app notifies.
-
+import { err_why } from "../../Err.ts";
 import * as Import from "../../Import.ts";
+import { get, text_of } from "../../Json.ts";
+import type { Page, Row } from "../../Settings.ts";
 import { theme_css } from "../../Theme.ts";
 import * as View from "../../View.ts";
 import * as Box from "./Box.ts";
+import { find, must } from "./Dom.ts";
 import * as Html from "./Html.ts";
 import * as Tree from "./Tree.ts";
 import * as Viewer from "./Viewer.ts";
 
-// Types
-// =====
-
-// a source the import read (a folder, an export): its sessions, and its
-// files left out as they changed while read
 type Read = { sessions: Import.Session[]; moved: number };
 
-// Constants
-// =========
+type Back = { at: { a: number; top: number } | null; y: number | null; away: { y: number; end: boolean } | null; caret: [number, number]; focus: boolean; open: string[] };
 
-// the iOS app's bridge (ios/), in its web view only
-const APP = (window as any).webkit?.messageHandlers?.unii ?? null;
+declare global {
+  interface Window { webkit?: { messageHandlers?: { unii?: { postMessage: (msg: unknown) => void } } } }
+}
 
-// a page with a hover has a keyboard of its own; on a touch screen,
-// Enter types a new line (the arrow sends), and the page never focuses
-// the box itself, which would pop the keyboard up
+const APP = window.webkit?.messageHandlers?.unii ?? null;
+
 const DESK = matchMedia("(hover: hover)");
 
-// a folder without sessions
 const NONE   = "No Claude or ChatGPT chats in that folder. Choose ~/.claude or ~/.codex.";
 
-// the intro's scenes: two lines, then the logo above the name
 const SCENES = `
   <div class="scene"><p>Your entire life.</p><p>One single chat.</p></div>
   <div class="scene"><i class="mark"></i><h1>UniiChat</h1></div>`;
 
-// the chat
 const v = View.view_new();
 
-// the message box (Box.ts)
-const BOX = $<HTMLElement>(".composer .field");
+const BOX = $(".composer .field", HTMLElement);
 
-// the files uploading into it, by their item (Uploads)
 const UPS = new Map<HTMLElement, XMLHttpRequest>();
 
-// the import's slider: the first day it takes, in days since 1970, from
-// the first new message's (its left end: all) to today's
-const BACK = $<HTMLInputElement>("#import [name=back]");
+const BACK = $("#import [name=back]", HTMLInputElement);
 
-// the page's: end: at its bottom; stick: the next draw may keep it;
-// y: its scroll when last scrolled; open: the tool calls and results
-// unfolded, by id (folds); still: the page left where it is at the
-// log's next resize (unfold); build, due, going, since, dirty, saving,
-// gave, back: the web app's build and its reload into another (Renew);
-// after: a message sent while files upload (Uploads);
-// frame: awaited (0: none); rows: the log's rows changed, to draw;
-// found: the sources read, by name; done: sessions imported before; off:
-// left out (Import.Want); step: the import's; away: the chat's scroll as
-// a page (the settings, the tree) was opened over it, kept for its return;
-// used: what the server was last told of this page's use (in_use); at:
-// the path (and hash) route last showed
 const P = {
   rec   : null as MediaRecorder | null,
   shown : "",
-  end   : true,
-  stick : true,
-  y     : 0,
   frame : 0,
   rows  : true,
   toast : 0,
-  found : new Map<string, Read>(),
-  done  : {} as Import.Done,
-  off   : new Set<string>(),
-  step  : "" as "" | "start" | "send" | "run" | "seen" | "done",
   push  : null as { reg: ServiceWorkerRegistration; key: string } | null,
   // the Mesa's (desk): which screen shows (chat: the Conversa); chose:
   // the first state picked it (P19); sel: the task shown; q, ref: the
@@ -102,11 +57,22 @@ const P = {
   pane  : false,
   ids   : [] as string[],
   order : { sel: null as string | null, ids: [] as string[] },
-  away  : null as { y: number; end: boolean } | null,
   used  : { ws: null as WebSocket | null, on: false, at: 0 },
+  after : false,
+  at    : "",
+};
+
+const SCROLL = {
+  end   : true,
+  stick : true,
+  y     : 0,
   open  : new Set<string>(),
-  build : document.documentElement.dataset.build ?? "",
   still : false,
+  away  : null as { y: number; end: boolean } | null,
+};
+
+const RENEW = {
+  build : document.documentElement.dataset.build ?? "",
   due   : false,
   going : false,
   since : false,
@@ -114,25 +80,27 @@ const P = {
   saving: 0,
   gave  : null as WebSocket | null,
   back  : null as { a: number; top: number } | null,
-  after : false,
-  at    : "",
 };
 
 // the Mesa and the list side by side, above this width (style.css)
 const NARROW = matchMedia("(max-width: 760px)");
 
-function $<T extends HTMLElement>(sel: string): T {
-  return document.querySelector(sel) as T;
+const IMPORT = {
+  found : new Map<string, Read>(),
+  done  : {} as Import.Done,
+  off   : new Set<string>(),
+  step  : "" as "" | "start" | "send" | "run" | "seen" | "done",
+};
+
+function $(sel: string): HTMLElement;
+function $<T extends HTMLElement>(sel: string, type: { new (): T; prototype: T }): T;
+function $(sel: string, type: { new (): HTMLElement; prototype: HTMLElement } = HTMLElement): HTMLElement {
+  return find(document, sel, type);
 }
 
-// where this browser keeps a fact: "draft", the box's text, for the tab
-// (a reload keeps it); "welcomed", offered the import
 function kept(fact: string): string {
   return "unii." + fact;
 }
-
-// Boot
-// ====
 
 async function boot(): Promise<void> {
   document.head.insertAdjacentHTML("beforeend", `<style>${theme_css()}</style>`);
@@ -145,9 +113,8 @@ async function boot(): Promise<void> {
     sessionStorage.setItem(kept("mode"), "desk");
   }
   const tree = location.pathname === TREE ? TREE + (tree_view() ? "#view" : "") : null;
-  // (reloaded with a picture open: its entry, now the chat's, holds the
-  // chat's under it too, so back would do nothing; it steps off it)
-  const pic = history.state?.pic != null;
+  const state: unknown = history.state;
+  const pic = get(state, "pic") != null;
   history.replaceState(null, "", PAGES.includes(location.pathname) ? "/settings" : location.pathname === PIPE ? PIPE : tree ?? "/");
   if (pic) {
     history.back();
@@ -160,27 +127,22 @@ async function boot(): Promise<void> {
   signed();
   route();
   connect();
-  // (input a person makes: a page scrolling itself, to a reply, is none)
   for (const ev of ["keydown", "pointerdown", "pointermove", "wheel", "touchstart"]) {
     addEventListener(ev, () => in_use(), { capture: true, passive: true });
   }
   addEventListener("focus", () => in_use());
   document.addEventListener("visibilitychange", () => {
     in_use();
-    if (document.hidden && P.due && !P.going && renew_free(true)) {
-      P.going = true;
-      renew(true);
+    if (document.hidden && RENEW.due && !RENEW.going && renew_free(true)) {
+      RENEW.going = true;
+      void renew(true);
     }
   });
   addEventListener("blur", () => in_use(true));
   addEventListener("pagehide", () => in_use(true));
 }
 
-// whether signed in (null: no, as the server refuses the session);
-// any other answer (a restart, no connection)
-// says nothing of who, so it is asked again, saying so while it lasts (the
-// app opened from sw.js's shell with the server down)
-async function boot_me(): Promise<any> {
+async function boot_me(): Promise<unknown> {
   for (let k = 0; ; k++) {
     const res = await fetch("/api/me").catch(() => null);
     if (res?.status === 200 || res?.status === 401) {
@@ -196,32 +158,24 @@ async function boot_me(): Promise<any> {
   }
 }
 
-// the settings page's paths, drawn in #account (/account: an older link)
 const PAGES = ["/settings", "/account"];
 
 // the pipeline's panel (R6), a page drawn in #account too
 const PIPE = "/pipeline";
-// the memory tree's path, drawn in #tree (Tree.ts): its TREE, or with
-// #view its VIEW (#VIEW: the old page's link)
 const TREE = "/tree";
 
 function tree_view(): boolean {
   return location.hash.toLowerCase() === "#view";
 }
 
-// a page of one note: how to sign in
 function solo(title: string, sub: string): void {
   document.body.className = "solo";
   document.body.innerHTML = `<main><h1>${title}</h1><p class="sub">${sub}</p></main>`;
 }
 
-// Chat
-// ====
-
 function chat(): void {
-  const file = $<HTMLInputElement>("input[type=file]");
+  const file = $("input[type=file]", HTMLInputElement);
   Box.box_new(BOX, { input: typed, files: attach });
-  // (a phone's keyboard down: a reload may be due, and was waiting for it)
   BOX.addEventListener("blur", () => draw(false));
   // never the Enter that ends a composition (Japanese, Chinese: Safari
   // ends it first, so only its keyCode, 229, says so)
@@ -290,31 +244,27 @@ function chat(): void {
   desk_wire();
   // a phone's keyboard up or down: the box's last line stays in sight, if
   // the caret is there; the page's bottom, if at it
-  visualViewport!.onresize = () => {
+  must(visualViewport, "visualViewport").onresize = () => {
     if (Box.box_focused() && Box.box_caret()[0] === Box.box_text().length) {
       BOX.scrollTop = BOX.scrollHeight;
     }
     draw(true);
   };
-  // the page leaves its bottom only as it scrolls up (the user's swipe,
-  // wheel, keys or scrollbar: a page that grows or shrinks at its bottom
-  // stays at it); one that grows (the box, a reply, an image) is kept
-  // there
   document.onscroll = () => {
     if (at_end()) {
-      P.end = true;
-    } else if (scrollY < P.y) {
-      P.end = false;
+      SCROLL.end = true;
+    } else if (scrollY < SCROLL.y) {
+      SCROLL.end = false;
     }
-    P.y = scrollY;
+    SCROLL.y = scrollY;
     mine_show();
   };
   $(".mine").onclick = mine;
   $(".down").onclick = down;
   const keep = new ResizeObserver(() => {
-    if (P.still) {
-      P.still = false;
-    } else if (P.end && !$("#log").hidden && !at_end()) {
+    if (SCROLL.still) {
+      SCROLL.still = false;
+    } else if (SCROLL.end && !$("#log").hidden && !at_end()) {
       scrollTo(0, document.documentElement.scrollHeight);
     }
   });
@@ -332,7 +282,6 @@ function chat(): void {
   draw(true);
 }
 
-// the page signed in
 function signed(): void {
   document.body.className = "";
   BOX.dataset.placeholder = View.HINT;
@@ -340,8 +289,6 @@ function signed(): void {
   renewed();
 }
 
-// the box changed: its text kept as the draft; an upload whose item was
-// deleted ends
 function typed(): void {
   sessionStorage.setItem(kept("draft"), Box.box_text());
   for (const [item, xhr] of UPS) {
@@ -353,8 +300,6 @@ function typed(): void {
   draw(true);
 }
 
-// a message sent: never with a file that didn't upload in it (deleted, it
-// may go); with files still uploading, once they are
 function submit(): void {
   if (Box.box_items().some((item) => item.dataset.state === "bad")) {
     P.after = false;
@@ -372,8 +317,6 @@ function submit(): void {
   Box.box_set("");
 }
 
-// a message refused goes back in the box, unless another is in it; the
-// why is a toast
 function back(sent: View.Sent, out: View.Answer): void {
   if (out.error === undefined) {
     return;
@@ -384,24 +327,11 @@ function back(sent: View.Sent, out: View.Answer): void {
   toast(out.error);
 }
 
-// Uploads
-// =======
-// A file pasted, dropped or picked (an image, a video, a sound, a page,
-// any other file) goes to the media store at once (Server.ts /api/media),
-// an item in the box where the caret is (Box.ts) showing it and how far
-// it is; once uploaded, the item is its markdown, ![name](/media/…), or
-// a file that isn't media its link, [name](/media/…). One refused says
-// so on it and in a toast: the message can't be sent till it is deleted.
-// A message sent meanwhile goes as the last upload ends (not if one is
-// refused); an item deleted ends its upload.
-
 const FAILED = "A file in the message didn't upload: delete it (Backspace after it), then send.";
 
 function attach(files: File[]): void {
   for (const file of files) {
     const name = file.name.replace(/[[\]\\\n]/g, "") || "file";
-    // its kind as the store will name it (Memory.media_add): by its
-    // extension; with none, a picture if it says so (its bytes decide)
     const ext = View.media_ext(file.name);
     const kind = ext !== "" ? View.ext_kind(ext) ?? "file" : file.type.startsWith("image/") ? "image" : "file";
     const item = Box.item_new(name, kind === "image" || kind === "video" ? URL.createObjectURL(file) : "", "up", kind, file.size);
@@ -441,7 +371,6 @@ function upload(item: HTMLElement, file: File): void {
   xhr.send(file);
 }
 
-// an upload's answer: the file's name in the store, or why not
 function upload_answer(xhr: XMLHttpRequest): { name: string } | { error: string } {
   let out: unknown = null;
   try {
@@ -456,7 +385,7 @@ function upload_answer(xhr: XMLHttpRequest): { name: string } | { error: string 
 
 function act(a: View.Act): void {
   const said = a.$ === "Send" ? a.text.trim() : "";
-  P.end = P.end || a.$ === "Send";
+  SCROLL.end = SCROLL.end || a.$ === "Send";
   P.rows = true;
   for (const msg of View.view_act(v, a)) {
     View.link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : undefined, said);
@@ -464,18 +393,13 @@ function act(a: View.Act): void {
   draw(a.$ === "Send");
 }
 
-// a click on a View.Act, a Copy button, a page (go), a knob or its
-// menu's row (Html.ts), unless it ends a selection dragged in its element
 function click(ev: MouseEvent): void {
   const target = ev.target as HTMLElement;
   const el = target.closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-knob], [data-desk], [data-desk-back], .choices > button");
   const sel = getSelection();
-  // a picture opens in the page (Viewer.ts); with a key held, as a link
   const pic = Viewer.viewer_pic(target);
   if (pic !== null && !(ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) && (sel === null || sel.isCollapsed)) {
     ev.preventDefault();
-    // (on a touch screen, the box focused would take the focus back as
-    // the picture closes, and its keyboard pop up)
     if (!DESK.matches) {
       BOX.blur();
     }
@@ -484,7 +408,7 @@ function click(ev: MouseEvent): void {
   }
   const cut = target.closest(".unfold") ?? (el === null && target.closest("a") === null ? target.closest(".msg.long:not(.shown) > .cut") : null);
   if (cut !== null && (sel === null || sel.isCollapsed)) {
-    unfold(cut.parentElement!);
+    unfold(must(cut.parentElement, "the cut's message"));
     return;
   }
   if (el === null || (sel !== null && !sel.isCollapsed && el.contains(sel.focusNode))) {
@@ -535,10 +459,6 @@ function click(ev: MouseEvent): void {
   }
 }
 
-// a knob's menu, before it opens (the knob's own click opens and closes
-// it): over the knob, its right edge at the knob's (one on the screen's
-// left half, as the mode's: its left edge at the knob's), as tall and
-// wide as the screen has room for (style.css: it scrolls past that)
 function place(knob: HTMLElement): void {
   const menu = $("#pick-" + knob.dataset.knob);
   const box = knob.getBoundingClientRect();
@@ -552,12 +472,8 @@ function place(knob: HTMLElement): void {
   menu.style.maxHeight = box.top - 12 + "px";
 }
 
-// in a knob's menu, the arrows go down and up its rows, Home and End to
-// its ends (Tab too goes through them; Escape, a click out, or Tab out
-// either end closes it)
 function roam(ev: KeyboardEvent): void {
   const menu = (ev.target as HTMLElement).closest<HTMLElement>(".choices");
-  // back to its knob: a click there toggles it, so left() keeps it open
   if (menu !== null && ev.key === "Tab" && ev.shiftKey && ev.target === menu.querySelector("button")) {
     ev.preventDefault();
     menu.hidePopover();
@@ -575,8 +491,6 @@ function roam(ev: KeyboardEvent): void {
   rows[to[ev.key] % n].focus();
 }
 
-// focus tabbed out of a knob's menu closes it; but to its knob, whose
-// click closes it, or to nothing (a tap on a row may not focus it)
 function left(ev: FocusEvent): void {
   const menu = (ev.target as HTMLElement).closest<HTMLElement>(".choices:popover-open");
   const to = ev.relatedTarget as Node | null;
@@ -807,8 +721,8 @@ function turn_show(n: number): void {
 // change, what's typed in it kept (keep_take)
 
 function desk_wire(): void {
-  const q = $<HTMLInputElement>("#desk .q");
-  const ref = $<HTMLSelectElement>("#desk .ref");
+  const q = $("#desk .q", HTMLInputElement);
+  const ref = $("#desk .ref", HTMLSelectElement);
   q.oninput = () => {
     P.q = q.value;
     draw(false);
@@ -911,7 +825,7 @@ function desk_draw(): void {
   }
   const { list, detail, ids } = DESKED.html;
   P.ids = ids;
-  const select = $<HTMLSelectElement>("#desk .ref");
+  const select = $("#desk .ref", HTMLSelectElement);
   markup(select, [`<option value="">Todos os projetos</option>`, ...refs.map((r) => `<option value="${Html.esc(r)}">${Html.esc(r)}</option>`)]);
   select.value = P.ref;
   select.hidden = refs.length === 0;
@@ -1010,12 +924,6 @@ function desk_keys(ev: KeyboardEvent): void {
   }
 }
 
-// Folds
-// =====
-// A tool call or result taller than FOLD of its own lines is long: it
-// shows 8 (style.css), its button and a tap on it unfold it, the button
-// folds it again; unfolded by id (P.open), so a row drawn anew keeps it.
-// Each is measured once as drawn, all again as the width changes.
 
 const FOLD = 10;
 
@@ -1023,42 +931,34 @@ let measured = new WeakSet<Element>();
 
 function folds(): void {
   for (const cut of document.querySelectorAll<HTMLElement>("#log .msg > .cut")) {
-    const msg = cut.parentElement!;
+    const msg = must(cut.parentElement, "the cut's message");
     if (!measured.has(msg)) {
       measured.add(msg);
       msg.classList.toggle("long", cut.scrollHeight > FOLD * parseFloat(getComputedStyle(cut).lineHeight));
     }
-    fold_show(msg, P.open.has(msg.dataset.a ?? ""));
+    fold_show(msg, SCROLL.open.has(msg.dataset.a ?? ""));
   }
 }
 
 function fold_show(msg: HTMLElement, open: boolean): void {
   msg.classList.toggle("shown", open);
-  const button = msg.querySelector(":scope > .unfold")!;
+  const button = must(msg.querySelector(":scope > .unfold"), "the message's unfold");
   button.setAttribute("aria-expanded", String(open));
   button.textContent = open ? "Show less" : "Show all";
 }
 
-// its top stays where it is: the page follows its bottom again only if
-// still at it
 function unfold(msg: HTMLElement): void {
   const open = !msg.classList.contains("shown");
   const id = msg.dataset.a ?? "";
-  open ? P.open.add(id) : P.open.delete(id);
-  const [top, follow] = [msg.getBoundingClientRect().top, P.end];
-  P.end = false;
+  open ? SCROLL.open.add(id) : SCROLL.open.delete(id);
+  const [top, follow] = [msg.getBoundingClientRect().top, SCROLL.end];
+  SCROLL.end = false;
   fold_show(msg, open);
   scrollBy(0, msg.getBoundingClientRect().top - top);
-  // (following the chat's end, it still is: the next message pulls the
-  // page down again; this resize leaves it)
-  P.end = follow || at_end();
-  P.still = follow;
+  SCROLL.end = follow || at_end();
+  SCROLL.still = follow;
 }
 
-// a page in a message (Html.ts) as tall as its content, measured as it
-// loads and as the window's size changes (all: each again); style.css
-// caps it, and it scrolls inside past that. Nothing runs in it, but its
-// frame is of this site, so this page reads its height
 const FRAMED = new WeakSet<HTMLIFrameElement>();
 
 function frames(all = false): void {
@@ -1082,13 +982,6 @@ function copied(button: HTMLElement): void {
   button.innerHTML = Html.CHECK;
   setTimeout(() => (button.innerHTML = Html.SHEETS), 1200);
 }
-
-// Voice
-// =====
-// The mic records (the browser's MediaRecorder: webm, or mp4 where only
-// that is made) until clicked again; the server writes the recording
-// out, paid as the calls, and its words join the box where the cursor
-// is, to edit and send.
 
 async function mic(): Promise<void> {
   if (P.rec !== null) {
@@ -1115,20 +1008,18 @@ async function mic(): Promise<void> {
   meter(stream, rec);
 }
 
-// While rec records, the box shows its loudness: a bar every 50 ms,
-// scrolling left, and the time so far.
 function meter(stream: MediaStream, rec: MediaRecorder): void {
   const audio = new AudioContext();
   const probe = audio.createAnalyser();
   audio.createMediaStreamSource(stream).connect(probe);
   const buf = new Uint8Array(probe.fftSize);
-  const canvas = $<HTMLCanvasElement>(".voice canvas");
-  const pen = canvas.getContext("2d")!;
+  const canvas = $(".voice canvas", HTMLCanvasElement);
+  const pen = must(canvas.getContext("2d"), "a 2d canvas");
   const levels: number[] = [];
   const start = performance.now();
   const frame = (now: number): void => {
     if (P.rec !== rec) {
-      audio.close();
+      void audio.close();
       return;
     }
     probe.getByteTimeDomainData(buf);
@@ -1170,23 +1061,15 @@ function heard(out: View.Answer): void {
   Box.box_focus();
 }
 
-// Socket
-// ======
-// View's link; a socket lost opens again, but one that never showed the
-// chat may be a session gone: then the page starts over.
-
 function connect(): void {
   View.link_open(v, {
     open : (query) => new WebSocket(location.origin.replace(/^http/, "ws") + "/ws" + query),
-    post : (path, body) => fetch(path, { method: "POST", body }),
+    post : (path, body) => fetch(path, { method: "POST", body: body as BodyInit }),
     hear : hear,
     lost : lost,
   });
 }
 
-// whether this page is in use (shown and focused; off: leaving it), told
-// the server on each socket, and again while in use at most each
-// USE_PING: no push goes out meanwhile (Server.ts Chat.phone)
 function in_use(off = false): void {
   const on = !off && document.visibilityState === "visible" && document.hasFocus();
   const ws = v.ws;
@@ -1207,9 +1090,6 @@ async function lost(up: boolean): Promise<boolean> {
   return true;
 }
 
-// a pick changed shows what it is now (a click on a knob moves it). The
-// rows change with what they show: a state (~10/s importing)
-// only by its agents, an agent's page saying whether it runs
 function hear(msg: View.Server): void {
   if (v.ws !== P.used.ws) {
     in_use();
@@ -1230,51 +1110,41 @@ function hear(msg: View.Server): void {
   if (msg.$ === "state") {
     renew_due(msg.build);
   }
-  import_welcome();
+  void import_welcome();
   draw(true);
 }
 
-// Import
-// ======
-// Import History: offered once to a new chat on a computer, and in
-// the menu. A folder picked, or a site's export (a zip), is read for its
-// sessions' heads, each app's list folded (all picked; open it to
-// leave some out); then what it finds, and Import; then its progress,
-// Pause or Resume. All follows from P and
-// a status. A picked file can't be read once it changes, so each is
-// copied as first read.
-
 function importer(): void {
-  const form = $<HTMLFormElement>("#import form");
-  const dir  = $<HTMLInputElement>("#import [name=dir]");
-  $(".imp").onclick = () => import_open(false);
-  const zip  = $<HTMLInputElement>("#import [name=zip]");
+  const form = $("#import form", HTMLFormElement);
+  const dir  = $("#import [name=dir]", HTMLInputElement);
+  $(".imp").onclick = () => void import_open(false);
+  const zip  = $("#import [name=zip]", HTMLInputElement);
   $(".pickdir").onclick = () => dir.click();
   for (const src of import_srcs()) {
-    src.querySelector<HTMLButtonElement>(".pickzip")!.onclick = () => zip.click();
-    src.querySelector<HTMLButtonElement>(".pickzip")!.title = "From the website: " + Import.EXPORTS[src.dataset.app!] + ", which emails you a zip.";
+    const pick = find(src, ".pickzip", HTMLButtonElement);
+    pick.onclick = () => zip.click();
+    pick.title = "From the website: " + Import.EXPORTS[src.dataset.app ?? ""] + ", which emails you a zip.";
   }
   $(".into").onclick = () => {
-    P.step = "";
+    IMPORT.step = "";
     import_draw("");
   };
   $("#import").onclick = (ev) => (ev.target as HTMLElement).closest(".skip") && $("#import").hidePopover();
   $("#import .prog .sub").textContent = Import.MIDWAY;
   $("#import .flow").onclick = import_flow;
   $("#import").ontoggle = (ev) => {
-    if ((ev as ToggleEvent).newState === "closed") {
-      P.step = P.step === "start" || P.step === "done" ? "" : P.step;
+    if (ev.newState === "closed") {
+      IMPORT.step = IMPORT.step === "start" || IMPORT.step === "done" ? "" : IMPORT.step;
     }
     import_draw("");
   };
   form.oninput = (ev) => {
     const box = ev.target as HTMLInputElement;
     if (box.name === "session") {
-      box.checked ? P.off.delete(box.value) : P.off.add(box.value);
+      box.checked ? IMPORT.off.delete(box.value) : IMPORT.off.add(box.value);
     }
     import_draw("");
   };
-  // drawn once as the read starts (a draw lists every session found)
   dir.onchange = async () => {
     const all = [...(dir.files ?? [])];
     const files = all.filter((f) => Import.import_file(f.webkitRelativePath));
@@ -1309,109 +1179,92 @@ function importer(): void {
   };
 }
 
-// the progress's button: Pause or Resume
 function import_flow(): void {
   View.link_send(v, { $: "go", on: Boolean(v.importing?.why) }, (out) => out.error && toast(out.error));
 }
 
-// the box, opened by the menu or as a new chat's first step
 async function import_open(first: boolean): Promise<void> {
   $("#menu").hidePopover();
-  P.done = await fetch("/api/imported").then((res) => res.json()).catch(() => ({}));
+  IMPORT.done = (await fetch("/api/imported").then((res) => res.json()).catch(() => ({}))) as Import.Done;
   $("#import form .skip").textContent = first ? "Start fresh" : "Close";
-  P.step = first ? "start" : P.step === "done" ? "" : P.step;
+  IMPORT.step = first ? "start" : IMPORT.step === "done" ? "" : IMPORT.step;
   import_draw("");
   $("#import").showPopover();
 }
 
-// a source read, its sessions by name; the slider at all again (its left end:
-// the draw's min pulls it up to the first day). Its min goes first: a range
-// keeps its value within its bounds (set under the last min, today with nothing
-// read, it stays at today)
 function import_took(name: string, read: Read, status: string): void {
-  P.found.set(name, read);
+  IMPORT.found.set(name, read);
   BACK.min = "0";
   BACK.value = "0";
   import_draw(status);
 }
 
-// a new chat (only its OPENING), on a computer: the box, once on this
-// browser (a reload never asks again), after the intro
 async function import_welcome(): Promise<void> {
   await INTRO;
   const key = kept("welcomed");
   if (localStorage.getItem(key) === null && v.pick !== null && v.parts.length === View.OPENING && v.importing === null && DESK.matches) {
     localStorage.setItem(key, "1");
-    import_open(true);
+    void import_open(true);
   }
 }
 
 function import_send(): void {
   const picked = import_plan().picked;
-  P.step = "send";
+  IMPORT.step = "send";
   import_draw("");
   const body = async () => new Blob(await Array.fromAsync(Import.import_body(picked), (part) => new Blob([part])));
   View.link_send(v, { $: "import", body }, import_sent);
 }
 
-// the box stays open on the import's progress (the answer says whether it
-// still runs: its first progress may come before or after it)
 function import_sent(out: View.Answer): void {
-  P.step = out.error !== undefined ? "" : out.going ? "run" : "done";
+  IMPORT.step = out.error !== undefined ? "" : out.going ? "run" : "done";
   if (out.error === undefined) {
-    P.found.clear();
+    IMPORT.found.clear();
   }
   import_draw(out.error === undefined ? "" : "Not imported: " + out.error);
   $("#import").showPopover();
 }
 
-// the import the box wants
 function import_plan(): Import.Plan {
-  const form = new FormData($<HTMLFormElement>("#import form"));
-  const want = { off: [...P.off], since: import_since(), tools: form.has("tools") };
-  const found = [...P.found.values()].flatMap((read) => read.sessions);
-  return Import.import_plan(found, want, P.done);
+  const form = new FormData($("#import form", HTMLFormElement));
+  const want = { off: [...IMPORT.off], since: import_since(), tools: form.has("tools") };
+  const found = [...IMPORT.found.values()].flatMap((read) => read.sessions);
+  return Import.import_plan(found, want, IMPORT.done);
 }
 
-// the slider's day, the first one taken ("2026-06-01"; at its left end,
-// all: ""): it runs in days from the first new message's to today
 function import_since(): string {
   return BACK.valueAsNumber > Number(BACK.min) ? new Date(BACK.valueAsNumber * 864e5).toISOString().slice(0, 10) : "";
 }
 
-// an import's progress, in the box and the header, once it is sent or
-// while one runs (from any tab: its step is then "seen", whatever the box
-// showed); at its end the box says so, until closed. Whether it shows.
 function import_bar(): boolean {
   const run = v.importing;
-  P.step = run !== null ? "seen" : P.step === "seen" ? "done" : P.step;
-  const done  = P.step === "done";
-  const going = ["send", "run", "seen", "done"].includes(P.step);
+  IMPORT.step = run !== null ? "seen" : IMPORT.step === "seen" ? "done" : IMPORT.step;
+  const done  = IMPORT.step === "done";
+  const going = ["send", "run", "seen", "done"].includes(IMPORT.step);
   const part  = run === null ? Number(done) : run.done / Math.max(1, run.total);
   const why   = Boolean(run?.why);
-  const said  = run !== null ? View.progress_show(run) : done ? Import.DONE : P.step === "send" ? "Sending…" : "Starting…";
-  $("#import .start").hidden = P.step !== "start";
-  $("#import form").hidden = going || P.step === "start";
+  const said  = run !== null ? View.progress_show(run) : done ? Import.DONE : IMPORT.step === "send" ? "Sending…" : "Starting…";
+  $("#import .start").hidden = IMPORT.step !== "start";
+  $("#import form").hidden = going || IMPORT.step === "start";
   $("#import .prog").hidden = !going;
   $("#import .prog .title").textContent = done ? "Memory tree built" : "Building your memory tree";
-  $<HTMLProgressElement>("#import progress").value = part;
-  $<HTMLProgressElement>(".imping progress").value = part;
+  $("#import progress", HTMLProgressElement).value = part;
+  $(".imping progress", HTMLProgressElement).value = part;
   $(".imping").hidden = run === null;
   $(".imping").classList.toggle("why", why);
   $(".imping span").textContent = why ? "Import paused" : "Building memory";
   $(".imping").title = $("#import .pct").textContent = said;
   $("#import .prog .sub").hidden = why || done;
   $("#import .flow").textContent = why ? "Resume" : "Pause";
-  $<HTMLButtonElement>("#import .flow").hidden = run === null;
+  $("#import .flow", HTMLButtonElement).hidden = run === null;
   return going;
 }
 
-// the box as P says, with a status (reading, or why not)
 function import_draw(status: string): void {
   if (import_bar()) {
     return;
   }
-  const reads    = [...P.found.values()];
+  const reads    = [...IMPORT.found.values()];
   const sessions = reads.flatMap((read) => read.sessions);
   const plan     = import_plan();
   const msgs     = plan.msgs;
@@ -1428,31 +1281,28 @@ function import_draw(status: string): void {
   $("#import .tools").hidden = !sessions.some((s) => s.heads.some((m) => m.kind === "tool" || m.kind === "echo"));
   $("#import .found").textContent = found + moved;
   for (const src of import_srcs()) {
-    const list  = src.querySelector(".sessions")!;
+    const list  = must(src.querySelector(".sessions"), "#import .sessions");
     const shown = plan.sessions.filter((s) => s.app === src.dataset.app);
     markup(list, shown.map((s) => `<label title="${Html.esc(s.where + ", " + Import.import_count(s.heads.length, ""))}"><input type="checkbox" name="session" value="${Html.esc(Import.import_id(s))}">${Import.import_cells(s).map((c) => `<span>${Html.esc(c)}</span>`).join("")}</label>`));
-    list.querySelectorAll("input").forEach((box) => (box.checked = !P.off.has(box.value)));
-    const on = shown.filter((s) => !P.off.has(Import.import_id(s))).length;
-    src.querySelector<HTMLElement>(".pick")!.hidden = shown.length === 0;
-    src.querySelector(".pick summary")!.textContent = (on < shown.length ? on + " of " : shown.length > 1 ? "All " : "") + shown.length + (shown.length === 1 ? " session" : " sessions") + " picked · choose";
+    list.querySelectorAll("input").forEach((box) => (box.checked = !IMPORT.off.has(box.value)));
+    const on = shown.filter((s) => !IMPORT.off.has(Import.import_id(s))).length;
+    find(src, ".pick", HTMLElement).hidden = shown.length === 0;
+    must(src.querySelector(".pick summary"), "#import .pick summary").textContent = (on < shown.length ? on + " of " : shown.length > 1 ? "All " : "") + shown.length + (shown.length === 1 ? " session" : " sessions") + " picked · choose";
   }
   $("#import .guess").textContent = status;
-  const [go, dir] = [$<HTMLButtonElement>("#import .go"), $<HTMLButtonElement>(".pickdir")];
+  const [go, dir] = [$("#import .go", HTMLButtonElement), $(".pickdir", HTMLButtonElement)];
   go.hidden = msgs === 0;
   go.disabled = status.startsWith("Reading");
   dir.textContent = msgs > 0 ? "Add a folder" : "Choose folder";
   dir.classList.toggle("alt", msgs > 0);
   dir.disabled = go.disabled;
-  import_srcs().forEach((src) => (src.querySelector<HTMLButtonElement>(".pickzip")!.disabled = dir.disabled));
+  import_srcs().forEach((src) => (find(src, ".pickzip", HTMLButtonElement).disabled = dir.disabled));
 }
 
-// each app's box (index.html .src, by data-app)
 function import_srcs(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>("#import .src")];
 }
 
-// a picked file as it is now, copied a chunk at a time (the browser keeps
-// the chunks, on disk when large, so the page never holds it whole)
 async function import_copy(file: File): Promise<Blob> {
   const reader = file.stream().getReader();
   const parts: Blob[] = [];
@@ -1462,19 +1312,12 @@ async function import_copy(file: File): Promise<Blob> {
   return new Blob(parts);
 }
 
-// Drawing
-// =======
-
-// an element's children, one per markup, each made only when no child
-// has its markup: the rest stay as they are, so a fold or a new message
-// touches its own row only, and what is under the mouse, selected or
-// loaded stays (a reply streams into its last row only)
 const MARKUP = new WeakMap<Element, string>();
 
 function markup(el: Element, htmls: string[]): void {
-  const had = new Map<string, Element[]>();
+  const had = new Map<string | undefined, Element[]>();
   for (const child of el.children) {
-    const html = MARKUP.get(child)!;
+    const html = MARKUP.get(child);
     const same = had.get(html) ?? [];
     same.push(child);
     had.set(html, same);
@@ -1493,18 +1336,16 @@ function markup(el: Element, htmls: string[]): void {
   }
 }
 
-// one markup's element, its markup kept
 function html_parse(html: string): Element {
   const made = document.createElement("template");
   made.innerHTML = html;
-  const child = made.content.firstElementChild!;
+  const child = must(made.content.firstElementChild, "an element in " + html.slice(0, 40));
   MARKUP.set(child, html);
   return child;
 }
 
-// draws the page at the next frame; stick: keep the bottom, if at it
 function draw(stick: boolean): void {
-  P.stick = P.stick && stick;
+  SCROLL.stick = SCROLL.stick && stick;
   if (P.frame === 0) {
     P.frame = requestAnimationFrame(() => {
       paint();
@@ -1513,12 +1354,10 @@ function draw(stick: boolean): void {
   }
 }
 
-// a new chat shown opens at its bottom (folded: its top); a page shown
-// (the settings, the tree), only the bars
 function paint(): void {
   if ($("#log").hidden) {
     P.frame = 0;
-    P.stick = true;
+    SCROLL.stick = true;
     bars();
     return;
   }
@@ -1529,11 +1368,11 @@ function paint(): void {
     return;
   }
   const doc = document.documentElement;
-  const follow = P.stick && P.end;
+  const follow = SCROLL.stick && SCROLL.end;
   const at = P.rows && !follow ? anchor() : null;
   const shown = shown_key();
   P.frame = 0;
-  P.stick = true;
+  SCROLL.stick = true;
   bars();
   if (P.rows) {
     markup($("#log .rows"), View.view_body(v).map(Html.row_html));
@@ -1544,17 +1383,17 @@ function paint(): void {
   Box.box_sizes($("#log .tail"));
   folds();
   frames();
-  const back = P.back === null ? null : document.querySelector<HTMLElement>(`#log [data-a="${P.back.a}"]`);
-  if (back !== null && P.back !== null) {
+  const back = RENEW.back === null ? null : document.querySelector<HTMLElement>(`#log [data-a="${RENEW.back.a}"]`);
+  if (back !== null && RENEW.back !== null) {
     P.shown = shown;
-    scrollBy(0, back.getBoundingClientRect().top - P.back.top);
-    P.back = null;
-    P.end = at_end();
+    scrollBy(0, back.getBoundingClientRect().top - RENEW.back.top);
+    RENEW.back = null;
+    SCROLL.end = at_end();
     return;
   }
   if (shown !== P.shown) {
     P.shown = shown;
-    P.end = v.fold === null;
+    SCROLL.end = v.fold === null;
     scrollTo(0, v.fold === null ? doc.scrollHeight : 0);
     return;
   }
@@ -1569,37 +1408,30 @@ function paint(): void {
   const el = rows.filter((r) => Number(r.dataset.a) <= at.a).pop();
   if (el !== undefined) {
     scrollBy(0, el.getBoundingClientRect().top - at.top);
-    P.end = at_end();
+    SCROLL.end = at_end();
   }
 }
 
-// which chat shows (an agent's, folded): one other than last drawn opens
-// anew
 function shown_key(): string {
   return (v.page === null ? "" : v.page.name) + (v.fold === null ? "" : "/fold");
 }
 
-// the page at its bottom
 function at_end(): boolean {
   return innerHeight + scrollY >= document.documentElement.scrollHeight - 1;
 }
 
-// the header's and the footer's parts that change, and the notes, a
-// server's or an act's ("/help is no command", "haiku-5.5 has no fast"),
-// as toasts
 function bars(): void {
   for (const note of v.notes.splice(0)) {
     toast(note);
   }
-  // (after this draw: a page shown is drawn and placed first)
-  if (P.due && !P.going && renew_free()) {
-    P.going = true;
-    setTimeout(renew);
+  if (RENEW.due && !RENEW.going && renew_free()) {
+    RENEW.going = true;
+    setTimeout(() => void renew());
   }
   const on = View.view_typing(v);
   const stop = on && v.busy && Box.box_blank();
   const tabs = View.view_tabs(v);
-  const send = $<HTMLButtonElement>(".send");
+  const send = $(".send", HTMLButtonElement);
   $(".net").hidden = v.up;
   $(".timers").hidden = v.timers.length === 0;
   $(".timers span").textContent = String(v.timers.length);
@@ -1621,13 +1453,11 @@ function bars(): void {
   $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
   $(".mode").setAttribute("aria-label", P.mode === "desk" ? "Voltar à Conversa" : turn === 0 ? "Mesa: nenhuma pendência na sua vez" : "Mesa: " + turn + (turn === 1 ? " pendência" : " pendências") + " na sua vez");
   send.classList.toggle("stop", stop);
-  // an agent's page has no box: messages go to UniiChat
   $(".composer").hidden = !on;
-  $<HTMLButtonElement>(".mic").disabled = v.out.some((p) => p.msg.$ === "voice");
+  $(".mic", HTMLButtonElement).disabled = v.out.some((p) => p.msg.$ === "voice");
   $(".mic").classList.toggle("rec", P.rec !== null);
   $(".composer").classList.toggle("off", !on);
   $(".composer").classList.toggle("rec", P.rec !== null);
-  // a knob focused (its menu just closed) stays so as its value changes
   const knob = (document.activeElement as HTMLElement | null)?.dataset?.knob;
   markup($("#pick"), Html.pick_html(View.view_fold(v), v.fold === null, View.view_pick(v)));
   if (knob !== undefined) {
@@ -1639,9 +1469,6 @@ function bars(): void {
   import_bar();
 }
 
-// the first row in sight with a first message (no row inside it): that
-// message, and where it is on screen. None in sight: the page keeps its
-// scroll, as those rows only grow at its end
 function anchor(): { a: number; top: number } | null {
   for (const r of document.querySelectorAll<HTMLElement>("#log [data-a]")) {
     const box = r.getBoundingClientRect();
@@ -1652,35 +1479,25 @@ function anchor(): { a: number; top: number } | null {
   return null;
 }
 
-// Mine
-// ====
-// The button at the top goes up to the user's last message out of
-// sight above, and each press after to the one before it: a reply's
-// thinking, tool calls and output can bury the prompt it answers.
-
 function mine(): void {
   const rows = [...document.querySelectorAll<HTMLElement>("#log .msg.user")];
   const el = rows.findLast(mine_above);
   if (el !== undefined) {
-    P.end = false;
+    SCROLL.end = false;
     el.scrollIntoView();
   }
   mine_show();
 }
 
-// shown while one of the user's messages is above the screen; the one
-// down (down), while the page is not at its bottom nor kept at it
 function mine_show(): void {
   const first = document.querySelector<HTMLElement>("#log .msg.user");
   $(".mine").hidden = first === null || !mine_above(first);
-  $(".down").hidden = P.end || innerHeight + scrollY >= document.documentElement.scrollHeight - 1;
+  $(".down").hidden = SCROLL.end || innerHeight + scrollY >= document.documentElement.scrollHeight - 1;
 }
 
-// the button above the pick bar goes down to the page's bottom, which the
-// next draws then keep
 function down(): void {
   scrollTo(0, document.documentElement.scrollHeight);
-  P.end = true;
+  SCROLL.end = true;
   mine_show();
 }
 
@@ -1688,17 +1505,6 @@ function mine_above(el: HTMLElement): boolean {
   return el.getBoundingClientRect().top < $("header").getBoundingClientRect().bottom;
 }
 
-// Settings
-// ========
-// The settings page (Html.account_html), drawn anew each time it is shown
-// and after each act on it: the prompts, this browser's sign-in, then the
-// server's settings (Html.settings_html), drawn anew after each save, which sends only what changed (null: back to the default; a key
-// out), and the version of the files it read, so a save on what changed
-// since is refused. A key typed is sent once and gone from the page as
-// it is drawn again.
-
-// shows the page at path: the chat ("/"), the settings or the tree (its
-// #view too)
 function go(path: string): void {
   if (location.pathname + location.hash !== path) {
     history.pushState(null, "", path);
@@ -1706,9 +1512,6 @@ function go(path: string): void {
   route();
 }
 
-// the settings page and the tree keep of the footer only its toasts
-// (style.css); the chat, back from them, is where it was (P.away): at its
-// bottom, kept there
 function route(): void {
   const pipe = location.pathname === PIPE;
   const page = PAGES.includes(location.pathname) || pipe;
@@ -1723,8 +1526,8 @@ function route(): void {
   P.pane = st.pane === true && NARROW.matches;
   const desk = !page && !tree && P.mode === "desk";
   const chat = !page && !tree && !desk;
-  if (!chat && !$("#log").hidden && P.away === null) {
-    P.away = { y: scrollY, end: P.end };
+  if (!chat && !$("#log").hidden && SCROLL.away === null) {
+    SCROLL.away = { y: scrollY, end: SCROLL.end };
   }
   $("#log").hidden = !chat;
   $("#desk").hidden = !desk;
@@ -1735,33 +1538,30 @@ function route(): void {
   $("#account").hidden = !page;
   $("#tree").hidden = !tree;
   P.at = location.pathname + location.hash;
-  P.shown = chat && P.away !== null ? shown_key() : location.pathname + (desk ? "/mesa" : "");
-  if (chat && P.away !== null) {
-    P.end = P.away.end;
+  P.shown = chat && SCROLL.away !== null ? shown_key() : location.pathname + (desk ? "/mesa" : "");
+  if (chat && SCROLL.away !== null) {
+    SCROLL.end = SCROLL.away.end;
     // its rows drawn first (none yet, if the page was reloaded away from it)
     P.rows = true;
     paint();
-    scrollTo(0, P.end ? document.documentElement.scrollHeight : P.away.y);
-    P.y = scrollY;
-    P.away = null;
+    scrollTo(0, SCROLL.end ? document.documentElement.scrollHeight : SCROLL.away.y);
+    SCROLL.y = scrollY;
+    SCROLL.away = null;
   }
   $("#account").classList.toggle("pipe", pipe);
   if (pipe) {
-    pipeline();
+    void pipeline();
   } else if (page) {
-    account();
+    void account();
   }
   if (tree) {
     Tree.tree_show(tree_view() ? "VIEW" : "TREE");
   } else {
     Tree.tree_hide();
   }
-  draw(chat && P.end);
+  draw(chat && SCROLL.end);
 }
 
-// back or forward: another page shows (route), or the same, a picture
-// opened or closed over it only (Viewer.ts: no page of its own); a
-// reload put off while it showed may go now (bars)
 function popped(): void {
   // the Mesa and the Conversa (and a task's pane) share "/": their step
   // is told by the history's state
@@ -1807,30 +1607,29 @@ async function pipeline(tries = 0): Promise<void> {
 async function account(): Promise<void> {
   const el = $("#account");
   const [got, set] = await Promise.all([fetch("/api/prompts").catch(() => null), fetch("/api/settings").catch(() => null)]);
-  const prompts: View.Prompts | null = got !== null && got.ok ? await got.json().catch(() => null) : null;
+  const prompts = got !== null && got.ok ? ((await got.json().catch(() => null)) as View.Prompts | null) : null;
   const push = await notify_state().catch(() => null);
   el.innerHTML = Html.account_html(prompts, push);
-  // (drawn anew: nothing on it edited yet)
-  P.dirty.clear();
+  RENEW.dirty.clear();
   el.oninput = (ev) => {
     const form = (ev.target as Element).closest("form");
     if (form !== null) {
-      P.dirty.add(form);
+      RENEW.dirty.add(form);
     }
   };
   el.querySelectorAll<HTMLFormElement>("form.prompt").forEach((form) => (form.onsubmit = (ev) => {
     ev.preventDefault();
-    account_prompt(form);
+    void account_prompt(form);
   }));
   mcp_draw();
-  el.querySelectorAll<HTMLButtonElement>(".retry").forEach((retry) => (retry.onclick = () => account()));
-  $("#account .out").onclick = signout;
+  el.querySelectorAll<HTMLButtonElement>(".retry").forEach((retry) => (retry.onclick = () => void account()));
+  $("#account .out").onclick = () => void signout();
   const bell = document.querySelector<HTMLButtonElement>("#account .notify");
   bell?.addEventListener("click", () => {
     bell.disabled = true;
-    notify(push !== "on");
+    void notify(push !== "on");
   });
-  const page = set?.ok ? await set.json().catch(() => null) : null;
+  const page = set?.ok ? ((await set.json().catch(() => null)) as Page | null) : null;
   if (page === null) {
     $("#account .owned").innerHTML = `<p class="sub">Could not read the server's settings. Try again in a moment.</p>`;
     return;
@@ -1838,15 +1637,13 @@ async function account(): Promise<void> {
   settings_draw(page);
 }
 
-// the page's MCP servers, as the chat's state has them (Html.mcp_html);
-// a switch focused stays so as it flips
 function mcp_draw(): void {
-  // (no pick: the chat's state not here yet)
   const box = document.querySelector("#account .mcp");
   if (box === null || v.pick === null) {
     return;
   }
-  const on = box.contains(document.activeElement) ? document.activeElement!.getAttribute("aria-label") : null;
+  const active = document.activeElement;
+  const on = active !== null && box.contains(active) ? active.getAttribute("aria-label") : null;
   markup(box, Html.mcp_html(v.mcp));
   [...box.querySelectorAll<HTMLElement>("[role=switch]")].find((b) => b.getAttribute("aria-label") === on)?.focus();
 }
@@ -1857,41 +1654,29 @@ async function signout(): Promise<void> {
   location.href = "/";
 }
 
-// a prompt saved (the user prompt or the compaction prompt), shown as
-// it is now (empty: the default); text typed while it saved is not, and
-// says so
 async function account_prompt(form: HTMLFormElement): Promise<void> {
-  const area = form.querySelector("textarea")!;
-  const why  = form.querySelector(".why")!;
-  const save = form.querySelector("button")!;
+  const area = find(form, "textarea", HTMLTextAreaElement);
+  const why  = must(form.querySelector(".why"), "the prompt's why");
+  const save = find(form, "button", HTMLButtonElement);
   const sent = area.value;
   save.disabled = true;
-  P.saving++;
+  RENEW.saving++;
   const out = await View.post("/api/prompts", { [area.name]: sent });
-  P.saving--;
+  RENEW.saving--;
   save.disabled = false;
+  const saved = get(out[area.name], "text");
   if (out.error === undefined && area.value === sent) {
-    area.value = out[area.name]?.text ?? sent;
+    area.value = text_of(saved, sent);
   }
-  why.textContent = out.error ?? (area.value === out[area.name]?.text ? "Saved." : "Not saved yet: Save again.");
+  why.textContent = text_of(out.error, area.value === saved ? "Saved." : "Not saved yet: Save again.");
   form.classList.toggle("bad", out.error !== undefined);
   if (out.error === undefined && area.value === sent) {
-    P.dirty.delete(form);
-    P.since = true;
+    RENEW.dirty.delete(form);
+    RENEW.since = true;
   }
   draw(false);
 }
 
-// Notifications
-// =============
-// Web Push (Push.ts): turned on on the account page, by a click, as only
-// a click may ask the browser's permission (subscribing asks it), so
-// what subscribing needs (P.push) is read as the page is drawn. On while
-// this browser's subscription is kept for this sign-in
-// (Owner.web_subscribe); signing out ends it.
-
-// null: none to offer (the app notifies by itself; a browser without
-// push, or whose push service fails, as Firefox's with push turned off)
 async function notify_state(): Promise<Html.Notify | null> {
   P.push = null;
   if (APP !== null) {
@@ -1908,7 +1693,7 @@ async function notify_state(): Promise<Html.Notify | null> {
   const sub = await notify_sub();
   const query = sub === null ? "" : "?endpoint=" + encodeURIComponent(sub.endpoint);
   const res = await fetch("/api/webpush" + query).catch(() => null);
-  const out = res?.ok ? await res.json() : null;
+  const out = res?.ok ? ((await res.json()) as { key: string | null; on: boolean }) : null;
   if (reg === undefined || out === null || out.key === null) {
     return null;
   }
@@ -1939,22 +1724,20 @@ async function notify(on: boolean): Promise<void> {
   }
   try {
     const out = on ? await notify_on(push.reg, push.key) : await notify_off(push.reg);
-    toast(out.error ?? (on ? "Notificações ativadas." : "Notificações desativadas."));
-  } catch (err: any) {
+    toast(text_of(out.error, on ? "Notificações ativadas." : "Notificações desativadas."));
+  } catch (err) {
     const denied = typeof Notification !== "undefined" && Notification.permission === "denied";
-    toast(denied ? "As notificações estão bloqueadas nas configurações deste navegador." : (on ? "Não foi possível ativar as notificações: " : "Não foi possível desativar as notificações: ") + (err?.message ?? err));
+    toast(denied ? "As notificações estão bloqueadas nas configurações deste navegador." : (on ? "Não foi possível ativar as notificações: " : "Não foi possível desativar as notificações: ") + err_why(err));
   }
-  account();
+  void account();
 }
 
-// the browser asked first, at once (the click's); a subscription to
-// another key (the server's keys made anew) is replaced
-async function notify_on(reg: ServiceWorkerRegistration, key: string): Promise<any> {
+async function notify_on(reg: ServiceWorkerRegistration, key: string): Promise<Record<string, unknown>> {
   const bytes = notify_bytes(key);
   const ask = () => reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes });
-  const sub = await ask().catch(async (err) => {
+  const sub = await ask().catch(async (err: unknown) => {
     const old = await reg.pushManager.getSubscription();
-    if (old === null || err?.name !== "InvalidStateError") {
+    if (old === null || get(err, "name") !== "InvalidStateError") {
       throw err;
     }
     await old.unsubscribe();
@@ -1963,7 +1746,7 @@ async function notify_on(reg: ServiceWorkerRegistration, key: string): Promise<a
   return View.post("/api/webpush", sub.toJSON());
 }
 
-async function notify_off(reg: ServiceWorkerRegistration): Promise<any> {
+async function notify_off(reg: ServiceWorkerRegistration): Promise<Record<string, unknown>> {
   const sub = await reg.pushManager.getSubscription();
   if (sub !== null) {
     const headers = { "content-type": "application/json" };
@@ -1973,30 +1756,24 @@ async function notify_off(reg: ServiceWorkerRegistration): Promise<any> {
   return {};
 }
 
-function settings_draw(page: any): void {
+function settings_draw(page: Page): void {
   $("#account .owned").innerHTML = Html.settings_html(page);
-  const form = $<HTMLFormElement>("#account form.settings");
-  const rows = new Map<string, any>(page.settings.map((r: any) => [r.key, r]));
+  const form = $("#account form.settings", HTMLFormElement);
+  const rows = new Map<string, Row>(page.settings.map((r) => [r.key, r]));
   const unset = new Set<string>();
-  // the profiles as edited (none shown: UNII_PROFILES sets them), each
-  // its name and models in order; drawn anew as one changes, the focus
-  // put back on what it was on
-  const profs: Array<[string, string[]]> = Object.entries(page.profiles ?? {});
+  const profs = Object.entries(page.profiles ?? {});
   const box = form.querySelector<HTMLElement>(".profiles .field");
   const names = () => profs.map(([name]) => name.trim()).filter((name) => name !== "");
-  // a list's items: its boxes checked, or (not shown) its value
   const listed = (key: string) => {
     const boxes = [...form.querySelectorAll<HTMLInputElement>(`input[name="${key}"]`)];
-    return boxes.length === 0 ? Html.list(rows.get(key).value) : boxes.filter((b) => b.checked).map((b) => b.value);
+    return boxes.length === 0 ? Html.list(rows.get(key)?.value ?? "") : boxes.filter((b) => b.checked).map((b) => b.value);
   };
-  // the models of the vendors checked shown, each pick's four lists of
-  // what they offer, a vendor checked without a key warned of
   const picks = () => {
     const vendors = listed("vendors");
-    form.querySelectorAll<HTMLElement>(".opt[data-vendor]:not([data-vendor=''])").forEach((o) => (o.hidden = !o.dataset.vendor!.split(" ").some((v) => vendors.includes(v))));
+    form.querySelectorAll<HTMLElement>(".opt[data-vendor]:not([data-vendor=''])").forEach((o) => (o.hidden = !(o.dataset.vendor ?? "").split(" ").some((v) => vendors.includes(v))));
     for (const key of Html.PICKS) {
       const value = form.querySelector<HTMLInputElement>(`input[name="${key}"]`);
-      const four = value?.parentElement!.querySelector<HTMLElement>(".four");
+      const four = value?.parentElement?.querySelector<HTMLElement>(".four");
       if (value && four) {
         const focus = (document.activeElement as HTMLSelectElement | null)?.name;
         four.innerHTML = Html.picks_html(key, vendors, listed("models"), value.value, key === "agents" ? "The chat's pick" : null, names());
@@ -2005,7 +1782,7 @@ function settings_draw(page: any): void {
     }
     const keyless = vendors.filter((v) => {
       const name = Html.VENDOR_KEY[v];
-      const key = page.keys.find((k: any) => k.name === name);
+      const key = page.keys.find((k) => k.name === name);
       const typed = form.querySelector<HTMLInputElement>(`[name="key.${name}"]`)?.value.trim() ?? "";
       return key !== undefined && (key.from === "default" || unset.has("key." + name)) && typed === "";
     });
@@ -2019,9 +1796,9 @@ function settings_draw(page: any): void {
     if (el === null) {
       return;
     }
-    unset.delete(el.dataset.key!);
+    unset.delete(el.dataset.key ?? "");
     el.classList.remove("unset");
-    el.querySelector(".err")!.textContent = "";
+    must(el.querySelector(".err"), "the setting's err").textContent = "";
     const value = el.querySelector<HTMLInputElement>("input[type=hidden]");
     if (value !== null) {
       value.value = Html.pick_mend([...el.querySelectorAll("select")].map((s) => s.value), listed("models"), names());
@@ -2036,20 +1813,20 @@ function settings_draw(page: any): void {
     if (btn === null) {
       return;
     }
-    const el = btn.closest<HTMLElement>(".set")!;
-    const key = el.dataset.key!;
+    const el = must(btn.closest<HTMLElement>(".set"), "the reset's setting");
+    const key = el.dataset.key ?? "";
     const r = rows.get(key);
-    el.querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach((b) => (b.checked = Html.list(r.def).includes(b.value)));
+    el.querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach((b) => (b.checked = Html.list(r?.def ?? "").includes(b.value)));
     el.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input:not([type=checkbox]), textarea").forEach((i) => (i.value = r?.def ?? ""));
     picks();
     unset.add(key);
     el.classList.add("unset");
     btn.hidden = true;
-    el.querySelector(".from")!.insertAdjacentText("beforeend", key.startsWith("key.") ? " · removed once saved" : " · the default once saved");
+    must(el.querySelector(".from"), "the setting's from").insertAdjacentText("beforeend", key.startsWith("key.") ? " · removed once saved" : " · the default once saved");
   };
   form.onsubmit = (ev) => {
     ev.preventDefault();
-    settings_save(form, page, unset, listed, profs);
+    void settings_save(form, page, unset, listed, profs);
   };
   const profs_draw = (focus?: string) => {
     if (box !== null) {
@@ -2059,10 +1836,9 @@ function settings_draw(page: any): void {
   };
   const profs_changed = (focus: string) => {
     profs_draw(focus);
-    box!.closest(".set")!.querySelector(".err")!.textContent = "";
+    must(box?.closest(".set")?.querySelector(".err"), "the profiles' err").textContent = "";
     picks();
   };
-  // a pick on a profile renamed follows it
   const renamed = (was: string, now: string) => {
     for (const key of Html.PICKS) {
       const value = form.querySelector<HTMLInputElement>(`input[name="${key}"]`);
@@ -2101,7 +1877,6 @@ function settings_draw(page: any): void {
       profs[i][0] = name.value;
     }
   });
-  // a model moved by its handle: arrow keys a place up or down
   box?.addEventListener("keydown", (ev) => {
     const grip = (ev.target as HTMLElement).closest<HTMLButtonElement>(".grip");
     if (grip === null || (ev.key !== "ArrowUp" && ev.key !== "ArrowDown")) {
@@ -2116,16 +1891,14 @@ function settings_draw(page: any): void {
       profs_changed(`.grip[data-i="${i}"][data-j="${k}"]`);
     }
   });
-  // or dragged (a mouse, a finger, a pen): its row follows the pointer
-  // among the others, and stays where it is let go
   box?.addEventListener("pointerdown", (ev) => {
     const grip = (ev.target as HTMLElement).closest<HTMLButtonElement>(".grip");
     if (grip === null || ev.button !== 0) {
       return;
     }
     ev.preventDefault();
-    const li = grip.closest("li")!;
-    const ol = li.parentElement!;
+    const li = must(grip.closest("li"), "the grip's row");
+    const ol = must(li.parentElement, "the grip's list");
     const [i, from] = [Number(grip.dataset.i), Number(grip.dataset.j)];
     li.classList.add("drag");
     const move = (e: PointerEvent) => {
@@ -2134,7 +1907,6 @@ function settings_draw(page: any): void {
         ol.insertBefore(li, below ?? null);
       }
     };
-    // on the window: a row moved loses its pointer capture
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
@@ -2152,17 +1924,14 @@ function settings_draw(page: any): void {
   picks();
 }
 
-async function settings_save(form: HTMLFormElement, page: any, unset: Set<string>, listed: (key: string) => string[], profs: Array<[string, string[]]>): Promise<void> {
+async function settings_save(form: HTMLFormElement, page: Page, unset: Set<string>, listed: (key: string) => string[], profs: Array<[string, string[]]>): Promise<void> {
   const set: Record<string, string | null> = {};
   const keys: Record<string, string | null> = {};
   for (const r of page.settings) {
-    // one not shown isn't sent
     if (form.querySelector(`.set[data-key="${r.key}"]`) === null) {
       continue;
     }
     const field = form.querySelector<HTMLInputElement>(`input[name="${r.key}"]`);
-    // a list changed only if its items did (the boxes' order is no
-    // change: Html.list_changed)
     const now = r.key === "vendors" || r.key === "models" ? Html.list_changed(Html.list(r.value), listed(r.key))?.join(",") ?? r.value : field?.value.trim() ?? r.value;
     if (unset.has(r.key)) {
       set[r.key] = null;
@@ -2178,17 +1947,16 @@ async function settings_save(form: HTMLFormElement, page: any, unset: Set<string
       keys[k.name] = typed;
     }
   }
-  const why = form.querySelector(".save .why")!;
+  const why = must(form.querySelector(".save .why"), "the save's why");
   form.querySelectorAll(".err").forEach((e) => (e.textContent = ""));
-  // the profiles, sent whole if changed; each named, once, with a model
   let profiles: Record<string, string[]> | undefined;
   if (page.profiles != null) {
     const now = profs.map(([name, list]): [string, string[]] => [name.trim(), list]);
     const all = now.map(([name]) => name);
     const bad = all.includes("") ? "Name each profile." : all.some((name, k) => all.indexOf(name) !== k) ? "Two profiles have the same name." : now.some(([, list]) => list.length === 0) ? "Add a model to each profile." : null;
     if (bad !== null) {
-      const at = form.querySelector<HTMLElement>(".profiles")!;
-      at.querySelector(".err")!.textContent = bad;
+      const at = find(form, ".profiles", HTMLElement);
+      must(at.querySelector(".err"), "the profiles' err").textContent = bad;
       at.scrollIntoView({ block: "center" });
       return;
     }
@@ -2199,64 +1967,57 @@ async function settings_save(form: HTMLFormElement, page: any, unset: Set<string
     why.textContent = "Nothing changed.";
     return;
   }
-  const go = form.querySelector<HTMLButtonElement>(".go")!;
+  const go = find(form, ".go", HTMLButtonElement);
   go.disabled = true;
   why.textContent = "";
-  P.saving++;
+  RENEW.saving++;
   const out = await View.post("/api/settings", { version: page.version, set, keys, ...(profiles === undefined ? {} : { profiles }) });
-  P.saving--;
+  RENEW.saving--;
   go.disabled = false;
   if (!out.ok) {
-    const at = out.key === undefined ? null : form.querySelector<HTMLElement>(`.set[data-key="${out.key}"]`);
-    (at?.querySelector(".err") ?? why).textContent = out.error ?? "Could not save.";
+    const at = out.key === undefined ? null : form.querySelector<HTMLElement>(`.set[data-key="${text_of(out.key, "null")}"]`);
+    (at?.querySelector(".err") ?? why).textContent = text_of(out.error, "Could not save.");
     (at ?? why).scrollIntoView({ block: "center" });
     return;
   }
-  const later = (out.saved as string[]).filter((key) => page.settings.find((r: any) => r.key === key)?.apply === "restart");
-  // (drawn anew from what was saved: nothing edited on it now)
-  settings_draw(out);
-  P.dirty.delete(form);
-  P.since = true;
+  const done = out as Page & { saved: string[] };
+  const later = done.saved.filter((key) => page.settings.find((r) => r.key === key)?.apply === "restart");
+  settings_draw(done);
+  RENEW.dirty.delete(form);
+  RENEW.since = true;
   draw(false);
   toast(later.length === 0 ? "Saved." : "Saved. " + later.join(", ") + " " + (later.length === 1 ? "applies" : "apply") + " once the server restarts.");
 }
 
-// Renew
-// =====
-// The server's web app has another build than this page (after an
-// update): the page reloads into it by itself, once nothing would be
-// lost, keeping what it showed: the box's text and caret, the folds
-// opened, where the chat or the page was scrolled. Never while the mic
-// records, a file uploads, an act awaits its answer, or Import History
-// or a picture (Viewer.ts) is open; on a phone, not while its keyboard
-// is up (the box focused), but as the page is hidden. On the settings
-// page only once a change is saved after the new build came, with
-// nothing else edited and unsaved, or as it is left. Checked again
-// right before reloading. The cached shell is dropped first; at most two
-// reloads per build (the second past the browser's cache too), then one
-// more on each new socket.
-
 function renew_due(build: string | undefined): void {
-  if (build === undefined || P.build === "" || build === P.build) {
-    P.build ||= build ?? "";
-    P.due = false;
+  if (build === undefined || build_same(build)) {
+    RENEW.build ||= build ?? "";
+    RENEW.due = false;
     return;
   }
-  const [was, n] = (sessionStorage.getItem(kept("build")) ?? "").split(" ");
-  if (was === build && Number(n) >= 2 && (P.gave === null || P.gave === v.ws)) {
-    P.gave = v.ws;
+  if (reloads_spent_on(build)) {
+    RENEW.gave = v.ws;
     return;
   }
-  P.since = P.due && P.since;
-  P.due = true;
+  RENEW.since = RENEW.due && RENEW.since;
+  RENEW.due = true;
   draw(false);
+}
+
+function build_same(build: string): boolean {
+  return RENEW.build === "" || build === RENEW.build;
+}
+
+function reloads_spent_on(build: string): boolean {
+  const [was, n] = (sessionStorage.getItem(kept("build")) ?? "").split(" ");
+  return was === build && Number(n) >= 2 && (RENEW.gave === null || RENEW.gave === v.ws);
 }
 
 function renew_free(hidden = false): boolean {
   const page = location.pathname !== "/" && location.pathname !== TREE;
   const quiet = P.rec === null && UPS.size === 0 && v.out.length === 0 && !$("#import").matches(":popover-open") && !Viewer.viewer_on();
   const typing = !DESK.matches && Box.box_focused() && !hidden;
-  return quiet && !typing && (!page || (P.since && P.dirty.size === 0 && P.saving === 0));
+  return quiet && !typing && (!page || (RENEW.since && RENEW.dirty.size === 0 && RENEW.saving === 0));
 }
 
 async function renew(hidden = false): Promise<void> {
@@ -2264,27 +2025,25 @@ async function renew(hidden = false): Promise<void> {
   const tries = was === v.build ? Number(n) : 0;
   const store = isSecureContext && "caches" in window ? window.caches : null;
   const keys = (await store?.keys().catch(() => [])) ?? [];
-  await Promise.all(keys.filter((k) => k.startsWith("unii-shell")).map((k) => store?.delete(k)));
+  await Promise.all(store === null ? [] : keys.filter((k) => k.startsWith("unii-shell")).map((k) => store.delete(k)));
   if (tries > 0) {
     await Promise.all(["/", "/app.js", "/style.css", "/sw.js"].map((path) => fetch(path, { cache: "reload" }).catch(() => null)));
   }
-  // (the page may have changed meanwhile)
-  if (!P.due || !renew_free(hidden)) {
-    P.going = false;
+  if (!RENEW.due || !renew_free(hidden)) {
+    RENEW.going = false;
     return;
   }
   const chat = !$("#log").hidden;
-  const back = { at: chat && !P.end ? anchor() : null, y: chat ? null : scrollY, away: P.away, caret: Box.box_caret(), focus: Box.box_focused(), open: [...P.open] };
+  const back: Back = { at: chat && !SCROLL.end ? anchor() : null, y: chat ? null : scrollY, away: SCROLL.away, caret: Box.box_caret(), focus: Box.box_focused(), open: [...SCROLL.open] };
   sessionStorage.setItem(kept("back"), JSON.stringify(back));
   sessionStorage.setItem(kept("build"), (v.build ?? "") + " " + (tries + 1));
   location.reload();
 }
 
-// after a renew, what the page showed before
 function renewed(): void {
   const text = sessionStorage.getItem(kept("back"));
   sessionStorage.removeItem(kept("back"));
-  const back = text === null ? null : JSON.parse(text);
+  const back = text === null ? null : (JSON.parse(text) as Back | null);
   if (back === null) {
     return;
   }
@@ -2292,19 +2051,23 @@ function renewed(): void {
     Box.box_focus();
   }
   Box.box_place(back.caret[0], back.caret[1]);
-  back.open.forEach((id: string) => P.open.add(id));
-  P.back = back.at;
-  P.away = back.away;
-  // a page (the settings, the tree) back where it was, once drawn that long
+  back.open.forEach((id) => SCROLL.open.add(id));
+  RENEW.back = back.at;
+  SCROLL.away = back.away;
   const end = Date.now() + 3000;
-  const y = () => back.y !== null && (document.documentElement.scrollHeight >= back.y + innerHeight || Date.now() > end ? scrollTo(0, back.y) : setTimeout(y, 100));
+  const y = () => {
+    const to = back.y;
+    if (to !== null) {
+      if (document.documentElement.scrollHeight >= to + innerHeight || Date.now() > end) {
+        scrollTo(0, to);
+      } else {
+        setTimeout(y, 100);
+      }
+    }
+  };
   y();
 }
 
-// Notes
-// =====
-
-// shown 7 s, or till hidden (stay)
 function toast(text: string, stay = false): void {
   const el = $("#toast");
   el.textContent = text;
@@ -2312,12 +2075,6 @@ function toast(text: string, stay = false): void {
   clearTimeout(P.toast);
   P.toast = stay ? 0 : (setTimeout(() => (el.hidden = true), 7000) as unknown as number);
 }
-
-// Intro
-// =====
-// Once per browser (?skip: never), over the page; style.css times it, and
-// its last animation, a click or a key ends it. Played, it is done once
-// gone (INTRO), so no box opens over it.
 
 function intro_play(): Promise<void> {
   const skip = new URLSearchParams(location.search).has("skip");
@@ -2352,4 +2109,4 @@ function intro_play(): Promise<void> {
 }
 
 const INTRO = intro_play();
-boot();
+void boot();

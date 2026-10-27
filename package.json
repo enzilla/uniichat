@@ -4,9 +4,17 @@
   "scripts": {
     "build": "bun Build.ts",
     "test": "bun test",
-    "web": "bun build web/src/main.ts --outfile web/app.js --target browser"
+    "web": "bun build web/src/main.ts --outfile web/app.js --target browser",
+    "check": "tsc && bun --bun eslint && knip"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.306"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "eslint": "10.13.0",
+    "knip": "6.43.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1"
   }
 }

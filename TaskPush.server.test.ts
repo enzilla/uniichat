@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import * as config from "./Config.ts";
 import { Memory } from "./Memory.ts";
 import { Push } from "./Push.ts";
+import { Run } from "./Run.ts";
 import { Chat } from "./Server.ts";
 import * as TaskPush from "./TaskPush.ts";
 import * as Tasks from "./Tasks.ts";
@@ -93,18 +94,18 @@ test("a whole turn's reply pushes nothing; a new task still does", async () => {
   // the model's call faked: it answers "Pronto." and the turn ends, its
   // finally run as in the server
   const CALL = Chat.call;
-  (Chat as any).call = async (c: any) => {
-    c.wait = [];
-    await Chat.writing(c, async () => Chat.push(c, null, "unii", "Pronto."));
-    return false;
+  (Chat as any).call = async (c: any, take: () => unknown) => {
+    take();
+    await Chat.writing(c, async () => Chat.push(c, c.main, "unii", "Pronto."));
+    return null;
   };
   try {
-    chat.wait = [{ id: -1 }];
-    await Chat.turn(chat);
+    await Run.take(chat.main, { kind: "work", text: "(turno de teste)", images: [] });
+    await chat.main.going;
   } finally {
     (Chat as any).call = CALL;
   }
-  expect(chat.busy).toBe(false);
+  expect(chat.main.busy).toBe(false);
   expect(Memory.message(chat.mem, chat.mem.count - 1)!.text).toBe("Pronto.");
   await Chat.task_push(chat, t0);
   await Chat.task_push(chat, t0 + TaskPush.WINDOW);

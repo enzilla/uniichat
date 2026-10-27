@@ -14,6 +14,7 @@ import { AskAI } from "./AskAI.ts";
 import * as config from "./Config.ts";
 import { Memory } from "./Memory.ts";
 import { Push } from "./Push.ts";
+import { Run } from "./Run.ts";
 import { Chat } from "./Server.ts";
 import * as Tasks from "./Tasks.ts";
 
@@ -43,18 +44,19 @@ const last = () => Memory.message(chat.mem, chat.mem.count - 1)!;
 const asked = () => Tasks.tasks_load(dir).tasks.filter((t) => t.state === "open" && t.title === Tasks.ASKED_TITLE);
 
 // a whole turn, as the server runs it, whose call does `act` (tools,
-// say) and then replies `reply`
+// say) and then replies `reply`: started by a message of its own (one
+// more in the log, before the reply)
 async function turn(reply: string, act: () => void = () => {}): Promise<void> {
   const CALL = Chat.call;
-  (Chat as any).call = async (c: any) => {
-    c.wait = [];
+  (Chat as any).call = async (c: any, take: () => unknown) => {
+    take();
     act();
-    await Chat.writing(c, async () => Chat.push(c, null, "unii", reply));
-    return false;
+    await Chat.writing(c, async () => Chat.push(c, c.main, "unii", reply));
+    return null;
   };
   try {
-    chat.wait = [{ id: -1 }];
-    await Chat.turn(chat);
+    await Run.take(chat.main, { kind: "work", text: "(turno de teste)", images: [] });
+    await chat.main.going;
   } finally {
     (Chat as any).call = CALL;
   }
@@ -83,14 +85,14 @@ test("with a task of the user's made in the turn, or no question, nothing", asyn
   await turn("Abri a decisão. Quer que eu mescle?", () => {
     Tasks.task_new(Tasks.tasks_load(dir), { title: "Mesclar os três?", origin: "chat", kind: "decision", choices: ["Sim", "Não"] }, "main", Date.now());
   });
-  expect(chat.mem.count).toBe(count + 1);
+  expect(chat.mem.count).toBe(count + 2);
   expect(last().kind).toBe("unii");
   expect(asked()).toHaveLength(0);
   // a question tied by id to an open task of the user's, not moved now
   const open = Tasks.tasks_load(dir).tasks.find((t) => t.title === "Mesclar os três?")!;
   count = chat.mem.count;
   await turn("A " + open.id + " segue aberta: mesclo os três?");
-  expect(chat.mem.count).toBe(count + 1);
+  expect(chat.mem.count).toBe(count + 2);
   // a task of Unii's only: still a note and a task
   await turn("Mesclei. E o deploy, faço hoje?", () => {
     Tasks.task_new(Tasks.tasks_load(dir), { title: "Conferir o CI", assignee: "unii", done_when: "CI lido", next_step: "ler" }, "main", Date.now());
@@ -103,7 +105,7 @@ test("with a task of the user's made in the turn, or no question, nothing", asyn
   await turn("Mesclei os três e criei as tags.");
   await turn("O Enzo perguntou: “vc tem um agente escutando os prs?”. Respondi que não.");
   await turn("Por que travou? Porque o lint falhou.\n```\nread -p 'Continuar?'\n```");
-  expect(chat.mem.count).toBe(count + 3);
+  expect(chat.mem.count).toBe(count + 6);
   expect(asked()).toHaveLength(0);
 });
 
@@ -126,7 +128,7 @@ test("a reply in a task's thread (the user wrote there) is that task's: nothing"
   Tasks.task_say(s, t.id, "Pode resumir?", Date.now() - 30e3);
   const count = chat.mem.count;
   await turn("Resumo: CI verde, verificação limpa. Mesclo?");
-  expect(chat.mem.count).toBe(count + 1);
+  expect(chat.mem.count).toBe(count + 2);
   expect(asked()).toHaveLength(0);
   expect(Tasks.tasks_load(dir).tasks.find((x) => x.id === t.id)!.thread.at(-1)!.text).toBe("Resumo: CI verde, verificação limpa. Mesclo?");
 });
@@ -137,7 +139,7 @@ test("the user's name (config owner_name): a request on their order is theirs (P
   try {
     let count = chat.mem.count;
     await turn("Depende da ordem do Guilherme.");
-    expect(chat.mem.count).toBe(count + 1);
+    expect(chat.mem.count).toBe(count + 2);
     expect(asked()).toHaveLength(0);
     names.push("Guilherme");
     await turn("Depende da ordem do Guilherme.");
@@ -147,7 +149,7 @@ test("the user's name (config owner_name): a request on their order is theirs (P
     // negated: nothing
     count = chat.mem.count;
     await turn("Isso não depende de você.");
-    expect(chat.mem.count).toBe(count + 1);
+    expect(chat.mem.count).toBe(count + 2);
     expect(asked()).toHaveLength(0);
   } finally {
     names.splice(0, names.length, ...had);
@@ -156,8 +158,8 @@ test("the user's name (config owner_name): a request on their order is theirs (P
 
 test("a turn halted (a note last): nothing", async () => {
   const count = chat.mem.count;
-  Chat.push(chat, null, "unii", "Quer que eu mescle?");
-  Chat.push(chat, null, "note", "Stopped by the user: Unii's turn.");
+  Chat.push(chat, chat.main, "unii", "Quer que eu mescle?");
+  Chat.push(chat, chat.main, "note", "Stopped by the user: Unii's turn.");
   Chat.asked(chat, Date.now(), Chat.reply(chat));
   await Bun.sleep(20);
   expect(chat.mem.count).toBe(count + 2);

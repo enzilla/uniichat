@@ -289,11 +289,10 @@ export namespace CursorSub {
   // a call (CursorSub.run); a stop cancels the session and ends the agent
   export function ask(ask: Ask, on: (ev: Event) => void): Try {
     const end = AskAI.end("");
+    // a message sent while it runs is queued for the next turn (AskAI.ts):
+    // none reaches a running call
     const sent: Say[] = [];
     const abort = new AbortController();
-    const send = (say: Say) => {
-      sent.push(say);
-    };
     const stop = () => {
       end.text = "stopped";
       abort.abort();
@@ -303,10 +302,9 @@ export namespace CursorSub {
       (err) => (end.text ||= err.message),
     ).then(() => {
       end.ok   = end.ok && !abort.signal.aborted;
-      end.left = sent;
       return end;
     });
-    return { send, stop, wake: () => {}, done };
+    return { stop, wake: () => {}, done };
   }
 
   // the call's end: refused unasked with no sign-in, no CLI or no

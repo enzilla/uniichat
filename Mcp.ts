@@ -1,122 +1,70 @@
-// Mcp
-// ===
-// The user's MCP servers (README), whose tools the master and its
-// subagents get beside unii's own (Tools.ts), each named
-// "<device>_<server>__<tool>", on every vendor. Each is in a device's own
-// config.json, as it told (Tools.servers), and runs on that device: each
-// message a job of it (Mcp.device, Mcp.here). unii serve runs none
-// itself. There, a server is a program (stdio: a JSON-RPC message a line
-// each way) or a URL the device reaches (streamable HTTP: a POST each,
-// answered as JSON or an event stream). The servers change
-// as devices come, go and edit theirs (Mcp.sync), between turns only
-// (Tools.apply).
-// Each chat runs its own (one user's never see another's), started by
-// the first listing or call, ended as the chat closes, moves (a call
-// running finishes first) or turns it off. One that fails to start, dies
-// or times out fails its call saying why; each agent's next listing
-// gives it the notes it hasn't heard (Mcp.heard), for the request it
-// builds. Only a why the user can act on (a server that won't start) is
-// also a note in the chat; the rest (its device isn't open, it died and
-// starts again at the next call) only the model is told. Tools left out
-// (a name too long, say) go to the log and the chat. A dead one starts again at the next call; one that
-// failed to start rests LIMITS.again first. While a server's device
-// isn't open, its tools are left out.
-
 import * as os from "node:os";
 import type { Out } from "./Agent.ts";
 import type { Img } from "./AskAI.ts";
 import { clip } from "./Clip.ts";
 import type * as config from "./Config.ts";
-import { Machine, type Job, type Spec } from "./Machine.ts";
+import { err_why } from "./Err.ts";
+import { get, list as items, rec, text_of } from "./Json.ts";
+import { Machine, WIN, type Job, type Spec } from "./Machine.ts";
 
-// Types
-// =====
-
-// a link to a server: a request's result (a throw: why none), a
-// notification sent, its end; why it is dead (null: it lives)
 type Link = {
-  ask   : (method: string, params: object, signal: AbortSignal) => Promise<any>;
+  ask   : (method: string, params: object, signal: AbortSignal) => Promise<unknown>;
   tell  : (method: string, params: object, signal?: AbortSignal) => Promise<void>;
   close : () => void;
   dead  : () => string | null;
 };
 
-// a chat's server: its config; its start or listing running or done (a
-// string: why it has no tools); why its last start failed, and when it
-// may be tried again; its link; the server's name of each tool by the
-// model's; whether it said its tools changed; the note of why it has no
-// tools (null: it works), and whether the chat showed it; what each
-// agent last heard of it; the tools
-// last told left out; the calls running; gone: it ends as its last call
-// does (the chat closed)
-export type Server = {
-  conf  : config.McpServer;
+type Started = {
   up    : Promise<Spec[] | string> | null;
   fail  : { why: string; till: number } | null;
   link  : Link | null;
   names : Map<string, string>;
   stale : boolean;
+};
+
+type Told = {
   said  : string | null;
   shown : boolean;
   heard : Map<string, string | null>;
   left  : string;
+};
+
+type Kept = {
+  conf  : config.McpServer;
   calls : number;
   gone  : boolean;
 };
 
-// a chat's servers, by name, how it is told of them, how it runs a job
-// on a device (Tools.job), and whether a device is open (Tools.open)
-export type Run = (device: string, job: Job, signal: AbortSignal) => Promise<Out>;
+export type Server = Kept & Started & Told;
+
+type Run = (device: string, job: Job, signal: AbortSignal) => Promise<Out>;
 export type Servers = { all: Map<string, Server>; note: (text: string) => void; run: Run; open: (device: string) => boolean };
 
-// Constants
-// =========
+const START_MS = 60e3;
+const RETRY_FAILED_START_MS = 30e3;
+const KILL_AFTER_TERM_MS = 3e3;
+const MESSAGE_MAX_CHARS = 16 * 2 ** 20;
+const IMAGE_MAX_BYTES = 5 * 2 ** 20;
 
-// start: how long a server may take to run, initialize and list its
-// tools (an npx's first run downloads it); again: how long one that
-// failed to start rests; kill: how long a program ended has to exit
-// before its process group is killed; msg: the most characters a
-// message from a server may have; img: the most bytes of an image in a
-// result (the vendors' limit)
-export const LIMITS = { start: 60e3, again: 30e3, kill: 3e3, msg: 16 * 2 ** 20, img: 5 * 2 ** 20 };
-
-// why an HTTP link is dead whose session its server ended (Mcp.call
-// begins a new one)
 const EXPIRED = "ended its session (HTTP 404)";
 
 const VERSION = "2025-06-18";
 const INIT    = { protocolVersion: VERSION, capabilities: {}, clientInfo: { name: "unii", version: "1" } };
 
-// what a program's stderr shows of why it ended, at most
 const TAIL = 1000;
 
-// the variables of unii's a program gets (as the MCP SDK's client
-// passes, Windows' too: without SYSTEMROOT, say, most programs there
-// fail), beside its own `env`: no key, no other server's secret
-// (Machine.WIN not imported: Machine imports this, so on a device it
-// isn't set yet as this loads)
-const WIN = process.platform === "win32";
 const PASS = WIN
   ? ["APPDATA", "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA", "PATH", "PROCESSOR_ARCHITECTURE", "SYSTEMDRIVE", "SYSTEMROOT", "TEMP", "USERNAME", "USERPROFILE", "PROGRAMFILES"]
   : ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR"];
 
-// on a device, the programs it runs for chats (Mcp.here), by their
-// link's key; whether each said its tools changed since its last answer
 const HERE = new Map<string, { link: Link; changed: boolean }>();
-
-// Mcp
-// ===
 
 export namespace Mcp {
 
-  // a chat's servers: none till its devices tell theirs (Mcp.sync)
   export function servers(note: (text: string) => void, run: Run, open: (device: string) => boolean): Servers {
     return { all: new Map(), note, run, open };
   }
 
-  // the chat's servers made `confs`: one gone or changed ends as its last
-  // call does (as Mcp.end's), a new one waits for its first listing or
-  // call
   export function sync(servers: Servers, confs: config.McpServer[]): void {
     const want = new Map(confs.map((conf) => [conf.name, conf]));
     for (const [name, s] of servers.all) {
@@ -135,16 +83,12 @@ export namespace Mcp {
     }
   }
 
-  // the tools of the servers not `off`, each started if it isn't
   export async function list(servers: Servers, off: string[]): Promise<Spec[]> {
     const on = [...servers.all.values()].filter((s) => !s.gone && !off.includes(s.conf.name));
     const lists = await Promise.all(on.map((s) => Mcp.start(servers, s)));
     return lists.flatMap((list) => (typeof list === "string" ? [] : list));
   }
 
-  // the notes of the servers not `off` that agent `who` hasn't heard: why
-  // one has no tools, or that it works again; viewed: only those the chat
-  // showed (in the view a call reads: the rest its listing tells)
   export function heard(servers: Servers, off: string[], who: string, viewed = false): string[] {
     const notes: string[] = [];
     for (const s of servers.all.values()) {
@@ -157,8 +101,6 @@ export namespace Mcp {
     return notes;
   }
 
-  // a server's tools: started (anew if its link died), listed again if
-  // it said they changed; else why none, told
   export async function start(servers: Servers, s: Server): Promise<Spec[] | string> {
     if (!servers.open(s.conf.device)) {
       Mcp.close(s);
@@ -177,7 +119,7 @@ export namespace Mcp {
       s.up = Mcp.open(servers, s);
     } else if (s.stale) {
       s.stale = false;
-      s.up = s.up.then(() => Mcp.listed(servers, s, AbortSignal.timeout(LIMITS.start))).catch((err) => "failed to list its tools: " + Mcp.why(err));
+      s.up = s.up.then(() => Mcp.listed(servers, s, AbortSignal.timeout(START_MS))).catch((err: unknown) => "failed to list its tools: " + err_why(err));
     }
     const up = s.up;
     const got = await up;
@@ -186,7 +128,7 @@ export namespace Mcp {
     }
     if (typeof got === "string") {
       Mcp.close(s);
-      s.fail = { why: got, till: Date.now() + LIMITS.again };
+      s.fail = { why: got, till: Date.now() + RETRY_FAILED_START_MS };
       Mcp.tell(servers, s, got + "; its tools are left out until it starts", true);
       return got;
     }
@@ -200,10 +142,8 @@ export namespace Mcp {
     return got;
   }
 
-  // a server run on its device and initialized, its tools listed, within
-  // LIMITS.start; else why not. Once up, its link dying is told
   export async function open(servers: Servers, s: Server): Promise<Spec[] | string> {
-    const timer = AbortSignal.timeout(LIMITS.start);
+    const timer = AbortSignal.timeout(START_MS);
     const changed = () => (s.stale = true);
     let up = false;
     let link: Link | null = null;
@@ -216,7 +156,7 @@ export namespace Mcp {
       up = true;
       return specs;
     } catch (err) {
-      return timer.aborted ? "didn't start within " + LIMITS.start / 1e3 + " s" : "failed to start: " + Mcp.why(err);
+      return timer.aborted ? "didn't start within " + START_MS / 1e3 + " s" : "failed to start: " + err_why(err);
     }
   }
 
@@ -229,19 +169,23 @@ export namespace Mcp {
     const left: string[] = [];
     let cursor: string | undefined;
     do {
-      const got = await s.link!.ask("tools/list", cursor === undefined ? {} : { cursor }, signal);
-      for (const tool of Array.isArray(got?.tools) ? got.tools : []) {
-        const name = Mcp.name(s.conf.name, String(tool?.name));
+      if (s.link === null) {
+        throw new Error("was closed");
+      }
+      const got = await s.link.ask("tools/list", cursor === undefined ? {} : { cursor }, signal);
+      for (const tool of items(get(got, "tools"))) {
+        const name = Mcp.name(s.conf.name, String(get(tool, "name")));
         const long = name.length > 64 ? "its name for the model, " + name + ", is over 64 characters" : null;
-        const schema = long ?? (names.has(name) ? "its name is another's for the model" : Mcp.schema(tool?.inputSchema));
+        const schema = long ?? (names.has(name) ? "its name is another's for the model" : Mcp.schema(get(tool, "inputSchema")));
         if (typeof schema === "string") {
-          left.push(JSON.stringify(String(tool?.name)) + " (" + schema + ")");
+          left.push(JSON.stringify(String(get(tool, "name"))) + " (" + schema + ")");
           continue;
         }
-        names.set(name, String(tool.name));
-        specs.push({ name, info: String(tool.description ?? ""), schema });
+        names.set(name, String(get(tool, "name")));
+        specs.push({ name, info: text_of(get(tool, "description")), schema });
       }
-      cursor = typeof got?.nextCursor === "string" ? got.nextCursor : undefined;
+      const more = get(got, "nextCursor");
+      cursor = typeof more === "string" ? more : undefined;
     } while (cursor !== undefined);
     if (left.join(", ") !== s.left) {
       s.left = left.join(", ");
@@ -256,9 +200,8 @@ export namespace Mcp {
 
   // an input schema the vendors take, else why none: an object's, with
   // properties (Anthropic refuses anyOf, oneOf and allOf at its top)
-  export function schema(given: any): object | string {
-    const is = (x: any) => typeof x === "object" && x !== null && !Array.isArray(x);
-    const obj = is(given) ? given : {};
+  export function schema(given: unknown): object | string {
+    const obj = rec(given) ? given : {};
     if (obj.type !== undefined && obj.type !== "object") {
       return "its input isn't an object";
     }
@@ -266,11 +209,9 @@ export namespace Mcp {
     if (top !== undefined) {
       return "its input schema has " + top + " at its top, which the vendors refuse";
     }
-    return { ...obj, type: "object", properties: is(obj.properties) ? obj.properties : {} };
+    return { ...obj, type: "object", properties: rec(obj.properties) ? obj.properties : {} };
   }
 
-  // why a server has no tools, if it is new: told to the model (heard),
-  // and to the chat too if `show` (the user can act on it)
   export function tell(servers: Servers, s: Server, why: string, show: boolean): void {
     const text = "MCP server " + s.conf.name + " " + why + ".";
     if (text !== s.said) {
@@ -282,24 +223,18 @@ export namespace Mcp {
     }
   }
 
-  // a note to the chat; none once it closed
   export function say(servers: Servers, s: Server, text: string): void {
     if (!s.gone) {
       servers.note(text);
     }
   }
 
-  // the server whose tool the model calls `name` ("<server>__<tool>"), if
-  // it is on: it might not have listed its tools in this process yet
   export function find(servers: Servers, off: string[], name: string): Server | null {
     const at = name.indexOf("__");
     const s = at > 0 ? servers.all.get(name.slice(0, at)) : undefined;
     return s !== undefined && !s.gone && !off.includes(s.conf.name) ? s : null;
   }
 
-  // a tool call, cancelled at a stop or its server's timeout; its server
-  // started first if it isn't running. A session the HTTP server ended
-  // (404) is begun again and the call sent again, once
   export async function call(servers: Servers, s: Server, name: string, args: object, signal: AbortSignal): Promise<Out> {
     const head = "MCP server " + s.conf.name + " ";
     const fail = (text: string): Out => ({ text, fail: true });
@@ -331,7 +266,7 @@ export namespace Mcp {
             continue;
           }
           const next = why === "was ended by unii" ? "." : "; the next call starts it again.";
-          return fail(head + (why === null ? "failed: " + Mcp.why(err) + "." : why + next));
+          return fail(head + (why === null ? "failed: " + err_why(err) + "." : why + next));
         }
       }
     } finally {
@@ -342,44 +277,31 @@ export namespace Mcp {
     }
   }
 
-  // a tool's result as unii's: its text (a resource's too, other parts
-  // named; structured content if nothing else), cut to CAP; its images
-  // the vendors take
-  export function out(got: any): Out {
+  export function out(got: unknown): Out {
     const texts: string[] = [];
     const imgs: Img[] = [];
-    for (const part of Array.isArray(got?.content) ? got.content : []) {
-      const res = part?.resource;
-      const pic = part?.type === "image" && typeof part.data === "string" && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType);
-      if (part?.type === "text") {
-        texts.push(String(part.text ?? ""));
-      } else if (pic && part.data.length * 0.75 <= LIMITS.img) {
-        imgs.push({ type: part.mimeType, data: part.data });
-      } else if (part?.type === "resource" && typeof res?.text === "string") {
-        texts.push(res.text);
+    for (const part of items(get(got, "content"))) {
+      const res = get(part, "resource");
+      const [type, data, mime, said] = [get(part, "type"), get(part, "data"), get(part, "mimeType"), get(res, "text")];
+      const pic = type === "image" && typeof data === "string" && typeof mime === "string" && /^image\/(png|jpeg|gif|webp)$/.test(mime);
+      if (type === "text") {
+        texts.push(text_of(get(part, "text")));
+      } else if (pic && data.length * 0.75 <= IMAGE_MAX_BYTES) {
+        imgs.push({ type: mime, data });
+      } else if (type === "resource" && typeof said === "string") {
+        texts.push(said);
       } else {
-        texts.push("[" + [part?.type, part?.mimeType ?? res?.mimeType, part?.uri ?? res?.uri].filter((x) => typeof x === "string").join(" ") + "]");
+        texts.push("[" + [type, mime ?? get(res, "mimeType"), get(part, "uri") ?? get(res, "uri")].filter((x) => typeof x === "string").join(" ") + "]");
       }
     }
-    if (texts.length === 0 && imgs.length === 0 && got?.structuredContent !== undefined) {
-      texts.push(JSON.stringify(got.structuredContent));
+    if (texts.length === 0 && imgs.length === 0 && get(got, "structuredContent") !== undefined) {
+      texts.push(JSON.stringify(get(got, "structuredContent")));
     }
     const text = clip();
     text.add(texts.join("\n"));
-    return { text: text.text(), fail: got?.isError === true, imgs };
+    return { text: text.text(), fail: get(got, "isError") === true, imgs };
   }
 
-  // a chat's servers end: at once, or (gone) each as its last call does
-  export function end(servers: Servers): void {
-    for (const s of servers.all.values()) {
-      s.gone = true;
-      if (s.calls === 0) {
-        Mcp.close(s);
-      }
-    }
-  }
-
-  // a server ended (turned off, dead): its calls running fail
   export function close(s: Server): void {
     const link = s.link;
     s.link = null;
@@ -393,20 +315,19 @@ export namespace Mcp {
     return (server + "__" + tool).replace(/[^A-Za-z0-9_-]/g, "_");
   }
 
-  export function why(err: any): string {
-    return String(err?.message ?? err);
+  export function reason(signal: AbortSignal): Error {
+    const why: unknown = signal.reason;
+    return why instanceof Error ? why : new Error(why === undefined ? "stopped" : text_of(why));
   }
 
-  // a server's request answered: ping; none else is asked for
-  export function answer(msg: any): object {
-    if (msg.method === "ping") {
-      return { jsonrpc: "2.0", id: msg.id, result: {} };
+  export function answer(msg: unknown): object {
+    const id = get(msg, "id");
+    if (get(msg, "method") === "ping") {
+      return { jsonrpc: "2.0", id, result: {} };
     }
-    return { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "unii offers no " + msg.method } };
+    return { jsonrpc: "2.0", id, error: { code: -32601, message: "unii offers no " + String(get(msg, "method")) } };
   }
 
-  // a stream's text, a piece at a time; the stream let go once the
-  // reader stops
   export async function* texts(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
     const reader = stream.getReader();
     const text = new TextDecoder();
@@ -419,17 +340,13 @@ export namespace Mcp {
     }
   }
 
-  // Links
-  // -----
-
-  // a program in its own process group (on Windows, which has none, its
-  // tree, no window of its own), a JSON-RPC message a line; its stderr's
-  // tail says why it ended. It gets PASS and its own env; a line past
-  // LIMITS.msg ends it
   export function stdio(conf: config.McpServer, changed: () => void, died: (why: string) => void): Link {
-    const env = Object.fromEntries(PASS.flatMap((k) => (process.env[k] === undefined ? [] : [[k, process.env[k]!]])));
+    const env = Object.fromEntries(PASS.flatMap((k) => {
+      const v = process.env[k];
+      return v === undefined ? [] : [[k, v]];
+    }));
     const proc = Bun.spawn([conf.command, ...conf.args], { cwd: conf.cwd || undefined, env: { ...env, ...conf.env }, stdin: "pipe", stdout: "pipe", stderr: "pipe", detached: !WIN, windowsHide: true });
-    const waits = new Map<number, { ok: (got: any) => void; no: (err: Error) => void }>();
+    const waits = new Map<number, { ok: (got: unknown) => void; no: (err: Error) => void }>();
     let next = 0;
     let dead: string | null = null;
     let tail = "";
@@ -439,43 +356,44 @@ export namespace Mcp {
         dead = why;
         died(why);
       }
-      waits.forEach((w) => w.no(new Error(dead!)));
+      const gone = dead;
+      waits.forEach((w) => w.no(new Error(gone)));
       waits.clear();
     };
     const write = (msg: object) => {
       try {
-        proc.stdin.write(JSON.stringify(msg) + "\n");
-        proc.stdin.flush();
+        void proc.stdin.write(JSON.stringify(msg) + "\n");
+        void proc.stdin.flush();
       } catch {}
     };
     const heard = (line: string) => {
-      let msg: any;
+      let msg: unknown;
       try {
         msg = JSON.parse(line);
       } catch {
         return;
       }
-      const w = waits.get(Number(msg?.id));
-      if (msg?.method !== undefined && msg.id !== undefined) {
+      const [id, method, error] = [get(msg, "id"), get(msg, "method"), get(msg, "error")];
+      const w = waits.get(Number(id));
+      if (method !== undefined && id !== undefined) {
         write(Mcp.answer(msg));
-      } else if (msg?.method === "notifications/tools/list_changed") {
+      } else if (method === "notifications/tools/list_changed") {
         changed();
       } else if (w !== undefined) {
-        waits.delete(Number(msg.id));
-        msg.error === undefined ? w.ok(msg.result) : w.no(new Error(msg.error?.message ?? JSON.stringify(msg.error)));
+        waits.delete(Number(id));
+        error === undefined ? w.ok(get(msg, "result")) : w.no(new Error(text_of(get(error, "message"), JSON.stringify(error))));
       }
     };
-    // its stdin closed, its group told to end, then killed
     const end = () => {
       if (!ended) {
         ended = true;
         try {
-          proc.stdin.end();
+          void proc.stdin.end();
         } catch {}
         try {
           process.kill(-proc.pid, "SIGTERM");
         } catch {}
-        setTimeout(() => Machine.kill(-proc.pid), LIMITS.kill).unref();
+        setTimeout(() => Machine.kill(-proc.pid), KILL_AFTER_TERM_MS).unref();
       }
     };
     (async () => {
@@ -487,15 +405,16 @@ export namespace Mcp {
         size += parts[0].length;
         const lines = parts.length === 1 ? [] : [rest.join(""), ...parts.slice(1, -1)];
         if (parts.length > 1) {
-          [rest, size] = [[parts.at(-1)!], parts.at(-1)!.length];
+          const last = parts[parts.length - 1];
+          [rest, size] = [[last], last.length];
         }
-        if (size > LIMITS.msg || lines.some((line) => line.length > LIMITS.msg)) {
-          throw new Error("sent a message over " + LIMITS.msg + " characters");
+        if (size > MESSAGE_MAX_CHARS || lines.some((line) => line.length > MESSAGE_MAX_CHARS)) {
+          throw new Error("sent a message over " + MESSAGE_MAX_CHARS + " characters");
         }
         lines.forEach((line) => line.trim() !== "" && heard(line));
       }
-    })().catch((err) => {
-      fail(Mcp.why(err) + "; unii ended it");
+    })().catch((err: unknown) => {
+      fail(err_why(err) + "; unii ended it");
       end();
     });
     const err = (async () => {
@@ -503,27 +422,40 @@ export namespace Mcp {
         tail = (tail + chunk).slice(-TAIL);
       }
     })().catch(() => {});
-    proc.exited.then(async (code) => {
+    void proc.exited.then(async (code) => {
       end();
       await Promise.race([err, Bun.sleep(200)]);
       const how = proc.signalCode ? "was killed by " + proc.signalCode : "exited with code " + code;
       const said = tail.trim();
       fail(how + (said === "" ? "" : ": " + said.split("\n").slice(-5).join(" / ")));
     });
-    const tell = async (method: string, params: object) => write({ jsonrpc: "2.0", method, params });
-    const ask = (method: string, params: object, signal: AbortSignal) => new Promise<any>((ok, no) => {
+    const tell = (method: string, params: object) => {
+      write({ jsonrpc: "2.0", method, params });
+      return Promise.resolve();
+    };
+    const ask = (method: string, params: object, signal: AbortSignal) => new Promise<unknown>((ok, no) => {
       if (dead !== null || signal.aborted) {
-        return no(dead !== null ? new Error(dead) : signal.reason);
+        no(dead !== null ? new Error(dead) : Mcp.reason(signal));
+        return;
       }
       const id = ++next;
       const stop = () => {
         waits.delete(id);
-        tell("notifications/cancelled", { requestId: id, reason: "stopped" });
-        no(signal.reason ?? new Error("stopped"));
+        void tell("notifications/cancelled", { requestId: id, reason: "stopped" });
+        no(Mcp.reason(signal));
       };
       signal.addEventListener("abort", stop, { once: true });
       const done = () => signal.removeEventListener("abort", stop);
-      waits.set(id, { ok: (got) => (done(), ok(got)), no: (err) => (done(), no(err)) });
+      waits.set(id, {
+        ok: (got) => {
+          done();
+          ok(got);
+        },
+        no: (err) => {
+          done();
+          no(err);
+        },
+      });
       write({ jsonrpc: "2.0", id, method, params });
     });
     const close = () => {
@@ -533,10 +465,6 @@ export namespace Mcp {
     return { ask, tell, close, dead: () => dead };
   }
 
-  // a program run on a device: each message a job "mcp" of it
-  // (Mcp.here runs it there), keyed to this link; a device not open
-  // fails the message; one whose program died (or whose unii restarted)
-  // says why, and the link is dead
   export function device(conf: config.McpServer, run: Run, changed: () => void, died: (why: string) => void): Link {
     const key = crypto.randomUUID();
     const job = (input: object): Job => ({ name: "mcp", input: { key, ...input }, cwd: "" });
@@ -547,30 +475,30 @@ export namespace Mcp {
       }
       const out = await run(conf.device, job(input), signal);
       if (signal.aborted) {
-        throw signal.reason ?? new Error("stopped");
+        throw Mcp.reason(signal);
       }
       if (out.fail) {
         throw new Error(out.text);
       }
-      const got = JSON.parse(out.text);
-      if (got.changed) {
+      const got: unknown = JSON.parse(out.text);
+      if (get(got, "changed")) {
         changed();
       }
-      if (got.dead && dead === null) {
-        dead = got.dead + " (on " + conf.device + ")";
+      if (get(got, "dead") && dead === null) {
+        dead = String(get(got, "dead")) + " (on " + conf.device + ")";
         died(dead);
       }
-      if (dead !== null || got.error !== undefined) {
-        throw new Error(dead ?? got.error);
+      if (dead !== null || get(got, "error") !== undefined) {
+        throw new Error(dead ?? String(get(got, "error")));
       }
-      return got.result;
+      return get(got, "result");
     };
     const ask = (method: string, params: object, signal: AbortSignal) => send({ conf: method === "initialize" ? conf : undefined, method, params }, signal);
-    const tell = (method: string, params: object, signal = AbortSignal.timeout(LIMITS.start)) => send({ method, params, tell: true }, signal).then(() => {});
+    const tell = (method: string, params: object, signal = AbortSignal.timeout(START_MS)) => send({ method, params, tell: true }, signal).then(() => {});
     const close = () => {
       if (dead === null) {
         dead = "was ended by unii";
-        run(conf.device, job({ method: "close" }), AbortSignal.timeout(LIMITS.start)).catch(() => {});
+        run(conf.device, job({ method: "close" }), AbortSignal.timeout(START_MS)).catch(() => undefined);
       }
     };
     return { ask, tell, close, dead: () => dead };
@@ -582,8 +510,8 @@ export namespace Mcp {
   // one's command, args and env read here, by its name); close ends it.
   // Answered as JSON: its result or error, why it is dead, whether its
   // tools changed
-  export async function here(input: any, signal: AbortSignal, home = os.homedir()): Promise<Out> {
-    const { key, method, params } = input;
+  export async function here(input: Record<string, unknown>, signal: AbortSignal, home = os.homedir()): Promise<Out> {
+    const [key, method, params] = [String(input.key), String(input.method), rec(input.params) ? input.params : {}];
     const answer = (got: object): Out => {
       const s = HERE.get(key);
       const changed = s?.changed ?? false;
@@ -601,12 +529,13 @@ export namespace Mcp {
     if (method === "initialize") {
       s?.link.close();
       HERE.delete(key);
-      const c: config.McpServer = input.conf;
-      const vars = (text: string) => text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, v) => {
-        if (process.env[v] === undefined) {
+      const c = input.conf as config.McpServer;
+      const vars = (text: string) => text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, v: string) => {
+        const value = process.env[v];
+        if (value === undefined) {
           throw new Error("uses ${" + v + "}, which isn't set");
         }
-        return process.env[v]!;
+        return value;
       });
       let conf: config.McpServer;
       try {
@@ -627,7 +556,7 @@ export namespace Mcp {
         }
         }
       } catch (err) {
-        return answer({ dead: Mcp.why(err) });
+        return answer({ dead: err_why(err) });
       }
       const run = { link: null as unknown as Link, changed: false };
       const changed = () => (run.changed = true);
@@ -645,23 +574,15 @@ export namespace Mcp {
       if (dead !== null) {
         HERE.delete(key);
       }
-      return answer(dead !== null ? { dead } : { error: Mcp.why(err) });
+      return answer(dead !== null ? { dead } : { error: err_why(err) });
     }
   }
 
-  // on a device, its socket to the server lost (Device.ts): the programs it
-  // ran for chats end, as no close may come; a chat's next message finds
-  // its program gone, and starts it again
   export function lost(): void {
     HERE.forEach((s) => s.link.close());
     HERE.clear();
   }
 
-  // a URL, each message a POST, its session kept by its header (one the
-  // server ended, HTTP 404, ends the link: EXPIRED); an answer is JSON or
-  // an event stream (the server's requests and notifications in it, then
-  // the answer), at most LIMITS.msg characters. Ended, its requests
-  // running are aborted and its session DELETEd
   export function http(conf: config.McpServer, changed: () => void): Link {
     let session: string | null = null;
     let version: string | null = null;
@@ -678,28 +599,24 @@ export namespace Mcp {
     const post = (msg: object, signal: AbortSignal) => {
       return fetch(conf.url, { method: "POST", headers: headers(), body: JSON.stringify(msg), signal: AbortSignal.any([signal, ender.signal]), timeout: false } as RequestInit);
     };
-    const tell = async (method: string, params: object, signal = AbortSignal.timeout(LIMITS.start)) => {
+    const tell = async (method: string, params: object, signal = AbortSignal.timeout(START_MS)) => {
       const res = await post({ jsonrpc: "2.0", method, params }, signal);
       await res.body?.cancel();
       if (!res.ok) {
         throw new Error("HTTP " + res.status);
       }
     };
-    // a message: the server's request answered, a change noted; else it,
-    // if it answers `id`
-    const heard = (msg: any, id: number): any => {
-      if (msg?.method !== undefined && msg.id !== undefined) {
-        post(Mcp.answer(msg), AbortSignal.timeout(LIMITS.start)).then((res) => res.body?.cancel(), () => {});
-      } else if (msg?.method === "notifications/tools/list_changed") {
+    const heard = (msg: unknown, id: number): unknown => {
+      if (get(msg, "method") !== undefined && get(msg, "id") !== undefined) {
+        post(Mcp.answer(msg), AbortSignal.timeout(START_MS)).then((res) => res.body?.cancel(), () => undefined);
+      } else if (get(msg, "method") === "notifications/tools/list_changed") {
         changed();
-      } else if (Number(msg?.id) === id) {
+      } else if (Number(get(msg, "id")) === id) {
         return msg;
       }
       return null;
     };
-    // the answer to `id` in a response: its JSON, or an event stream's,
-    // each event's data lines joined, read till it comes
-    const read = async (res: Response, id: number): Promise<any> => {
+    const read = async (res: Response, id: number): Promise<unknown> => {
       const sse = (res.headers.get("content-type") ?? "").includes("text/event-stream");
       const event = (text: string) => {
         const data = text.split(/\r\n|\r|\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).replace(/^ /, ""));
@@ -709,14 +626,17 @@ export namespace Mcp {
           return null;
         }
       };
+      if (res.body === null) {
+        throw new Error("sent no body");
+      }
       let text = "";
-      for await (const chunk of Mcp.texts(res.body!)) {
+      for await (const chunk of Mcp.texts(res.body)) {
         text += chunk;
-        if (text.length > LIMITS.msg) {
-          throw new Error("sent a message over " + LIMITS.msg + " characters");
+        if (text.length > MESSAGE_MAX_CHARS) {
+          throw new Error("sent a message over " + MESSAGE_MAX_CHARS + " characters");
         }
         const events = sse ? text.split(/\r\n\r\n|\n\n|\r\r/) : [];
-        text = sse ? events.pop()! : text;
+        text = sse ? events.pop() ?? "" : text;
         for (const msg of events.map(event)) {
           if (msg !== null) {
             return msg;
@@ -730,7 +650,9 @@ export namespace Mcp {
         throw new Error(dead);
       }
       const id = ++next;
-      const stop = () => tell("notifications/cancelled", { requestId: id, reason: "stopped" }).catch(() => {});
+      const stop = () => {
+        tell("notifications/cancelled", { requestId: id, reason: "stopped" }).catch(() => undefined);
+      };
       signal.addEventListener("abort", stop, { once: true });
       try {
         const res = await post({ jsonrpc: "2.0", id, method, params }, signal);
@@ -747,14 +669,15 @@ export namespace Mcp {
         if (msg === null) {
           throw new Error("no answer to " + method);
         }
-        if (msg.error !== undefined) {
-          throw new Error(msg.error?.message ?? JSON.stringify(msg.error));
+        const error = get(msg, "error");
+        if (error !== undefined) {
+          throw new Error(text_of(get(error, "message"), JSON.stringify(error)));
         }
-        version = method === "initialize" ? String(msg.result?.protocolVersion ?? VERSION) : version;
-        return msg.result;
+        version = method === "initialize" ? text_of(get(get(msg, "result"), "protocolVersion"), VERSION) : version;
+        return get(msg, "result");
       } catch (err) {
-        if (Mcp.why(err).startsWith("sent a message over")) {
-          end(Mcp.why(err) + "; unii ended it");
+        if (err_why(err).startsWith("sent a message over")) {
+          end(err_why(err) + "; unii ended it");
         }
         throw dead !== null ? new Error(dead) : err;
       } finally {
@@ -766,7 +689,7 @@ export namespace Mcp {
         dead = why;
         ender.abort(new Error(why));
         if (session !== null && why !== EXPIRED) {
-          fetch(conf.url, { method: "DELETE", headers: headers(), signal: AbortSignal.timeout(LIMITS.kill) }).then((res) => res.body?.cancel(), () => {});
+          fetch(conf.url, { method: "DELETE", headers: headers(), signal: AbortSignal.timeout(KILL_AFTER_TERM_MS) }).then((res) => res.body?.cancel(), () => undefined);
         }
       }
     };

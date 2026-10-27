@@ -17,7 +17,7 @@ const DIR = fs.mkdtempSync(os.tmpdir() + "/unii-tasks-tools-");
 afterAll(() => fs.rmSync(DIR, { recursive: true, force: true }));
 
 let changes = 0;
-const tools = { mem: { dir: DIR }, agents: new Map([["SmoothCow", {}]]), hooks: { change: () => (changes += 1) } } as unknown as Kit;
+const tools = { mem: { dir: DIR }, agents: new Map([["SmoothCow", {}]]), log: { change: () => (changes += 1) } } as unknown as Kit;
 // the evidence round: task_add needs done_when, and a task of Unii's its
 // next_step; given here unless a test gives its own (TasksEvidence.test.ts
 // tests them)
@@ -25,7 +25,7 @@ const ROUND = (name: string, args: any) => (name !== "task_add" ? args : { done_
 const call = (name: string, args: object, who = "main") => Tools.call(tools, who, name, ROUND(name, args), new AbortController().signal, "x");
 
 test("only the master has the tools", () => {
-  const names = (who: string) => Tools.list(tools, who).map((s) => s.name);
+  const names = (who: string) => Tools.list(who).map((s) => s.name);
   for (const name of ["task_add", "task_edit", "task_reply", "tasks"]) {
     expect(names("main")).toContain(name);
     expect(names("SmoothCow")).not.toContain(name);

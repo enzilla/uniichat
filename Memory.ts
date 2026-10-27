@@ -1,134 +1,56 @@
-// Memory
-// ======
-// The chat, kept forever, and the view of it every call sees. Sizes are
-// bytes of UTF-8. A message is logged in pages (Clip.ts CAP chars, PICS
-// images).
-//
-// Over the messages grows a binary tree: node (0,i) is message i
-// (or the line it was logged with) in at most NODE bytes, node (l,i)
-// merges (l-1,2i) and (l-1,2i+1). A source that fits is its node; else a
-// compaction writes it: a call like a turn, on the config's COMPACTOR,
-// with the compaction prompt (`share`, Server.ts), no tools, and its
-// own view (`seen`) up to the node's `ctx`; a line too long is asked
-// anew (build). The call asks till it is answered (AskAI patient: an
-// outage only delays a node, never harms it); answered with no line (a
-// refusal: its input's doing), its node is its source clipped. Every
-// node builds so, an imported one too; the import's are a side of their
-// own (`side`: the chat's turns don't wait on them). A side is held as
-// held as its user does (`hold`; a pause cuts its calls): its nodes
-// wait, with no call, till it goes on. Of each side, JOBS build at once,
-// in the order the messages came. A try cut after a line keeps the best
-// one.
-//
-// A view lists nodes covering the chat to its end, oldest first; each message
-// it reaches appends its node. Past `high` bytes, a batch merges the adjacent
-// siblings whose parent is built and most due (oldest since its last message,
-// to the view's end, in halves: detail fades with age) down to half, so a view
-// changes only at its end between batches. Two, each on its own: the chat's
-// (turns'), to the last message, and the compactions', to the first not built
-// of the sides that build. A call gets one in BLOCK-line blocks, the last whole
-// one marked for the cache (AskAI.ts); few lines, as those past it are read
-// anew (a compaction's view ends at its node, then its task, both unmarked).
-//
-// Files: main/ (messages) and tree/ (nodes), JSON lines in a file per
-// day, flushed (Disk.ts); main.index and tree.index give each line's
-// place by slot; view.json keeps the view, the chat's pick, goal,
-// schedules (Timer.ts) and MCP servers turned off, written over. main/
-// is also the act log: an act recorded (Server.ts Chat.act) is done once
-// its record is, a line naming it (`act`; its answer
-// `ans`; an older one's `pick` is in view.json too): the last page of
-// what it logs, or a line of its own. Each record indexed (as logged, or
-// as a load indexes what a crash left) goes to `acted`, the server's
-// store of acts done. Pages `more` after the last that isn't are not in
-// the chat.
-// Memory holds only the view's nodes and those built above them; any
-// other line is read by its index. Images are in docs/images/ by their
-// hash; an agent's log in docs/agent/<Name>.jsonl.
-
 import * as fs from "node:fs";
-import { AskAI, type Again, type Ask, type Block, type Call, type Event, type Img, type Kind, type Say } from "./AskAI.ts";
+import { AskAI, type Again, type Ask, type Block, type Call, type End as Answered, type Event, type Img, type Kind, type Say } from "./AskAI.ts";
 import { clip_page, clip_pages } from "./Clip.ts";
 import * as config from "./Config.ts";
 import { Disk } from "./Disk.ts";
+import { err_code, err_why } from "./Err.ts";
 import { Pick } from "./Pick.ts";
 import * as names from "./Names.ts";
 import type { Timer } from "./Timer.ts";
-import { FIT, HEAD, IMAGE, image_kind, MEDIA, media_ext, PIXELS, STORED, TOKEN } from "./View.ts";
+import { FIT, HEAD, IMAGE, image_kind, MEDIA, media_ext, PIXELS, STORED, TOKEN, type Pending } from "./View.ts";
 import { move_over } from "./Write.ts";
 
-// Types
-// =====
-
-// a message (a page): its index, kind, text, size, date, images, whether
-// imported, its node (if written with it), whether it is logged as one
-// with the next, the act it records; a tool call and its result, the
-// call's id (of) and the result its tool (Pair)
 type Root = Msg & { i: number; size: number; date: string };
 
-// a message to log: a Root but its index and size; no date: now
 export type Msg = { kind: Kind; text: string; date?: string; images?: string[]; imported?: boolean; line?: string; more?: boolean; act?: string } & Pair;
 
-// what pairs a tool call and its result (Server.ts Chat.on): the call's
-// id, on both; the call's tool, as logged (`shell`, `mcp__unii__show`), on
-// the result
 export type Pair = { of?: string; tool?: string };
 
-// node (l,i), as a line of a view
 type Part = { l: number; i: number };
 
-// a view: its lines, the bytes of those built, a batch under way, the
-// bytes past which it merges to half
 type View = { parts: Part[]; size: number; batch: boolean; high: number };
 
-// a summary running: its node, its side's kind
 type Sum = Part & { kind: Served };
 type Served = "compactor" | "import";
 
-// what a call takes but its blocks (Server.ts share); a compaction's,
-// `share`, but its pick too: the compactor's alone (Memory.ask)
 export type Share = Omit<Ask, "blocks">;
 
-// what an upload to the media store may write (Memory.media_add; Server.ts
-// Main.room): before each piece, why not (null: it may, its bytes held
-// for it), wrote once it is on the disk, end as it ends however it ends
 export type Room = { take: (n: number) => string | null; wrote: (n: number) => void; end: () => void };
 
-// a log: of messages (main) or of nodes (tree)
 type Stream = "main" | "tree";
 
-// how far a log is indexed: its last file's day (since 1970), size
 type End = [number, number];
 
-// a view in view.json
 type Kept = { parts: Array<[number, number]>; batch: boolean };
 
-// view.json: the chat's view, the compactions' (none: the chat's)
 type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; goal?: string | null; work?: string[]; timers?: Timer[]; off?: string[]; on?: string[]; talk?: number | null };
 
-// fds: files read lately, open, oldest first; count: the pages logged
-// whole; open: those after, not whole yet; pick: the chat's, as last set;
-// goal: the user's (/goal; null: none), till met or halted (Server.ts);
-// off: the MCP servers the user turned off in this chat (Mcp.ts); on:
-// those of a device's Claude Code the user turned on (off till then);
-// talk: conversation mode's first message (null: off), talked: the
-// bytes of its lines known for good, by message;
-// work: what ran, as last saved; timers: its schedules, by when due
-// (Server.ts Chat.ring); nodes: the texts of the views' nodes
-// built and of those above them, by slot; agents: their logs' lengths;
-// view: the chat's view; seen: the compactions'; ready: the nodes not
-// built whose halves are, by side and level, in order; ends: how far
-// each log is indexed; busy: nodes building, by slot, with their side;
-// sides: the side by the last message of nodes not built; calls: those
-// building's calls; hold: why each side is held (null: it builds);
-// wait: checks run as the views change (and as `again` does); share: a
-// compaction's call but its pick and blocks; made, acted: told of each
-// node built, of each act indexed; again: how the chat's summaries last
-// failed, waiting to ask again (null: none, or one answered since)
-export type Memory = {
+type Queues = { main: Pending[]; agents: Record<string, string[]> };
+
+type Rec = { i?: number; l?: number; act?: string; ans?: object };
+
+type Recs = { main: Root; tree: { text: string } };
+
+type Logs = {
   dir    : string;
   fds    : Map<string, number>;
   count  : number;
   open   : number;
+  ends   : Record<Stream, End>;
+  agents : Map<string, number>;
+};
+
+type Chosen = {
   pick   : object | null;
   goal   : string | null;
   off    : string[];
@@ -137,70 +59,68 @@ export type Memory = {
   talked : Map<number, number>;
   work   : string[];
   timers : Timer[];
+};
+
+type Unlogged = {
+  queue  : Pending[];
+  tells  : Record<string, string[]>;
+};
+
+type Tree = {
   nodes  : Map<number, string>;
-  agents : Map<string, number>;
   view   : View;
   seen   : View;
   ready  : number[][][];
-  ends   : Record<Stream, End>;
   busy   : Map<number, number>;
   sides  : Map<number, number>;
   calls  : Map<Call, Sum>;
   hold   : Array<string | null>;
   done   : boolean;
   wait   : Set<() => void>;
-  share  : () => Omit<Share, keyof Pick>;
-  made?  : (l: number, i: number) => void;
-  acted  : (id: string, ans: object) => void;
   again  : Again | null;
 };
 
-// Constants
-// =========
+type Hooks = {
+  share  : () => Omit<Share, keyof Pick>;
+  made?  : (l: number, i: number) => void;
+  acted  : (id: string, ans: object) => void;
+};
+
+export type Memory = Logs & Chosen & Unlogged & Tree & Hooks;
 
 const NODE  = 512;
 export const JOBS = 64;
 
-// a summary's failure is logged once in LOGGED ms, each distinct one
 const LOGGED = 60e3;
 
-// the failures logged lately: when, by what was logged
 const FAILED = new Map<string, number>();
 const TRIES = 5;
-// a view past its `high` merges to half: the chat's 64-128 KB (96 KB on
-// average), the compactions' half to all of config COMPACTOR_CONTEXT (by
-// default 2-4 KB), each call's cut to that much
-const HIGH  = 128000;
+const VIEW_HIGH = 128000;
+
+const TALK_SHARE_OF_WINDOW = 3 / 4;
 const BLOCK = 4;
 
 const SLOT  = 16;
 const DAY   = 864e5;
 
-// the files a chat keeps open to read: its two indexes and the day files
-// read lately (mostly its last days), so a chat however old holds a few
 const FDS   = 8;
 
 // Anthropic takes 32 MB a request, 20 images at full size: 20 of IMAGE
 // bytes (View.ts), in base64
 const PICS   = 20;
 
-// what an image's hash takes between turns of the event loop
 const PIECE = 2 ** 20;
 
-// a ruler, not a sample line: the compactor copied a sample's content
-const SCALE = "-".repeat(NODE);
+const NODE_RULER = "-".repeat(NODE);
 
 const WAIT = "(not summarized yet: zoom it)";
 
-// the view's line where conversation mode starts
 const TALKING = "Conversation mode is on from message {id}: from there on, the user's and Unii's messages are whole, word for word (zoom on one only to see an image it names); tool calls, their output, notes and reports stay summary lines.";
 
 const IMAGES = "/docs/images/";
 
 const MEDIA_DIR = "/docs/media/";
 
-// the most a page of the media store may be (Memory.media_add): the
-// server sends it whole, its look before it
 const PAGE_MAX = 4 * 2 ** 20;
 
 const AGENTS = "/docs/agent/";
@@ -208,31 +128,26 @@ const AGENTS = "/docs/agent/";
 // the most of an agent's log read for its note (Memory.agent_heads)
 const AGENT_HEAD = 4096;
 
-// a compaction's task, before its <input>: one message to compress
-// (level 0), or two lines to merge
 const LEAF = `Compaction: compress message {id} into one line of at most ${NODE} bytes
 (about 70 words), the length of this ruler:
-${SCALE}
+${NODE_RULER}
 <input>
 `;
 
 const MERGE = `Compaction: merge lines {a} and {b}, adjacent, into one line of at most
 ${NODE} bytes (about 70 words), the length of this ruler:
-${SCALE}
+${NODE_RULER}
 <chat> may hold their messages, {id} to {end}, in more detail: take details
 of them from there too.
 <input>
 `;
 
-// Memory
-// ======
-
 export namespace Memory {
 
   export function load(dir: string, share: Memory["share"], acted: Memory["acted"] = () => {}): Memory {
     const mem: Memory = {
-      dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, off: [], on: [], talk: null, talked: new Map(), work: [], timers: [], nodes: new Map(), agents: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
-      view: { parts: [], size: 0, batch: false, high: HIGH }, seen: { parts: [], size: 0, batch: false, high: config.COMPACTOR_CONTEXT },
+      dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, off: [], on: [], talk: null, talked: new Map(), work: [], timers: [], queue: [], tells: {}, nodes: new Map(), agents: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
+      view: { parts: [], size: 0, batch: false, high: VIEW_HIGH }, seen: { parts: [], size: 0, batch: false, high: config.COMPACTOR_CONTEXT },
       busy: new Map(), sides: new Map(), calls: new Map(), hold: [null, "paused"], done: false, wait: new Set(), share, acted, again: null,
     };
     const saved = Memory.saved(dir);
@@ -243,6 +158,9 @@ export namespace Memory {
     mem.talk = saved?.talk ?? null;
     mem.work = saved?.work ?? [];
     mem.timers = saved?.timers ?? [];
+    const queues = Memory.queues(dir);
+    mem.queue = queues.main;
+    mem.tells = queues.agents;
     mem.ends.main = Memory.index(mem, "main", saved?.main ?? [0, 0]);
     mem.ends.tree = Memory.index(mem, "tree", saved?.tree ?? [0, 0]);
     mem.count = fs.statSync(dir + "/main.index").size / SLOT;
@@ -257,16 +175,14 @@ export namespace Memory {
     return mem;
   }
 
-  // view.json; null: none, or unreadable
   export function saved(dir: string): Saved | null {
     try {
-      return JSON.parse(fs.readFileSync(dir + "/view.json", "utf8"));
+      return JSON.parse(fs.readFileSync(dir + "/view.json", "utf8")) as Saved;
     } catch {
       return null;
     }
   }
 
-  // a view as kept (none: the highest nodes built)
   export function open(mem: Memory, view: View, kept: Kept | null): void {
     const keys = kept === null ? null : new Set(kept.parts.map(([l, i]) => Memory.slot(l, i)));
     view.parts = Memory.roots(mem.count).flatMap((part) => Memory.down(mem, part, keys));
@@ -274,17 +190,30 @@ export namespace Memory {
     view.batch = kept?.batch ?? false;
   }
 
-  // written whole, then moved in place; flushed soon (Disk.ts)
   export function save(mem: Memory): void {
     const file = mem.dir + "/view.json";
     const [chat, seen] = [mem.view, mem.seen].map((view): Kept => ({ parts: view.parts.map((part) => [part.l, part.i]), batch: view.batch }));
     fs.writeFileSync(file + ".new", JSON.stringify({ ...chat, seen, pick: mem.pick, goal: mem.goal, off: mem.off, on: mem.on, talk: mem.talk, work: mem.work, timers: mem.timers, ...mem.ends }));
     move_over(file + ".new", file);
-    Disk.wrote(file);
+    void Disk.wrote(file);
   }
 
-  // indexes the log's lines past `from` (none, or no index: all, in an
-  // index made anew); answers how far
+  export function queues(dir: string): Queues {
+    try {
+      const got = JSON.parse(fs.readFileSync(dir + "/queue.json", "utf8")) as Partial<Queues>;
+      return { main: got.main ?? [], agents: got.agents ?? {} };
+    } catch {
+      return { main: [], agents: {} };
+    }
+  }
+
+  export function save_queue(mem: Memory): void {
+    const file = mem.dir + "/queue.json";
+    fs.writeFileSync(file + ".new", JSON.stringify({ main: mem.queue, agents: mem.tells }));
+    move_over(file + ".new", file);
+    void Disk.wrote(file);
+  }
+
   export function index(mem: Memory, stream: Stream, from: End): End {
     const file = mem.dir + "/" + stream + ".index";
     let end: End = fs.existsSync(file) ? from : [0, 0];
@@ -301,14 +230,12 @@ export namespace Memory {
     return end;
   }
 
-  // indexes, into fd, the lines of a day's file from byte `at`; answers
-  // the file's end. A line a crash cut short is skipped
   export function scan(mem: Memory, stream: Stream, day: number, at: number, fd: number): number {
     const file = Memory.path(mem, stream, day);
     const data = Memory.slice(file, at, fs.statSync(file).size - at);
     let k = 0;
     for (let nl = data.indexOf(10); nl >= 0; nl = data.indexOf(10, k)) {
-      const rec = Memory.parse(data.subarray(k, nl).toString("utf8"), file);
+      const rec = Memory.parse(data.subarray(k, nl).toString("utf8"), file) as Rec | null;
       if (rec !== null) {
         Memory.place(mem, fd, stream, rec, day, at + k, nl - k);
       }
@@ -326,9 +253,7 @@ export namespace Memory {
     return (2 * i + 1) * 2 ** l - 1;
   }
 
-  // a record's line, in its log's index (an act's of its own has none),
-  // and the act it records
-  export function place(mem: Memory, fd: number, stream: Stream, rec: any, day: number, at: number, length: number): void {
+  export function place(mem: Memory, fd: number, stream: Stream, rec: Rec, day: number, at: number, length: number): void {
     const buf = Buffer.alloc(SLOT);
     if (rec.act !== undefined) {
       mem.acted(rec.act, rec.ans ?? {});
@@ -339,22 +264,19 @@ export namespace Memory {
     buf.writeDoubleLE(at, 0);
     buf.writeUInt32LE(day, 8);
     buf.writeUInt32LE(length, 12);
-    fs.writeSync(fd, buf, 0, SLOT, (stream === "main" ? rec.i : Memory.slot(rec.l, rec.i)) * SLOT);
+    fs.writeSync(fd, buf, 0, SLOT, (stream === "main" ? rec.i : Memory.slot(rec.l ?? 0, rec.i)) * SLOT);
   }
 
-  // the record at a slot of a log; null: none
-  export function read(mem: Memory, stream: Stream, slot: number): any {
+  export function read<S extends Stream>(mem: Memory, stream: S, slot: number): Recs[S] | null {
     const rec = Memory.pread(Memory.fd(mem, mem.dir + "/" + stream + ".index"), slot * SLOT, SLOT);
     const day = rec.length < SLOT ? 0 : rec.readUInt32LE(8);
     if (day === 0) {
       return null;
     }
     const line = Memory.pread(Memory.fd(mem, Memory.path(mem, stream, day)), rec.readDoubleLE(0), rec.readUInt32LE(12));
-    return JSON.parse(line.toString("utf8"));
+    return JSON.parse(line.toString("utf8")) as Recs[S];
   }
 
-  // a file of the chat to read, kept open (the FDS read last) while the
-  // chat is in memory
   export function fd(mem: Memory, file: string): number {
     const fd = mem.fds.get(file) ?? fs.openSync(file, "r");
     mem.fds.delete(file);
@@ -369,13 +291,11 @@ export namespace Memory {
     return fd;
   }
 
-  // up to n bytes of an open file, from byte `at`
   export function pread(fd: number, at: number, n: number): Buffer {
     const buf = Buffer.alloc(n);
     return buf.subarray(0, fs.readSync(fd, buf, 0, n, at));
   }
 
-  // up to n bytes of a file, from byte `at`
   export function slice(file: string, at: number, n: number): Buffer {
     const fd = fs.openSync(file, "r");
     try {
@@ -389,23 +309,21 @@ export namespace Memory {
     return mem.dir + "/" + stream + "/" + new Date(day * DAY).toISOString().slice(0, 10) + ".jsonl";
   }
 
-  export function file(file: string): any[] {
+  export function file(file: string): Root[] {
     const data = fs.readFileSync(file, "utf8");
     if (data !== "" && !data.endsWith("\n")) {
       fs.appendFileSync(file, "\n");
     }
-    return data.split("\n").flatMap((line) => Memory.parse(line, file) ?? []);
+    return data.split("\n").flatMap((line) => (Memory.parse(line, file) as Root | null) ?? []);
   }
 
-  // a file's text, trimmed; none: ""
   export function file_text(file: string): string {
     return fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : "";
   }
 
-  // null: not JSON
-  export function parse(line: string, file: string): any {
+  export function parse(line: string, file: string): unknown {
     try {
-      return JSON.parse(line);
+      return JSON.parse(line) as unknown;
     } catch {
       if (line !== "") {
         console.error("skipped a line of " + file + ": not JSON");
@@ -414,8 +332,7 @@ export namespace Memory {
     }
   }
 
-  // appended to the file of the local date and synced, then indexed
-  export function log(mem: Memory, stream: Stream, recs: object[]): void {
+  export function log(mem: Memory, stream: Stream, recs: Rec[]): void {
     const day = Date.parse(new Date().toLocaleDateString("sv-SE")) / DAY;
     const lines = recs.map((rec) => JSON.stringify(rec));
     let at = Memory.append(Memory.path(mem, stream, day), lines);
@@ -431,7 +348,6 @@ export namespace Memory {
     mem.ends[stream] = [day, at];
   }
 
-  // where they start; flushed soon (Disk.ts)
   export function append(file: string, lines: string[]): number {
     const fd = fs.openSync(file, "a");
     try {
@@ -440,7 +356,7 @@ export namespace Memory {
       return at;
     } finally {
       fs.closeSync(fd);
-      Disk.wrote(file);
+      void Disk.wrote(file);
     }
   }
 
@@ -456,21 +372,24 @@ export namespace Memory {
     return root;
   }
 
-  // a message as models read it, tagged by its author: an imported chat's
-  // AI (its say and calls) is "ai", not Unii
   export function show(root: Root): string {
     const pics = (root.images ?? []).map((name) => "\n[image docs/images/" + name + "]");
     const who  = root.imported && (root.kind === "unii" || root.kind === "tool") ? "ai" : root.kind;
     return who + ": " + root.text + pics.join("");
   }
 
-  // message i, from its file; null: none
   export function message(mem: Memory, i: number): Root | null {
     return Number.isInteger(i) && i >= 0 && i < mem.count ? Memory.read(mem, "main", i) : null;
   }
 
-  // the pages logged; those `more` stay open, past the count, till one
-  // that isn't
+  export function at(mem: Memory, i: number): Root {
+    const root = Memory.message(mem, i);
+    if (root === null) {
+      throw new Error("the chat has no message #" + i);
+    }
+    return root;
+  }
+
   export function push(mem: Memory, msgs: Msg[]): Root[] {
     const roots = msgs.flatMap(Memory.pages).map((msg, k) => Memory.root(mem.count + mem.open + k, msg));
     const done = roots.findLastIndex((root) => !root.more) + 1;
@@ -484,8 +403,6 @@ export namespace Memory {
     return roots;
   }
 
-  // its text and images on the last pages (a call takes them whole), its
-  // line on the first, its act's record on the last
   export function pages(msg: Msg): Msg[] {
     const texts = clip_pages(msg.text);
     const pics = msg.images ?? [];
@@ -499,35 +416,25 @@ export namespace Memory {
     });
   }
 
-  // the first message, from `from` on, from which those to the end go
-  // whole in a call: HIGH bytes, PICS images (the last always)
   export function whole(mem: Memory, from: number): number {
     let [k, size, pics] = [mem.count, 0, 0];
     for (; k > from; k--) {
-      const root = Memory.message(mem, k - 1)!;
+      const root = Memory.at(mem, k - 1);
       size += root.size;
       pics += root.images?.length ?? 0;
-      if (k < mem.count && (size > HIGH || pics > PICS)) {
+      if (k < mem.count && (size > VIEW_HIGH || pics > PICS)) {
         return k;
       }
     }
     return k;
   }
 
-  // the pages [a, b) of a message as a model gets them: one text, their
-  // images
   export function say(mem: Memory, a: number, b: number): Say {
     const ids = Array.from({ length: b - a }, (_, k) => a + k);
-    const text = ids.map((id) => Memory.message(mem, id)!.text).join("");
+    const text = ids.map((id) => Memory.at(mem, id).text).join("");
     return { text, imgs: ids.flatMap((id) => Memory.images(mem, id)) };
   }
 
-  // Images
-  // ------
-
-  // an image's bytes put in place, by their hash, its copy for models
-  // beside it; hashed and scaled off the event loop; null: no image kind
-  // or unreadable
   export async function image_add(mem: Memory, bytes: Buffer): Promise<string | null> {
     const kind = image_kind(bytes);
     if (kind === null) {
@@ -550,20 +457,13 @@ export namespace Memory {
     if (fit) {
       const out = img.resize(Math.round(size.width * k), Math.round(size.height * k)).jpeg({ quality: 85 });
       await Bun.write(mem.dir + IMAGES + name + ".jpg", await out.bytes());
-      Disk.wrote(mem.dir + IMAGES + name + ".jpg");
+      void Disk.wrote(mem.dir + IMAGES + name + ".jpg");
     }
     await Bun.write(mem.dir + IMAGES + name, bytes);
-    Disk.wrote(mem.dir + IMAGES + name);
+    void Disk.wrote(mem.dir + IMAGES + name);
     return name;
   }
 
-  // a file for the media store, any kind (View.MEDIA the chat shows),
-  // streamed to disk as it comes, each piece written once its room is
-  // taken (room: why not), hashed meanwhile, then named by its hash and
-  // its kind: by `file`'s extension (View.media_ext; an image's by its
-  // first bytes, so it is named as image_add names it), else its first
-  // bytes as an image, else bin; its name, or why not. A page (html) is
-  // PAGE_MAX at most: it is sent whole
   export async function media_add(mem: Memory, body: ReadableStream<Uint8Array>, file: string, room: Room): Promise<{ name: string } | { error: string }> {
     const named = media_ext(file);
     fs.mkdirSync(mem.dir + MEDIA_DIR, { recursive: true });
@@ -607,7 +507,6 @@ export namespace Memory {
     }
   }
 
-  // a stored file by its name (an older image's too)
   export function media_file(mem: Memory, name: string): string | null {
     const file = mem.dir + MEDIA_DIR + name;
     return STORED.test(name) && fs.existsSync(file) ? file : Memory.image_file(mem, name);
@@ -618,8 +517,6 @@ export namespace Memory {
     return /^[0-9a-f]{16}\.(png|jpeg|gif|webp)$/.test(name) && fs.existsSync(file) ? file : null;
   }
 
-  // what models get of message id's images: their copies, if any; only
-  // files image_add names (a restored chat's message may name any)
   export function images(mem: Memory, id: number): Img[] {
     const names = (Memory.message(mem, id)?.images ?? []).filter((name) => Memory.image_file(mem, name) !== null);
     return names.map((name) => {
@@ -629,21 +526,15 @@ export namespace Memory {
     });
   }
 
-  // Tree
-  // ----
-
-  // of a node the view or a node above it may need
   export function built(mem: Memory, l: number, i: number): boolean {
     return mem.nodes.has(Memory.slot(l, i));
   }
 
-  // node (l,i)'s text, kept or from its file; null: not built
   export function node(mem: Memory, part: Part): string | null {
     const slot = Memory.slot(part.l, part.i);
     return mem.nodes.get(slot) ?? Memory.read(mem, "tree", slot)?.text ?? null;
   }
 
-  // the tree's roots: a node per power of two in the count, largest first
   export function roots(count: number): Part[] {
     const out: Part[] = [];
     for (let l = 30, id = 0; l >= 0; l--) {
@@ -655,8 +546,6 @@ export namespace Memory {
     return out;
   }
 
-  // the view under `part`, down from it, keeping the built nodes met:
-  // the nodes of `keys` built (none: any built), or messages
   export function down(mem: Memory, part: Part, keys: Set<number> | null): Part[] {
     const key = Memory.slot(part.l, part.i);
     const text = Memory.node(mem, part);
@@ -686,21 +575,16 @@ export namespace Memory {
     return l === 0 ? i : (i + 1) * 2 ** l;
   }
 
-  // the message of the view's (k+1)th line not built of a side (0: the
-  // chat's, 1: an import's), else the count
   export function first(mem: Memory, k = 0, side = 0): number {
     return (mem.ready[side][0] ?? [])[k] ?? mem.count;
   }
 
-  // how many of the chat's messages before `end` have no summary of
-  // their own yet (level 0, side 0: those a turn waits on)
   export function unbuilt(mem: Memory, end: number): number {
     const queue = mem.ready[0][0] ?? [];
     const k = queue.findIndex((i) => i >= end);
     return k < 0 ? queue.length : k;
   }
 
-  // a node ready (on), or no more (built)
   export function ready(mem: Memory, { l, i }: Part, on: boolean): void {
     const queue = (mem.ready[Memory.side(mem, l, i)][l] ??= []);
     let [a, z] = [0, queue.length];
@@ -713,7 +597,6 @@ export namespace Memory {
     }
   }
 
-  // node (l,i)'s side: 1 if its last message is imported, else 0
   export function side(mem: Memory, l: number, i: number): number {
     const last = (i + 1) * 2 ** l - 1;
     const side = mem.sides.get(last) ?? (Memory.message(mem, last)?.imported === true ? 1 : 0);
@@ -721,24 +604,22 @@ export namespace Memory {
     return side;
   }
 
-  // the nodes to build; those whose source fits take no call: built at
-  // once, together (as jobs, a chain of them held the event loop)
   export function pump(mem: Memory): void {
-    let built = false;
-    for (let free = Memory.starts(mem); free.length > 0 && !mem.done; free = Memory.starts(mem)) {
-      Memory.store(mem, free);
-      built = true;
-    }
-    if (built) {
+    if (Memory.store_fitting_at_once(mem)) {
       Memory.fit(mem);
     }
   }
 
-  // of each side not held, the nodes ready up to its JOBS-th line not
-  // built, in the order the messages came (`ctx`; at a tie, a merge
-  // first), while JOBS run. The jobs started; the nodes
-  // whose source fits
-  export function starts(mem: Memory): Array<Part & { text: string }> {
+  export function store_fitting_at_once(mem: Memory): boolean {
+    let stored = false;
+    for (let fitting = Memory.start_jobs(mem); fitting.length > 0 && !mem.done; fitting = Memory.start_jobs(mem)) {
+      Memory.store(mem, fitting);
+      stored = true;
+    }
+    return stored;
+  }
+
+  export function start_jobs(mem: Memory): Array<Part & { text: string }> {
     const free: Array<Part & { text: string }> = [];
     for (const side of [0, 1].filter((side) => mem.hold[side] === null)) {
       const end = Memory.first(mem, JOBS - 1, side);
@@ -764,15 +645,11 @@ export namespace Memory {
     return free;
   }
 
-  // an import held by its user, at once: its calls out cut; their nodes
-  // build as it goes on
   export function pause(mem: Memory): void {
     mem.hold[1] = "paused";
     mem.calls.forEach((sum, call) => sum.kind === "import" && call.stop());
   }
 
-  // the nodes under `part` not built whose sources are: only nodes not
-  // built and their halves are visited
   export function todo(mem: Memory, part: Part): Part[] {
     if (Memory.built(mem, part.l, part.i)) {
       return [];
@@ -782,13 +659,10 @@ export namespace Memory {
     return [...here, ...halves.flatMap((half) => Memory.todo(mem, half))];
   }
 
-  // how many nodes of a side build
   export function running(mem: Memory, side: number): number {
     return [...mem.busy.values()].filter((n) => n === side).length;
   }
 
-  // a node cut (its side held, or the chat ended: Memory.stop) builds as
-  // it goes on
   export function job(mem: Memory, l: number, i: number, text: string): void {
     const key = Memory.slot(l, i);
     mem.busy.set(key, Memory.side(mem, l, i));
@@ -796,12 +670,11 @@ export namespace Memory {
       mem.busy.delete(key);
       Memory.pump(mem);
       Memory.fit(mem);
-    }).catch((err) => {
-      console.error("compactor: node " + l + "/" + i + ": " + (err?.message ?? err));
+    }).catch((err: unknown) => {
+      console.error("compactor: node " + l + "/" + i + ": " + err_why(err));
     });
   }
 
-  // no node starts again, nor runs: those running are cut
   export function stop(mem: Memory): void {
     mem.done = true;
     mem.calls.forEach((_, call) => call.stop());
@@ -809,19 +682,24 @@ export namespace Memory {
     mem.fds.clear();
   }
 
-  // node (l,i)'s summary: its view to the node and its task, asked till
-  // a line fits, TRIES lines at most (fewer if the chat ends), the
-  // shortest kept. Each try sends those blocks, never a try's words or
-  // thoughts; one after a line too long adds only its size and where the
-  // limit cuts it (`over`): never more than the first and that note. No
-  // line (a refusal: its input's doing): its source clipped; a try cut
-  // (a pause, a stop) throws, unless a line came
   export async function build(mem: Memory, l: number, i: number, text: string): Promise<void> {
     const task = { text: Memory.task(l, i) + text + "\n</input>", mark: false };
     const upto = Math.min(Memory.ctx(l, i), Memory.first(mem, 0, Memory.side(mem, l, i)));
     const blocks = [...Memory.view(mem, upto, Memory.last(mem, Memory.before(mem.seen.parts, upto), config.COMPACTOR_CONTEXT)), task];
+    const { lines, end } = await Memory.ask_till_fits(mem, l, i, blocks);
+    if (lines.length === 0 && Memory.cut_short(end)) {
+      throw new Error(end.text);
+    }
+    if (lines.length === 0) {
+      console.error("compactor: node " + l + "/" + i + ": " + (end.ok ? "an empty line" : end.text) + "; clipped");
+    }
+    const line = lines.length === 0 ? Memory.cut(Memory.flat(text)) : Memory.shortest(lines);
+    Memory.store(mem, [{ l, i, text: line }]);
+  }
+
+  export async function ask_till_fits(mem: Memory, l: number, i: number, blocks: Block[]): Promise<{ lines: string[]; end: Answered }> {
     const lines: string[] = [];
-    let end = await Memory.compact(mem, l, i, Memory.ask(mem, l, i, text, blocks));
+    let end = await Memory.compact(mem, l, i, Memory.ask(mem, l, i, blocks));
     while (end.ok && end.text.trim() !== "") {
       const line = end.text.trim();
       lines.push(line);
@@ -829,24 +707,23 @@ export namespace Memory {
         break;
       }
       const note = { text: Memory.over(line), mark: false };
-      end = await Memory.compact(mem, l, i, Memory.ask(mem, l, i, text, [...blocks, note]));
+      end = await Memory.compact(mem, l, i, Memory.ask(mem, l, i, [...blocks, note]));
     }
-    if (lines.length === 0 && !end.ok && end.stop !== "fail") {
-      throw new Error(end.text);
-    }
-    if (lines.length === 0) {
-      console.error("compactor: node " + l + "/" + i + ": " + (end.ok ? "an empty line" : end.text) + "; clipped");
-    }
-    const line = lines.length === 0 ? Memory.cut(Memory.flat(text)) : lines.reduce((a, b) => (Memory.bytes(b) < Memory.bytes(a) ? b : a));
-    Memory.store(mem, [{ l, i, text: line }]);
+    return { lines, end };
   }
 
-  // what node (l,i)'s summary serves: an import, or the chat
+  export function cut_short(end: Answered): boolean {
+    return !end.ok && end.stop !== "fail";
+  }
+
+  export function shortest(lines: string[]): string {
+    return lines.reduce((a, b) => (Memory.bytes(b) < Memory.bytes(a) ? b : a));
+  }
+
   export function served(mem: Memory, l: number, i: number): Served {
     return Memory.side(mem, l, i) === 1 ? "import" : "compactor";
   }
 
-  // nodes built: logged in one write, kept
   export function store(mem: Memory, parts: Array<Part & { text: string }>): void {
     Memory.log(mem, "tree", parts.map(({ l, i, text }) => ({ l, i, text, size: Memory.bytes(text) })));
     for (const { l, i, text } of parts) {
@@ -864,21 +741,13 @@ export namespace Memory {
     parts.forEach(({ l, i }) => mem.made?.(l, i));
   }
 
-  // a call of node (l,i)'s summary, on the compactor as set when it
-  // asks, and each time it starts over (`repick`), so a fix in Settings
-  // counts at once; how it fails is heard (Memory.heard)
-  export function ask(mem: Memory, l: number, i: number, text: string, blocks: Block[]): Call {
+  export function ask(mem: Memory, l: number, i: number, blocks: Block[]): Call {
     const own = Memory.served(mem, l, i) === "compactor";
     const repick = () => Pick.ask(config.COMPACTOR);
     const told: { again: Again | null } = { again: null };
-    return AskAI.ask({ ...mem.share(), ...repick(), blocks, patient: true, repick, yields: own ? undefined : mem.dir }, (ev) => Memory.heard(mem, own, ev, told));
+    return AskAI.ask({ ...mem.share(), ...repick(), blocks, patient: true, repick, yields: own ? undefined : mem.dir, who: own ? "compactor" : "import" }, (ev) => Memory.heard(mem, own, ev, told));
   }
 
-  // a summary's call's event: a failure waiting to ask again (Again)
-  // logged, each distinct one once in LOGGED; the chat's (`own`, not an
-  // import's) kept as `again`, till this call asks again (unless another
-  // failed since: `told`, this call's last) or one answers, the views'
-  // checks run as it changes
   export function heard(mem: Memory, own: boolean, ev: Event, told: { again: Again | null }): void {
     const failed = ev.$ === "Again" ? ev.again : null;
     if (failed !== null) {
@@ -902,13 +771,11 @@ export namespace Memory {
     }
   }
 
-  // a summary's try: its call's end, the call held in `calls` till then
   export function compact(mem: Memory, l: number, i: number, call: Call): Call["done"] {
     mem.calls.set(call, { l, i, kind: Memory.served(mem, l, i) });
     return call.done.finally(() => mem.calls.delete(call));
   }
 
-  // node (l,i)'s task, but its input
   export function task(l: number, i: number): string {
     const [a, z] = Memory.span({ l, i });
     const n = 2 ** l / 2;
@@ -916,7 +783,6 @@ export namespace Memory {
     return fill.reduce((t, [k, v]) => t.replace(k, v), l === 0 ? LEAF : MERGE);
   }
 
-  // a text's first NODE bytes
   export function cut(text: string): string {
     return Buffer.from(text, "utf8").subarray(0, NODE).toString("utf8").replace(/\uFFFD+$/, "");
   }
@@ -928,25 +794,14 @@ enough of the least valuable items to fit before this cut:
 ${Memory.cut(line)}| ← LIMIT`;
   }
 
-  // View
-  // ----
-
-  // of the view or a node above it: kept, or not built
   export function text(mem: Memory, part: Part): string {
     return mem.nodes.get(Memory.slot(part.l, part.i)) ?? WAIT;
   }
 
-  // a line's bytes as calls get it: none until built
   export function size(mem: Memory, part: Part): number {
     return Memory.built(mem, part.l, part.i) ? Memory.bytes(Memory.text(mem, part)) : 0;
   }
 
-  // each view to its end; a batch starts as a view passes `high`, or goes
-  // on at a message (`next`) if a missing parent stopped it; between
-  // messages, only a whole batch, to half or, as parents not built keep
-  // it over (an import's lag JOBS calls a level), by `high`: each change
-  // makes every call after write the view anew. A node merged away no
-  // view holds, nor one under it, is let go
   export function fit(mem: Memory, next = false): void {
     const gone: Part[] = [];
     let changed = false;
@@ -973,8 +828,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     mem.wait.forEach((check) => check());
   }
 
-  // a view to message `end`: its lines from it dropped (an import going on
-  // again), the messages to it appended
   export function reach(mem: Memory, view: View, end: number): void {
     for (const part of view.parts.splice(Memory.cover(view, end))) {
       view.size -= Memory.size(mem, part);
@@ -985,12 +838,10 @@ ${Memory.cut(line)}| ← LIMIT`;
     }
   }
 
-  // the message after a view's last line
   export function end({ parts }: View): number {
     return parts.length === 0 ? 0 : Memory.span(parts[parts.length - 1])[1] + 1;
   }
 
-  // the index of a view's line holding message id (past its end: none)
   export function cover({ parts }: View, id: number): number {
     let [a, z] = [0, parts.length];
     while (a < z) {
@@ -1000,7 +851,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     return a;
   }
 
-  // whether a view holds `part` or a node under it, or will (not there)
   export function held(mem: Memory, part: Part): boolean {
     return [mem.view, mem.seen].some((view) => {
       const k = Memory.cover(view, Memory.span(part)[0]);
@@ -1008,12 +858,11 @@ ${Memory.cut(line)}| ← LIMIT`;
     });
   }
 
-  // a view's most due pairs merged down to half, as their parents allow:
-  // a pair whose parent is built, most due first ((T + 1) / 2^l - i, T
-  // the view's end: its age from its last message, in halves; from its
-  // first, old pairs won near ties, so a merge rewrote old lines a view
-  // should keep), the oldest of equals; a heap of pairs over the view as
-  // a linked list, so a view of thousands merges in milliseconds
+  export function due(end: number, pair: Part): number {
+    const age_in_its_halves = (end + 1) / 2 ** pair.l;
+    return age_in_its_halves - pair.i;
+  }
+
   export function merge(mem: Memory, from: View): { parts: Part[]; size: number; gone: Part[] } {
     const [t, low] = [Memory.end(from), from.high / 2];
     const view: Array<Part | null> = [...from.parts];
@@ -1028,15 +877,15 @@ ${Memory.cut(line)}| ← LIMIT`;
       if (k < 0 || !a || !b || a.i % 2 !== 0 || b.l !== a.l || b.i !== a.i + 1 || !Memory.built(mem, a.l + 1, a.i / 2)) {
         return;
       }
-      heap.push({ d: (t + 1) / 2 ** a.l - a.i, k, a, b });
+      heap.push({ d: Memory.due(t, a), k, a, b });
       for (let x = heap.length - 1; x > 0 && over(heap[x], heap[(x - 1) >> 1]); x = (x - 1) >> 1) {
         swap(x, (x - 1) >> 1);
       }
     };
     const take = () => {
       const top = heap[0];
-      const last = heap.pop()!;
-      if (heap.length > 0) {
+      const last = heap.pop();
+      if (last !== undefined && heap.length > 0) {
         heap[0] = last;
         for (let x = 0; ; ) {
           const m = [x, 2 * x + 1, 2 * x + 2].reduce((m, c) => (c < heap.length && over(heap[c], heap[m]) ? c : m));
@@ -1069,10 +918,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     return { parts: view.filter((part) => part !== null), size, gone };
   }
 
-  // once the chat's messages before `end` are built (not an import's):
-  // null; else why they won't be: "Stopped." (signal aborted), or why
-  // their side is held, so no
-  // turn or agent waits on summaries no call is building
   export function settle(mem: Memory, end: number, signal: AbortSignal): Promise<string | null> {
     return new Promise((resolve) => {
       const check = () => {
@@ -1095,7 +940,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     return [a, a + 2 ** part.l - 1];
   }
 
-  // the regex tries every position; most lines have no newline at all
   export function flat(text: string): string {
     if (!text.includes("\n")) {
       return text;
@@ -1103,7 +947,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     return text.replace(/\s*\n\s*/g, " ");
   }
 
-  // its zoom target, "id+n"
   export function ref(part: Part): string {
     return part.i * 2 ** part.l + "+" + 2 ** part.l;
   }
@@ -1116,7 +959,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     return view.filter((part) => Memory.span(part)[1] < end);
   }
 
-  // the last of `parts` whose lines, built, take `most` bytes at most
   export function last(mem: Memory, parts: Part[], most: number): Part[] {
     let [k, size] = [parts.length, 0];
     for (; k > 0; k--) {
@@ -1130,32 +972,16 @@ ${Memory.cut(line)}| ← LIMIT`;
     return parts.slice(k);
   }
 
-  // the view's lines built before message `end`, in blocks (the last cut
-  // short), one marked: the last whole one, else the opening one. One
-  // mark only: a request takes four, and Anthropic.ts adds three (the
-  // system prompt's, a reply's end's, the top-level). Whole block `back`
-  // (-1: none), the one the call before marked, is marked `back` too:
-  // a second mark further back, for claude-api in conversation mode
-  // (Anthropic.ts), so a turn that added many lines still reads the cache
   export function view(mem: Memory, end = mem.count, parts = mem.view.parts, talk: number | null = null, back = -1): Block[] {
     const lines = talk === null ? Memory.before(parts, end).filter((part) => Memory.built(mem, part.l, part.i)).map((part) => Memory.line(part, Memory.text(mem, part)) + "\n") : Memory.talking(mem, end, parts, talk);
     const whole = Math.floor(lines.length / BLOCK);
     const blocks: Block[] = [{ text: "<chat>\n", mark: whole === 0 }];
     for (let k = 0; k < whole; k++) {
-      blocks.push({ text: lines.slice(k * BLOCK, (k + 1) * BLOCK).join(""), mark: k === whole - 1, ...(k === back && k < whole - 1 ? { back: true } : {}) });
+      blocks.push({ text: lines.slice(k * BLOCK, (k + 1) * BLOCK).join(""), ...Memory.cache_marks(k, whole, back) });
     }
     blocks.push({ text: lines.slice(whole * BLOCK).join("") + "</chat>\n", mark: false });
     return blocks;
   }
-
-  // Conversation mode
-  // -----------------
-  // From message `talk` on, the chat's view (to `end`) has the user's and
-  // Unii's messages whole, each in place of its line, and a leaf's line
-  // for each other message; before it, its lines cover the messages
-  // before `talk` (one holding both split down to those that don't);
-  // a line between says so. The memory is as ever: switched off, the
-  // view is its lines again
 
   export function talking(mem: Memory, end: number, parts: Part[], talk: number): string[] {
     const before = parts.flatMap((part) => Memory.upto(mem, part, Math.min(talk, end)));
@@ -1167,8 +993,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     return [...lines, TALKING.replace("{id}", String(talk)) + "\n", ...said];
   }
 
-  // the nodes under `part` that tile its messages before `end`: itself
-  // if it does and is built (a message: its line, if built)
   export function upto(mem: Memory, part: Part, end: number): Part[] {
     const [a, z] = Memory.span(part);
     if (a >= end) {
@@ -1180,37 +1004,32 @@ ${Memory.cut(line)}| ← LIMIT`;
     return Memory.halves(part).flatMap((half) => Memory.upto(mem, half, end));
   }
 
-  // a message the conversation keeps whole: the user's or Unii's, not
-  // imported
   export function said(root: Root): boolean {
     return (root.kind === "user" || root.kind === "unii") && !root.imported;
   }
 
-  // message i's line in conversation mode: whole (a `</chat>` in it
-  // escaped, so it can't end the view's block), or its leaf's
   export function talk_line(mem: Memory, i: number): string {
-    const root = Memory.message(mem, i)!;
+    const root = Memory.at(mem, i);
     const part = { l: 0, i };
     return Memory.said(root) ? Memory.ref(part) + "|" + Memory.show(root).replace(/<\/chat>/gi, "<\\/chat>") : Memory.line(part, Memory.node(mem, part) ?? WAIT);
   }
 
-  // conversation mode's space (bytes) on a model of `window` tokens,
-  // TOKEN bytes each: three quarters of it (the rest the turn's own:
-  // the prompt, the tools, its output and tool results), less the most
-  // the view's lines before it take (HIGH). Past it, it switches itself
-  // off (Server.ts). The model's limit: no cap of our own
-  export function talk_room(window: number): number {
-    return (window * TOKEN * 3) / 4 - HIGH;
+  export function cache_marks(k: number, whole: number, back: number): { mark: boolean; back?: true } {
+    const last = k === whole - 1;
+    return { mark: last, ...(k === back && !last ? { back: true } : {}) };
   }
 
-  // the bytes conversation mode's lines take, to message `end` (none:
-  // off); a line not built yet counted as one at NODE
+  export function talk_room(window: number): number {
+    const window_bytes = window * TOKEN;
+    return window_bytes * TALK_SHARE_OF_WINDOW - VIEW_HIGH;
+  }
+
   export function talk_size(mem: Memory, end = mem.count): number {
     let size = 0;
     for (let i = mem.talk ?? end; i < end; i++) {
       let n = mem.talked.get(i);
       if (n === undefined) {
-        const done = Memory.said(Memory.message(mem, i)!) || Memory.node(mem, { l: 0, i }) !== null;
+        const done = Memory.said(Memory.at(mem, i)) || Memory.node(mem, { l: 0, i }) !== null;
         n = done ? Memory.bytes(Memory.talk_line(mem, i)) + 1 : NODE + 16;
         if (done) {
           mem.talked.set(i, n);
@@ -1221,13 +1040,10 @@ ${Memory.cut(line)}| ← LIMIT`;
     return size;
   }
 
-  // where conversation mode starts if switched on now: at the last
-  // message it keeps whole (one notices a talk a message late), its
-  // first page; else the next
   export function talk_from(mem: Memory): number {
     for (let i = mem.count - 1; i >= 0; i--) {
-      if (Memory.said(Memory.message(mem, i)!)) {
-        while (i > 0 && Memory.message(mem, i - 1)!.more) {
+      if (Memory.said(Memory.at(mem, i))) {
+        while (i > 0 && Memory.at(mem, i - 1).more) {
           i--;
         }
         return i;
@@ -1242,8 +1058,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     return ok ? { l, i: id / n } : null;
   }
 
-  // a message (n = 1) whole, a long one a page from `at` (Clip.ts), its
-  // images on the first; else the two lines under id+n
   export function zoom(mem: Memory, id: number, n: number, at: number): string {
     const part = Memory.part(mem, id, n);
     const root = n === 1 ? Memory.message(mem, id) : null;
@@ -1263,21 +1077,16 @@ ${Memory.cut(line)}| ← LIMIT`;
     return root === null ? "No message " + id + "." : new Date(root.date).toLocaleString("sv-SE");
   }
 
-  // where a page of the chat starts: the last message starting a turn
-  // (the user's or a report) the view holds whole; none: the first, or
-  // the end
   export function turn(mem: Memory): number {
     const whole = mem.view.parts.slice(mem.view.parts.findLastIndex((part) => part.l > 0) + 1);
     const user = whole.findLast((part) => ["user", "work"].includes(Memory.message(mem, part.i)?.kind ?? ""));
     return (user ?? whole[0])?.i ?? mem.count;
   }
 
-  // the tree's levels: as many as the count's bits
   export function levels(mem: Memory): number[] {
     return Array.from({ length: mem.count.toString(2).length }, (_, l) => l);
   }
 
-  // level l's nodes built, in order
   export function* level(mem: Memory, l: number): Generator<[Part, string]> {
     for (let i = 0; (i + 1) * 2 ** l <= mem.count; i++) {
       const text = Memory.node(mem, { l, i });
@@ -1287,14 +1096,12 @@ ${Memory.cut(line)}| ← LIMIT`;
     }
   }
 
-  // /export: the messages, the summaries, the
-  // agents' logs, then every image, each its base64, read a PIECE at a time
   export function* dump(mem: Memory): Generator<string> {
     const ls = (sub: string) => (fs.existsSync(mem.dir + sub) ? fs.readdirSync(mem.dir + sub).sort() : []);
     let sep = "\n";
     yield '{"messages": [';
     for (let i = 0; i < mem.count; i++) {
-      const { kind, text, date, images, more, of, tool } = Memory.message(mem, i)!;
+      const { kind, text, date, images, more, of, tool } = Memory.at(mem, i);
       yield (i === 0 ? "\n" : ",\n") + JSON.stringify({ id: i, kind, text, date, images, more, of, tool });
     }
     yield '],\n"summaries": [';
@@ -1332,9 +1139,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     yield "}}\n";
   }
 
-  // /api/tree, no `get`: what the tree's page (web/src/Tree.ts) is drawn
-  // from: the messages' count, each level's nodes built (those whose slot
-  // in the tree's index has a day: "1"), the view's parts and its cards
   export function meta(mem: Memory): { count: number; has: string[]; parts: [number, number][]; view: { h: string; t: string }[] } {
     const index = Memory.pread(Memory.fd(mem, mem.dir + "/tree.index"), 0, 2 * mem.count * SLOT);
     const built = (at: number) => at + SLOT <= index.length && index.readUInt32LE(at + 8) !== 0;
@@ -1343,8 +1147,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     return { count: mem.count, has, parts: mem.view.parts.map((part) => [part.l, part.i]), view };
   }
 
-  // /api/tree?get=l.i,...: the tree's cards (l -1: message i), each its head,
-  // text and kind; null: not built
   export function card(mem: Memory, l: number, i: number): { h: string; t: string; k?: string } | null {
     const root = l === -1 ? Memory.message(mem, i) : null;
     const part = Number.isInteger(l) && l >= 0 ? Memory.part(mem, i * 2 ** l, 2 ** l) : null;
@@ -1358,10 +1160,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     return { h: head.join(" · "), t: text, k: root?.kind };
   }
 
-  // Agents
-  // ------
-
-  // read whole; a name is letters and hyphens, never a path
   export function agent(mem: Memory, name: string): Root[] | null {
     const file = mem.dir + AGENTS + name + ".jsonl";
     return /^[A-Za-z-]+$/.test(name) && fs.existsSync(file) ? Memory.file(file) : null;
@@ -1372,8 +1170,8 @@ ${Memory.cut(line)}| ← LIMIT`;
     fs.mkdirSync(mem.dir + AGENTS, { recursive: true });
     try {
       fs.writeFileSync(mem.dir + AGENTS + name + ".jsonl", "", { flag: "wx" });
-    } catch (err: any) {
-      if (err.code === "EEXIST") {
+    } catch (err) {
+      if (err_code(err) === "EEXIST") {
         return Memory.agent_new(mem);
       }
       throw err;
@@ -1382,7 +1180,6 @@ ${Memory.cut(line)}| ← LIMIT`;
     return name;
   }
 
-  // its length read once, then counted (mem.agents)
   export function agent_push(mem: Memory, name: string, kind: Kind, text: string, pair: Pair = {}): number {
     const n = mem.agents.get(name) ?? Memory.agent(mem, name)?.length ?? 0;
     const root = Memory.root(n, { kind, text, ...pair });

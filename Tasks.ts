@@ -1287,7 +1287,9 @@ export function fields_read(x: unknown): { fields: Field[]; why: string | null }
   }
   const fields: Field[] = [];
   let why: string | null = null;
-  const no = (said: string) => (why = why ?? said);
+  const no = (said: string): void => {
+    why = why ?? said;
+  };
   x.forEach((y, k) => {
     if (typeof y !== "object" || y === null || Array.isArray(y)) {
       return no("fields[" + k + "] is not an object.");

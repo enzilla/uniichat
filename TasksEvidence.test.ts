@@ -39,7 +39,7 @@ let ASKED: string[] = [];
 beforeEach(() => {
   T.tasks_forget();
   dir = fs.mkdtempSync(ROOT + "/chat-");
-  tools = { mem: { dir }, agents: new Map(), hooks: { change: () => {}, note: () => {} } } as unknown as Kit;
+  tools = { mem: { dir }, agents: new Map(), log: { change: () => {}, note: () => {} } } as unknown as Kit;
   fs.writeFileSync(FILE, "# relato\nfeito\n");
   PR_STATE = { state: "MERGED", merge: "d9105dde1234567890abcdef1234567890abcdef" };
   COMMIT = "a42d3b3c1234567890abcdef1234567890abcdef";

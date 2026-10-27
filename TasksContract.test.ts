@@ -31,7 +31,7 @@ beforeEach(() => {
   dir = fs.mkdtempSync(ROOT + "/chat-");
   notes = [];
   restarts = [];
-  tools = { mem: { dir }, agents: new Map(), hooks: { change: () => {}, note: (t: string) => notes.push(t), restart: (h: Restart.How) => restarts.push(h) } } as unknown as Kit;
+  tools = { mem: { dir }, agents: new Map(), log: { change: () => {}, note: (t: string) => notes.push(t), restart: (h: Restart.How) => restarts.push(h) } } as unknown as Kit;
 });
 
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
@@ -181,7 +181,7 @@ test("restart: kind restart with no choices gets its template (P8); its own choi
 test("restart tool: why needed; refused with no way to restart, or agents at work (P8); else marked, said before, the hook called", async () => {
   expect((await call("restart", { resume: "x" })).text).toBe("Give why: what the restart is for (it's said in the chat).");
   expect(Tools.restart(tools, { why: "aplicar a R5" }, null).text).toContain("can't restart itself");
-  (tools.agents as Map<string, any>).set("CalmCow", { name: "CalmCow", label: "uniichat-ux-r4-impl", call: {} });
+  (tools.agents as Map<string, any>).set("CalmCow", { name: "CalmCow", label: "uniichat-ux-r4-impl", run: { busy: true } });
   const busy = Tools.restart(tools, { why: "aplicar a R5" }, "exit");
   expect(busy.fail).toBe(true);
   expect(busy.text).toStartWith("Agents at work: CalmCow (uniichat-ux-r4-impl). The standing leave (P8)");
@@ -252,7 +252,7 @@ test("restart mark: taken only by a new process started after it was asked, with
 });
 
 test("restart with agents at work: only the user's pick lets it; Unii closing the task itself (task_edit) doesn't", async () => {
-  (tools.agents as Map<string, any>).set("CalmCow", { name: "CalmCow", label: "uniichat-ux-r4-impl", call: {} });
+  (tools.agents as Map<string, any>).set("CalmCow", { name: "CalmCow", label: "uniichat-ux-r4-impl", run: { busy: true } });
   const s = T.tasks_load(dir);
   const t = T.task_new(s, { title: "Reiniciar com agentes rodando?", kind: "restart" }, "main", NOW) as T.Task;
   // Unii's own task_edit, done with "Sim, reinicie": recorded as Unii's, refused
@@ -380,7 +380,7 @@ test("the Mesa's list: a row says what it waits for outside and a PR rejected", 
 });
 
 test("a closed task's kind, choices and acts stay as the user picked from them: no leave to restart made after the pick", async () => {
-  (tools.agents as Map<string, any>).set("CalmCow", { name: "CalmCow", label: "uniichat-ux-r4-impl", call: {} });
+  (tools.agents as Map<string, any>).set("CalmCow", { name: "CalmCow", label: "uniichat-ux-r4-impl", run: { busy: true } });
   // (a) the user closes a restart with "Eu reinicio depois" (theirs); Unii
   // gives that button its own act: refused, and no restart
   const s = T.tasks_load(dir);

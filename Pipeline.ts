@@ -1410,11 +1410,6 @@ const NOTE_ONE = /^[\s>#*_]*(?:ressalva|observacao)\s+(alta|media|baixa)\b[\s*_`
 // 25/10). Singular, as NOTE_ONE. On a folded line
 const NOTE_LEAD = /^[\s>]*(?:#{1,6}\s+[*_]*|[*_]{2})\s*(?:ressalva|observacao)\s+(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,—–-]?\s*)?(alta|media|baixa)\b/;
 
-// a heading or bold label of a severity ("**Média** …", "**Média, …") or
-// of a numbered note without one ("**Ressalva 1 …", "Ressalva 1 …"): a note only if its
-// state is said and qualified (note_state "open"), its severity, if any,
-// in its group. On a folded line
-const LEAD_LABEL = /^[\s>]*(?:(?:#{1,6}\s+[*_]*|[*_]{2})\s*(?:(?:n[o.]?\s*)?[a-z]?\d+[a-z]?[\s*_`]*[(\[,.):—–-]?\s*)?(alta|media|baixa)\b|(?:#{1,6}\s+[*_]*|[*_]{2})?\s*(?:ressalva|observacao)\s+(?:n[o.]?\s*)?[a-z]?\d+[a-z]?\b)/;
 
 // a bold label of a severity, then ":" and its text on the line: "**Baixa:
 // texto corrigida no hash**", "**Média:** x" (JuicyTuna, 25/10); not

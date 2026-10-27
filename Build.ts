@@ -1,13 +1,3 @@
-// Build
-// =====
-// `bun Build.ts [target] [outfile]` (`bun run build`): one `unii`
-// executable for a Bun target (default this machine's: bun-linux-x64,
-// bun-linux-arm64, -musl, bun-darwin-arm64, bun-darwin-x64,
-// bun-windows-x64), carrying that platform's Claude Code for claude-sub
-// (ClaudeSub.ts writes it out on first use), so none needs installing. A
-// platform's package missing from node_modules (`bun install` fetches
-// only this machine's) is fetched with `npm pack`, at the SDK's version.
-
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -34,11 +24,14 @@ if (!fs.existsSync(SDK)) {
   throw new Error("run `bun install` first");
 }
 if (!fs.existsSync(exe)) {
-  const version = JSON.parse(fs.readFileSync(SDK + "/package.json", "utf8")).version;
+  const { version } = JSON.parse(fs.readFileSync(SDK + "/package.json", "utf8")) as { version: string };
   const tmp = fs.mkdtempSync(os.tmpdir() + "/unii-build-");
   try {
     run(["npm", "pack", pkg + "@" + version, "--pack-destination", tmp], tmp);
-    const tgz = fs.readdirSync(tmp).find((f) => f.endsWith(".tgz"))!;
+    const tgz = fs.readdirSync(tmp).find((f) => f.endsWith(".tgz"));
+    if (tgz === undefined) {
+      throw new Error("npm pack made no .tgz");
+    }
     const dir = path.dirname(exe);
     fs.mkdirSync(dir, { recursive: true });
     run(["tar", "-xzf", path.join(tmp, tgz), "-C", dir, "--strip-components=1"]);

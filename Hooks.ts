@@ -203,11 +203,13 @@ export function calls(job: Job, cwd: string): Calls | null {
       if (input.method !== "tools/call") {
         return null;
       }
-      const name = String(input.conf?.claude ?? input.conf?.name ?? "mcp");
+      const conf = (input.conf ?? {}) as { claude?: unknown; name?: unknown };
+      const params = (input.params ?? {}) as { name?: unknown; arguments?: unknown };
+      const name = String(conf.claude ?? conf.name ?? "mcp");
       const [plugin, server] = name.includes(":") ? name.split(":") : [null, name];
-      const tool = "mcp__" + (plugin === null ? server : "plugin_" + plugin + "_" + server) + "__" + String(input.params?.name);
-      const call = { tool, input: input.params?.arguments ?? {}, mcp: { name: plugin === null ? server : "plugin:" + plugin + ":" + server, source: plugin === null ? "user" : "plugin" } };
-      return { calls: [call], back: ([i]) => ({ ...input, params: { ...input.params, arguments: i } }), project: root(cwd) };
+      const tool = "mcp__" + (plugin === null ? server : "plugin_" + plugin + "_" + server) + "__" + String(params.name);
+      const call = { tool, input: params.arguments ?? {}, mcp: { name: plugin === null ? server : "plugin:" + plugin + ":" + server, source: plugin === null ? "user" : "plugin" } };
+      return { calls: [call], back: ([i]) => ({ ...input, params: { ...params, arguments: i } }), project: root(cwd) };
     }
   }
   return null;

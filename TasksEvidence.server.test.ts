@@ -62,14 +62,14 @@ const settle = () => Bun.sleep(20);
 
 test("a turn ending in a promise with no task of Unii's made or moved gets a note; with one, none", async () => {
   const began = Date.now();
-  Chat.push(chat, null, "unii", "Registrei a P79. Vou revisar o `spec/ritsu.lock` em seguida.");
+  Chat.push(chat, chat.main, "unii", "Registrei a P79. Vou revisar o `spec/ritsu.lock` em seguida.");
   Chat.promised(chat, began);
   await settle();
   expect(last().kind).toBe("note");
   expect(last().text).toStartWith("Compromisso sem pendência: o Unii disse “Vou revisar o … em seguida”");
   // a reply with no promise: nothing
   const count = chat.mem.count;
-  Chat.push(chat, null, "unii", "Feito: P77 fechada com a evidência do commit.");
+  Chat.push(chat, chat.main, "unii", "Feito: P77 fechada com a evidência do commit.");
   Chat.promised(chat, Date.now());
   await settle();
   expect(chat.mem.count).toBe(count + 1);
@@ -77,7 +77,7 @@ test("a turn ending in a promise with no task of Unii's made or moved gets a not
   const now = Date.now();
   const s = Tasks.tasks_load(dir);
   Tasks.task_new(s, { title: "Revisar o ritsu.lock", assignee: "unii", done_when: "assinatura entregue", next_step: "revisar o diff" }, "main", now);
-  Chat.push(chat, null, "unii", "Vou revisar o diff agora.");
+  Chat.push(chat, chat.main, "unii", "Vou revisar o diff agora.");
   const was = chat.mem.count;
   Chat.promised(chat, now);
   await settle();
@@ -88,7 +88,7 @@ test("a promise with a task of Unii's moved in the turn but unrelated to it stil
   const now = Date.now();
   const s = Tasks.tasks_load(dir);
   Tasks.task_new(s, { title: "Conferir DLQ de hom", assignee: "unii", done_when: "DLQs lidas", next_step: "ler as filas" }, "main", now);
-  Chat.push(chat, null, "unii", "Vou responder o Enzo em seguida.");
+  Chat.push(chat, chat.main, "unii", "Vou responder o Enzo em seguida.");
   Chat.promised(chat, now);
   await settle();
   expect(last().kind).toBe("note");

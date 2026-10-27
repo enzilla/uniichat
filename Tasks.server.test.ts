@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import { AskAI, type Ask, type End } from "./AskAI.ts";
 import * as config from "./Config.ts";
 import { Memory } from "./Memory.ts";
+import { Run } from "./Run.ts";
 import { Chat, TELL } from "./Server.ts";
 import * as Tasks from "./Tasks.ts";
 import { Tools } from "./Tools.ts";
@@ -51,7 +52,7 @@ const act = (msg: object, id = "act-" + ++n) => Chat.apply(chat, { id, ...msg },
 
 // till the turn running ends
 async function idle(): Promise<void> {
-  for (let k = 0; k < 200 && (chat.busy || chat.wait.length > 0); k++) {
+  for (let k = 0; k < 200 && (chat.main.busy || chat.main.queue.length > 0); k++) {
     await Bun.sleep(5);
   }
   await Bun.sleep(5);
@@ -60,7 +61,7 @@ async function idle(): Promise<void> {
 // a user's message, logged and taken, its turn waited on
 async function say(text: string): Promise<Ask> {
   const was = ASKED.length;
-  await Chat.writing(chat, async () => Chat.take(chat, Chat.push(chat, null, "user", text)));
+  await Run.take(chat.main, { kind: "user", text, images: [] });
   await idle();
   expect(ASKED.length).toBe(was + 1);
   return ASKED.at(-1)!;
@@ -221,7 +222,7 @@ test("a talk in a task's thread: a marked message of the chat, a turn; Unii's re
   let during: Tasks.Task | null = null;
   DOING = () => {
     during = { ...Tasks.task_find(s, t.id)! };
-    Chat.push(chat, null, "unii", "Ainda não: falta a tag.");
+    Chat.push(chat, chat.main, "unii", "Ainda não: falta a tag.");
   };
   expect(await act({ $: "task_say", task: t.id, text: "  Posso mesclar?  " }, "say-1")).toEqual({});
   await idle();
@@ -253,7 +254,7 @@ test("Unii's task_reply in the turn: the thread has it once, the turn's last rep
   const t = Tasks.task_new(s, { title: "Qual porta?" }, "main", Date.now()) as Tasks.Task;
   DOING = () => {
     Tools.task(chat.tools, "task_reply", { id: t.id, text: "A 8811." }, "main");
-    Chat.push(chat, null, "unii", "Respondi na pendência.");
+    Chat.push(chat, chat.main, "unii", "Respondi na pendência.");
   };
   await act({ $: "task_say", task: t.id, text: "Qual?" });
   await idle();
@@ -283,7 +284,7 @@ test("a talk's turn reads the task whole: its detail, the draft not sent yet and
   const t = Tasks.task_new(s, { title: "Janela de deploy", detail: "Depois do PR 644, com o time avisado.", fields: [{ id: "amb", label: "Ambiente", kind: "choice", choices: ["hom", "prod"] }] }, "main", Date.now()) as Tasks.Task;
   const quiet = Tasks.task_new(s, { title: "Outra coisa", detail: "Um detalhe que não vem." }, "main", Date.now()) as Tasks.Task;
   Tasks.task_draft(s, t.id, { amb: "prod" });
-  DOING = () => Chat.push(chat, null, "unii", "Prefiro hom primeiro.");
+  DOING = () => Chat.push(chat, chat.main, "unii", "Prefiro hom primeiro.");
   await act({ $: "task_say", task: t.id, text: "Qual janela?" });
   await idle();
   DOING = null;

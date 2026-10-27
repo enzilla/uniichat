@@ -1,39 +1,18 @@
-// Config
-// ======
-// The server's settings. Its DIR ($UNII_DIR, default ~/.unii) holds
-// config.json, keys.json, the prompts, the lock, unii.db (Owner.ts) and
-// the chat (chat/). Each key of config.json (README, SETTINGS) may be
-// set as UNII_<KEY> instead, which wins; a path may start with "~/". The
-// keys are read from the environment and removed from it, so no program
-// an agent runs inherits them; a key the environment lacks is read from
-// keys.json (0600), where the settings page puts them (Settings.ts).
-// config_reload reads both
-// files again: what SETTINGS applies "now" changes at once, the rest
-// on the next start.
-
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Vendor } from "./AskAI.ts";
+import { err_code, err_why } from "./Err.ts";
+import { get, list as items, rec, text_of } from "./Json.ts";
 import { EFFORTS, LABELS, VENDORS, Pick, type Fall, type Offer } from "./Pick.ts";
 
-// Types
-// =====
+type ServerOnly = "runs a command" | "signs in the tailnet's nodes";
 
-// a setting: its key in config.json, its default; whether a change
-// applies at once ("now": config_reload) or on the next start; whether
-// the settings page may change it (one that names a command or a file
-// the server runs or reads may not: a sign-in would be a shell on the
-// server; one that decides how the server is reached neither: a wrong
-// one is fixed only by hand)
-export type Setting = { key: string; def: string; apply: "now" | "restart"; web: boolean };
+export type Setting = { key: string; def: string; apply: "now" | "restart"; server_only: ServerOnly | null };
 
-// where a value comes from: the environment, config.json (a key:
-// keys.json), the default (a key: none)
 export type From = "env" | "file" | "default";
 
-// the settings a config.json gives, the environment's winning
 type Made = {
   offer     : Offer;
   pick      : Pick;
@@ -68,29 +47,25 @@ export type McpServer = {
   claude? : string;
 };
 
-// Constants
-// =========
-
 export const DIR = config_path(process.env.UNII_DIR ?? "~/.unii");
 
 export const FILE_PATH = DIR + "/config.json";
 export const KEYS_PATH = DIR + "/keys.json";
 
 export const SETTINGS: Setting[] = [
-  { key: "vendors",   def: "claude-api",                        apply: "now",     web: true  },
-  { key: "models",    def: LABELS.join(),                       apply: "now",     web: true  },
-  { key: "pick",      def: "claude-api:sonnet-5.5:medium:slow", apply: "now",     web: true  },
-  { key: "compactor", def: "claude-api:sonnet-5.5:medium:slow", apply: "now",     web: true  },
-  { key: "compactor_context", def: "4",                         apply: "now",     web: true  },
-  { key: "agents",    def: "",                                  apply: "now",     web: true  },
-  { key: "site",      def: "http://127.0.0.1:8788",             apply: "restart", web: true  },
-  { key: "apple",     def: "",                                  apply: "restart", web: true  },
-  { key: "apns",      def: "",                                  apply: "restart", web: true  },
-  { key: "after",     def: "",                                  apply: "now",     web: false },
-  { key: "tailnet_owner", def: "",                              apply: "restart", web: false },
+  { key: "vendors",   def: "claude-api",                        apply: "now",     server_only: null },
+  { key: "models",    def: LABELS.join(),                       apply: "now",     server_only: null },
+  { key: "pick",      def: "claude-api:sonnet-5.5:medium:slow", apply: "now",     server_only: null },
+  { key: "compactor", def: "claude-api:sonnet-5.5:medium:slow", apply: "now",     server_only: null },
+  { key: "compactor_context", def: "4",                         apply: "now",     server_only: null },
+  { key: "agents",    def: "",                                  apply: "now",     server_only: null },
+  { key: "site",      def: "http://127.0.0.1:8788",             apply: "restart", server_only: null },
+  { key: "apple",     def: "",                                  apply: "restart", server_only: null },
+  { key: "apns",      def: "",                                  apply: "restart", server_only: null },
+  { key: "after",     def: "",                                  apply: "now",     server_only: "runs a command" },
+  { key: "tailnet_owner", def: "",                              apply: "restart", server_only: "signs in the tailnet's nodes" },
 ];
 
-// each vendor a default may take, by what makes it usable; its model
 const USABLE: Record<Vendor, string> = {
   "claude-sub" : "signed in to Claude",
   "openai-sub" : "signed in to ChatGPT",
@@ -106,18 +81,15 @@ const DEFAULT_MODEL: Record<Vendor, string> = {
   "cursor-sub" : "sonnet-5.5",
 };
 
-// what the chat and the settings page say with nothing to ask
 const NONE     = "Not signed in and no API key: sign in with `unii serve claude` (or `unii serve chatgpt`) on the server, or set a key in Settings";
 const NONE_WHY = "not signed in, no key";
 
-// the keys, by name, and the variable each is read from
 export const VARS: Record<string, string> = {
   anthropic       : "ANTHROPIC_API_KEY",
   openai          : "OPENAI_API_KEY",
   apns            : "APNS_KEY",
 };
 
-// config.json as read at the start
 const FILE: Record<string, unknown> = config_file();
 
 // how long a task of Unii's may stand still with no next_due before
@@ -136,12 +108,8 @@ function config_hours(x: string, def: number): number {
   return Number.isFinite(n) && n > 0 && n <= 24 * 30 ? n : def;
 }
 
-// openai-sub's ChatGPT sign-in (ChatGPT.ts)
 export const CHATGPT    = config_path(config_get("chatgpt", DIR + "/chatgpt.json"));
 
-// claude-sub's Claude Code (ClaudeSub.ts): its config dir, where its
-// sign-in is kept; the executable ("": the one unii carries, else the
-// Agent SDK's)
 export const CLAUDE_SUB = config_path(config_get("claude_sub", DIR + "/claude-sub"));
 export const CLAUDE     = config_path(config_get("claude", ""));
 
@@ -154,24 +122,17 @@ export const CURSOR     = config_path(config_get("cursor", ""));
 // "docker" (a container of its own, where unprivileged namespaces are shut)
 export const CURSOR_SANDBOX = config_get("cursor_sandbox", "bwrap").trim();
 
-// the keys the environment gave (removed from it), and every key as used:
-// the environment's, else keys.json's
 const ENV_KEYS: Record<string, string> = Object.fromEntries(Object.entries(VARS).map(([name, v]) => [name, config_key(v)]));
 export const KEYS: Record<string, string> = config_keys(keys_read());
 
-// the sign-ins and keys the defaults last followed (config_follow)
 let FOLLOWED = config_usable().join();
 
-// the vendors the chat's own pick runs on (config_keep)
 let KEPT: string[] = [];
 
-// what runs as config.json and keys.json are read again (config_reload):
-// a patient call's wait, which its pick changed ends (AskAI.nap)
 export const RELOADED = new Set<() => void>();
 
 const MADE = config_make(FILE);
 
-// the values this process started with: what a "restart" setting runs on
 export const STARTED: Record<string, string> = Object.fromEntries(SETTINGS.map((s) => [s.key, config_value(FILE, s.key)]));
 
 export const SITE    = config_value(FILE, "site").replace(/\/$/, "");
@@ -184,65 +145,48 @@ export const OFFER: Offer = MADE.offer;
 export let   AFTER      = MADE.after;
 export let   PICK       = MADE.pick;
 
-// what every compaction runs on, a chat's and an import's alike, whatever
-// the chat's pick
 export let   COMPACTOR  = MADE.compactor;
-// how much of the chat (bytes; config compactor_context, in KB) a
-// compaction sees before its input: less context, less for it to copy
-// into its line that the input lacks
 export let   COMPACTOR_CONTEXT = MADE.context;
 export let   AGENTS     = MADE.agents;
 
-// the iOS app (ios/, Owner.ts): its App ID, the team's then the bundle's
-// ("TEAM.com.example.uniichat"), whose app sign-in links open; and
-// the id of the key its pushes are signed with (APNS_KEY holds the key)
 export const APPLE      = config_value(FILE, "apple");
 export const APNS       = config_value(FILE, "apns");
 
-// the most a file put in the media store may be (config media_mb, in MB)
 export const MEDIA_MAX  = (Number(config_get("media_mb", "")) || 1024) * 2 ** 20;
 
-// MCP servers run only on devices (Mcp.ts): UNII_MCP's are left out,
-// MCP_LEFT the note that says so (null: unset), for the log and the chat;
-// MCP_FILE: this config.json has servers in its `mcp`, which only a
-// device on this computer reading it as its own runs (Tools.servers):
-// only the log says so as the server starts, since as a turn starts
-// (one a restart cut, resumed) that device may not have joined yet.
-// UNII_MCP leaves the environment (its headers may hold a secret)
-const MCP_VAR = process.env.UNII_MCP;
-delete process.env.UNII_MCP;
-export const MCP_LEFT: string | null = config_mcp_some(MCP_VAR)
+const MCP_VAR = config_env_taken("UNII_MCP");
+export const MCP_ENV_NOTE: string | null = config_mcp_some(MCP_VAR)
   ? "UNII_MCP is set, but unii serve runs no MCP servers, so they are left out: put them in the mcp of a device's own ~/.unii/config.json (for this computer, run unii device beside the server)."
   : null;
-export const MCP_FILE = config_mcp_some(FILE.mcp);
+export const MCP_FILE_STARTUP_NOTE: string | null = config_mcp_some(FILE.mcp)
+  ? "unii serve runs no MCP servers: the mcp in " + FILE_PATH + " runs only on a unii device that reads this file (unii device beside the server)."
+  : null;
 
-// Config
-// ======
+function config_env_taken(name: string): string | undefined {
+  const value = process.env[name];
+  delete process.env[name];
+  return value;
+}
 
-// a setting's value in `file`, the environment's winning, else its default
 export function config_value(file: Record<string, unknown>, key: string): string {
   return config_env_value(key) ?? config_str(file[key]) ?? config_default(file, key).value;
 }
 
-// a setting's default, and why it is that (""; none but the picks'): the
-// vendors, pick and compactor follow what is signed in or has a key here
-// (config_usable), read as asked, so a sign-in counts without a restart:
-// the vendors usable, and those a setting or the chat's pick names
-// (config_named: a sign-out never makes what the user chose wrong), else
-// claude-api; the pick and compactor on the first usable vendor `file`
-// offers, else on its first, with a model offered (DEFAULT_MODEL, else
-// the vendor's first), at medium
 export function config_default(file: Record<string, unknown>, key: string): { value: string; why: string } {
   const def = SETTINGS.find((s) => s.key === key)?.def ?? "";
   if (key !== "vendors" && key !== "pick" && key !== "compactor") {
     return { value: def, why: "" };
   }
-  const usable = config_usable();
-  if (key === "vendors") {
-    const named = config_named(file).filter((v) => !usable.includes(v));
-    const whys = [...usable.map((v) => USABLE[v]), ...(named.length === 0 ? [] : [named.join(", ") + " chosen"])];
-    return usable.length + named.length === 0 ? { value: def, why: NONE_WHY } : { value: [...usable, ...named].join(), why: whys.join(", ") };
-  }
+  return key === "vendors" ? config_default_vendors(file, def, config_usable()) : config_default_pick(file, def, config_usable());
+}
+
+function config_default_vendors(file: Record<string, unknown>, def: string, usable: Vendor[]): { value: string; why: string } {
+  const named = config_named(file).filter((v) => !usable.includes(v));
+  const whys = [...usable.map((v) => USABLE[v]), ...(named.length === 0 ? [] : [named.join(", ") + " chosen"])];
+  return usable.length + named.length === 0 ? { value: def, why: NONE_WHY } : { value: [...usable, ...named].join(), why: whys.join(", ") };
+}
+
+function config_default_pick(file: Record<string, unknown>, def: string, usable: Vendor[]): { value: string; why: string } {
   const offered = config_value(file, "vendors").split(",").map((v) => v.trim());
   const models = config_value(file, "models").split(",").map((m) => m.trim());
   const model = (v: Vendor) => (models.includes(DEFAULT_MODEL[v]) ? DEFAULT_MODEL[v] : Pick.models([v], models)[0]?.[1].label);
@@ -255,10 +199,6 @@ export function config_default(file: Record<string, unknown>, key: string): { va
   return { value: vendor + ":" + model(vendor) + ":medium:slow", why };
 }
 
-// the vendors the user chose: those the pick, compactor and agents
-// settings, the profiles' models (the environment's or `file`'s, as they
-// read: one wrong is config_make's to tell) and the chat's own pick
-// (KEPT) name
 function config_named(file: Record<string, unknown>): Vendor[] {
   const set = ["pick", "compactor", "agents"].map((key) => config_env_value(key) ?? config_str(file[key]) ?? "");
   let profiles: unknown = file.profiles;
@@ -273,10 +213,6 @@ function config_named(file: Record<string, unknown>): Vendor[] {
   return VENDORS.filter((v) => named.includes(v) || KEPT.includes(v));
 }
 
-// the vendors the chat's own pick runs on (Server.ts: a pick saved, as it
-// opens and as it changes): the default vendors keep them too
-// (config_named), so a sign-out never moves the chat off its pick; the
-// files read again as they change (one wrong: logged)
 export function config_keep(vendors: string[]): void {
   if (vendors.join() === KEPT.join()) {
     return;
@@ -294,8 +230,7 @@ export function config_keep(vendors: string[]): void {
 // openai-api with a key, cursor-sub signed in (CursorSub.signed). Claude Code keeps its sign-in in its config dir:
 // .credentials.json, or (macOS, in the keychain) only its account in
 // .claude.json
-export function config_usable(): Vendor[] {
-  // a JSON file's field (undefined: none, or no such file)
+function config_usable(): Vendor[] {
   const field = (file: string, ...keys: string[]): unknown => {
     let at: unknown;
     try {
@@ -314,15 +249,10 @@ export function config_usable(): Vendor[] {
   return (Object.keys(USABLE) as Vendor[]).filter((v) => has[v]);
 }
 
-// why nothing can be asked here (null: something can), as the chat and
-// the settings page say it
 export function config_none(): string | null {
   return config_usable().length === 0 ? NONE : null;
 }
 
-// the sign-ins changed since the defaults last followed them: config.json
-// and keys.json read again (config_reload); true if they changed. One
-// wrong (a hand edit) is logged, and tried again on the next change
 export function config_follow(): boolean {
   const now = config_usable().join();
   if (now === FOLLOWED) {
@@ -332,8 +262,8 @@ export function config_follow(): boolean {
   try {
     config_reload();
     return true;
-  } catch (err: any) {
-    console.error("unii: the sign-ins changed, but " + (err?.message ?? err));
+  } catch (err) {
+    console.error("unii: the sign-ins changed, but " + err_why(err));
     return false;
   }
 }
@@ -342,13 +272,10 @@ function config_env_value(key: string): string | undefined {
   return process.env["UNII_" + key.toUpperCase()];
 }
 
-// a value of config.json as a string (one hand-written as a number or a
-// list too); null and none: unset
 function config_str(x: unknown): string | undefined {
-  return x === undefined || x === null ? undefined : String(x);
+  return x === undefined || x === null ? undefined : text_of(x);
 }
 
-// a key's: the environment's, keys.json's (`kept`), or none ("default")
 export function config_key_from(name: string, kept: Record<string, string>): From {
   return ENV_KEYS[name] ? "env" : kept[name] ? "file" : "default";
 }
@@ -357,54 +284,47 @@ function config_path(path: string): string {
   return path.startsWith("~/") ? os.homedir() + path.slice(1) : path;
 }
 
-// a setting not on the settings page: the environment's, else
-// config.json's, else `def`
 export function config_get(key: string, def: string): string {
   return config_env_value(key) ?? config_str(FILE[key]) ?? def;
 }
 
-// config.json, read (none: empty); an Error if it is no JSON object
-export function config_file(): Record<string, unknown> {
+function config_file(): Record<string, unknown> {
   return config_file_of(config_text(FILE_PATH));
 }
 
-// config.json's text (null: none), as read
 export function config_file_of(text: string | null): Record<string, unknown> {
   if (text === null) {
     return {};
   }
   const json = config_json(FILE_PATH, text);
-  if (json === null || typeof json !== "object" || Array.isArray(json)) {
+  if (!rec(json)) {
     throw new Error("config: config.json is no JSON object");
   }
   return json;
 }
 
-// a file's text; null: there is none
-export function config_text(file: string): string | null {
+function config_text(file: string): string | null {
   try {
     return fs.readFileSync(file, "utf8");
-  } catch (err: any) {
-    if (err?.code === "ENOENT") {
+  } catch (err) {
+    if (err_code(err) === "ENOENT") {
       return null;
     }
-    throw new Error("config: " + path.basename(file) + " can't be read (" + (err?.code ?? err) + ")");
+    throw new Error("config: " + path.basename(file) + " can't be read (" + (err_code(err) ?? String(err)) + ")");
   }
 }
 
 // a file's JSON, of its text; an Error names the file (keys.json's,
 // nothing more: a parser's message may quote what it read)
-function config_json(file: string, text: string): any {
+function config_json(file: string, text: string): unknown {
   try {
-    return JSON.parse(text);
-  } catch (err: any) {
-    const why = file === KEYS_PATH ? "" : " (" + (err?.message ?? err) + ")";
+    return JSON.parse(text) as unknown;
+  } catch (err) {
+    const why = file === KEYS_PATH ? "" : " (" + err_why(err) + ")";
     throw new Error("config: " + path.basename(file) + " is no JSON" + why);
   }
 }
 
-// what `file` sets, checked as a start does: an Error names the first
-// setting that is wrong
 export function config_make(file: Record<string, unknown>): Made {
   const offer: Offer = {
     vendors : config_vendors(config_value(file, "vendors")),
@@ -422,7 +342,6 @@ export function config_make(file: Record<string, unknown>): Made {
   };
 }
 
-// compactor_context: whole KB, 1 to 128, as bytes
 function config_context(text: string): number {
   const kb = Number(text.trim());
   if (!/^\d+$/.test(text.trim()) || kb < 1 || kb > 128) {
@@ -431,8 +350,6 @@ function config_context(text: string): number {
   return kb * 1000;
 }
 
-// vendor:model:effort:speed, or a profile's name (at medium and slow
-// unless its first model names its own)
 function config_run(key: string, text: string, offer: Offer): Pick {
   const [vendor, model, effort, speed] = text.split(":");
   const pick = Pick.read(Object.hasOwn(offer.profiles ?? {}, text) ? { profile: text, effort: "medium", speed: "slow" } : { vendor, model, effort, speed }, offer);
@@ -442,24 +359,20 @@ function config_run(key: string, text: string, offer: Offer): Pick {
   return pick;
 }
 
-// config `profiles` (as UNII_PROFILES: its JSON) in `file`: names no
-// model has and without a ":", each a list of the models `offer` has,
-// one or more (a JSON object, not a string: read and written as one)
-export function config_profiles(file: Record<string, unknown>, offer: Offer): Record<string, Fall[]> {
+function config_profiles(file: Record<string, unknown>, offer: Offer): Record<string, Fall[]> {
   const env = process.env.UNII_PROFILES;
-  const all: any = env === undefined ? file.profiles ?? {} : JSON.parse(env);
-  if (all === null || typeof all !== "object" || Array.isArray(all)) {
+  const all: unknown = env === undefined ? file.profiles ?? {} : JSON.parse(env);
+  if (!rec(all)) {
     throw new Error("config: profiles is no object of names, each a list of models");
   }
-  return Object.fromEntries(Object.entries(all).map(([name, list]: [string, any]) => {
+  return Object.fromEntries(Object.entries(all).map(([name, list]) => {
     if (name.trim() === "" || name.includes(":") || LABELS.includes(name) || !Array.isArray(list) || list.length === 0) {
       throw new Error("config: profile " + JSON.stringify(name) + " is no name (none of a model, no \":\") with a list of models");
     }
-    return [name, list.map((f) => config_fall(name, String(f).trim(), offer))];
+    return [name, items(list).map((f) => config_fall(name, String(f).trim(), offer))];
   }));
 }
 
-// a profile's model: vendor:model, then an effort and a speed if not the pick's
 function config_fall(name: string, f: string, offer: Offer): Fall {
   const parts = f.split(":");
   const [vendor, label, effort, speed] = parts as [Vendor, string, string?, string?];
@@ -480,14 +393,10 @@ function config_vendors(text: string): Vendor[] {
   return list;
 }
 
-// a device's name as its MCP servers' start: other than letters, digits
-// and -, each character a - (so desk_a's and desk-a's are one: Tools.plug)
 export function config_mcp_prefix(device: string): string {
   return device.replace(/[^A-Za-z0-9-]/g, "-");
 }
 
-// whether an `mcp` has any server: Claude's `mcpServers` shape with one,
-// its JSON, or a file's path (Device.ts reads that)
 function config_mcp_some(raw: unknown): boolean {
   if (typeof raw === "string") {
     try {
@@ -496,52 +405,43 @@ function config_mcp_some(raw: unknown): boolean {
       return true;
     }
   }
-  const all: any = (raw as any)?.mcpServers ?? raw;
+  const all = get(raw, "mcpServers") ?? raw;
   return typeof all === "object" && all !== null && Object.keys(all).length > 0;
 }
 
-// a device's MCP servers, from the `mcp` of its own config.json
-// (Device.ts), in Claude's `mcpServers` shape (the object, or one that
-// holds it under that key, as Claude's .mcp.json does): each named
-// <device>_<server>, run there, its ${VAR}s and ~ read there (Mcp.here).
-// One that is wrong is left out, why in `notes`
 export function config_mcp(raw: unknown, device: string, notes: string[] = []): McpServer[] {
-  const all: any = (raw as any)?.mcpServers ?? raw;
-  if (typeof all !== "object" || all === null || Array.isArray(all)) {
+  const all = get(raw, "mcpServers") ?? raw;
+  if (!rec(all)) {
     throw new Error("config: mcp must be an object of servers by name");
   }
   return Object.entries(all).flatMap(([name, server]) => {
     try {
       return [config_server(name, server, device)];
-    } catch (err: any) {
-      notes.push(err.message.replace(/^config: /, "") + ", so it is left out");
+    } catch (err) {
+      notes.push(err_why(err).replace(/^config: /, "") + ", so it is left out");
       return [];
     }
   });
 }
 
-// a device's server, its strings kept as they are (the device reads
-// their ${VAR}s). An error never quotes a value (it may hold a secret). A
-// name has no "__" and no _ at its ends, so "<server>__<tool>" names its
-// server
-function config_server(name: string, s: any, device: string): McpServer {
+function config_server(name: string, s: unknown, device: string): McpServer {
   const bad = (why: string) => new Error("config: mcp server " + JSON.stringify(name) + " " + why);
   const strs = (list: unknown, what: string): string[] => {
     if (list !== undefined && (!Array.isArray(list) || list.some((x) => typeof x !== "string"))) {
       throw bad("needs " + what + " as a list of strings");
     }
-    return (list ?? []) as string[];
+    return items(list).map(String);
   };
   const map = (obj: unknown, what: string): Record<string, string> => {
     if (obj !== undefined && (typeof obj !== "object" || obj === null || Array.isArray(obj) || Object.values(obj).some((x) => typeof x !== "string"))) {
       throw bad("needs " + what + " as an object of strings");
     }
-    return { ...(obj ?? {}) } as Record<string, string>;
+    return Object.fromEntries(Object.entries(rec(obj) ? obj : {}).map(([k, v]) => [k, String(v)]));
   };
   if (!/^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)*$/.test(name)) {
     throw bad("needs a name of letters, digits, - and single _s inside (its tools are named <server>__<tool>)");
   }
-  if (typeof s !== "object" || s === null || Array.isArray(s)) {
+  if (!rec(s)) {
     throw bad("must be an object");
   }
   const type = s.type ?? (s.url === undefined ? "stdio" : "http");
@@ -552,13 +452,12 @@ function config_server(name: string, s: any, device: string): McpServer {
   if (s.device !== undefined) {
     throw bad("has \"device\", which a device's own config.json doesn't take (its servers run on it)");
   }
-  // named for its device too (two devices of one prefix: Tools.plug)
   const server = { name: config_mcp_prefix(device) + "_" + name, device, command: "", args: [], env: {}, cwd: "", url: "", headers: {}, timeout };
   if (type === "stdio") {
     if (typeof s.command !== "string" || s.command === "" || (s.cwd !== undefined && typeof s.cwd !== "string")) {
       throw bad("needs a command (and cwd, if any, as a string)");
     }
-    return { ...server, command: s.command, args: strs(s.args, "args"), env: map(s.env, "env"), cwd: s.cwd ?? "" };
+    return { ...server, command: s.command, args: strs(s.args, "args"), env: map(s.env, "env"), cwd: typeof s.cwd === "string" ? s.cwd : "" };
   }
   if (type === "http") {
     if (typeof s.url !== "string" || s.url === "") {
@@ -575,14 +474,10 @@ function config_key(name: string): string {
   return key;
 }
 
-// every key as used, keys.json's (`kept`) under the environment's
 function config_keys(kept: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.keys(VARS).map((name) => [name, ENV_KEYS[name] || kept[name] || ""]));
 }
 
-// config.json and keys.json read again: what applies at once takes their
-// values (OFFER and KEYS changed in place, so who holds them sees it);
-// one wrong (a hand edit) throws and changes nothing
 export function config_reload(): void {
   const file = config_file();
   const made = config_make(file);
@@ -599,10 +494,6 @@ export function config_reload(): void {
   RELOADED.forEach((f) => f());
 }
 
-// config.json and keys.json as read at once: their texts (null: none)
-// and their version, a hash of both: what a save checks is unchanged
-// since the page read them. What a page shows is read from these same
-// texts, so its version is what it shows
 export type Snapshot = { file: string | null; keys: string | null; version: string };
 
 export function config_snapshot(): Snapshot {
@@ -612,30 +503,22 @@ export function config_snapshot(): Snapshot {
   return { file, keys, version: hash.digest("hex").slice(0, 32) };
 }
 
-export function config_version(): string {
-  return config_snapshot().version;
-}
-
-// Keys
-// ====
-// The keys the settings page set, by name, in keys.json: plain JSON,
-// only the server's user may read it (600; README).
-
-export function keys_read(): Record<string, string> {
+function keys_read(): Record<string, string> {
   return keys_of(config_text(KEYS_PATH));
 }
 
-// keys.json's keys, of its text (null: none); an Error if it is no JSON
 export function keys_of(text: string | null): Record<string, string> {
   if (text === null) {
     return {};
   }
   const json = config_json(KEYS_PATH, text);
-  const keys = json !== null && typeof json === "object" && !Array.isArray(json) ? json : {};
-  return Object.fromEntries(Object.keys(VARS).filter((name) => typeof keys[name] === "string" && keys[name] !== "").map((name) => [name, keys[name]]));
+  const keys = rec(json) ? json : {};
+  return Object.fromEntries(Object.keys(VARS).flatMap((name) => {
+    const key = keys[name];
+    return typeof key === "string" && key !== "" ? [[name, key]] : [];
+  }));
 }
 
-// keys.json's text for `keys`; none left: null (the file goes)
 export function keys_text(keys: Record<string, string>): string | null {
   const kept = Object.fromEntries(Object.entries(keys).filter(([name, key]) => VARS[name] !== undefined && key !== ""));
   return Object.keys(kept).length === 0 ? null : JSON.stringify(kept, null, 2) + "\n";

@@ -196,7 +196,7 @@ test("the user's own guard, copied in unchanged, blocks a secret printed and a p
 // (Bun reads HOME once, at the start)
 test("Machine.run puts a device's shell through the hooks", async () => {
   const at = setup({ user: { hooks: pre("Bash", "echo barrado >&2; exit 2") } });
-  const code = `const { Machine } = await import(${JSON.stringify(import.meta.dir + "/Machine.ts")}); const out = await Machine.run({ name: "shell", input: { command: "echo nunca > ${at.work}/ran" }, cwd: "main" }, ${JSON.stringify(path.dirname(at.work))}, new AbortController().signal); console.log(JSON.stringify(out)); process.exit(0);`;
+  const code = `const { Machine } = await import(${JSON.stringify(import.meta.dir + "/Machine.ts")}); const out = await Machine.run({ name: "shell", input: { command: "echo nunca > ${at.work}/ran", timeout: 10 }, cwd: "main" }, new AbortController().signal); console.log(JSON.stringify(out)); process.exit(0);`;
   const proc = Bun.spawn([process.execPath, "-e", code], { env: { ...process.env, HOME: at.home }, stdout: "pipe", stderr: "pipe" });
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").pop()!);
   expect(out.fail).toBe(true);

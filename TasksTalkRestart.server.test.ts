@@ -70,7 +70,7 @@ afterAll(() => {
 });
 
 test("the server starts with no turn to come: each thread waiting for Unii is given back 'Unii não respondeu', why said, the move whose it was, Unii told", () => {
-  expect(chat.busy).toBe(false);
+  expect(chat.main.busy).toBe(false);
   expect(ASKED.length).toBe(0);
   const s = Tasks.tasks_load(DIR);
   expect(s.tasks.some((t) => t.talk === "unii")).toBe(false);
@@ -103,12 +103,12 @@ test("with a turn to come (cut and resumed, a restart's message, or one running)
   Tasks.task_say(s, mine.id, "E agora?", Date.now());
   expect(Tasks.task_find(s, mine.id)!.talk).toBe("unii");
   expect(Chat.orphans(chat, true)).toEqual([]);
-  chat.busy = true;
+  chat.main.busy = true;
   expect(Chat.orphans(chat, false)).toEqual([]);
-  chat.busy = false;
-  chat.wait.push({ id: 1 });
+  chat.main.busy = false;
+  chat.main.queue.push({ q: { kind: "user", text: "x", images: [] }, done: () => {} });
   expect(Chat.orphans(chat, false)).toEqual([]);
-  chat.wait.length = 0;
+  chat.main.queue.length = 0;
   expect(Tasks.task_find(s, mine.id)!.talk).toBe("unii");
   // none to come: given back, once
   expect(Chat.orphans(chat, false).map((t) => t.id)).toEqual([mine.id]);

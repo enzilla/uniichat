@@ -16,28 +16,33 @@ test("web/app.js and the sources bundled in it hold no regex lookbehind", () => 
   }
 });
 
+// a paragraph's spans, and a text span, through Md's public parse (its
+// span parser and Text aren't exported)
+const spans = (s: string): Md.Span[] => (Md.md_parse(s)[0] as { x: Md.Span[] } | undefined)?.x ?? [];
+const Text = (x: string): Md.Span => ({ $: "Text", x }) as Md.Span;
+
 test("italics need no * nor word char before; a bare link, a start, space or (", () => {
-  expect(Md.span_parse("a *b* c")).toMatchObject([Md.Text("a "), { $: "Ital", x: [Md.Text("b")] }, Md.Text(" c")]);
+  expect(spans("a *b* c")).toMatchObject([Text("a "), { $: "Ital", x: [Text("b")] }, Text(" c")]);
   // inside a word too, as GFM reads it (arteeh's Md.ts, #26)
-  expect(Md.span_parse("x*b* c")).toMatchObject([Md.Text("x"), { $: "Ital", x: [Md.Text("b")] }, Md.Text(" c")]);
-  expect(Md.span_parse("*b*")).toMatchObject([{ $: "Ital", x: [Md.Text("b")] }]);
-  expect(Md.span_parse("(https://a.io/x)")).toMatchObject([Md.Text("("), { $: "Link", x: [Md.Text("https://a.io/x")], k: "https://a.io/x" }, Md.Text(")")]);
-  expect(Md.span_parse("https://a.io")).toMatchObject([{ $: "Link", x: [Md.Text("https://a.io")], k: "https://a.io" }]);
-  expect(Md.span_parse("xhttps://a.io")).toMatchObject([Md.Text("xhttps://a.io")]);
+  expect(spans("x*b* c")).toMatchObject([Text("x"), { $: "Ital", x: [Text("b")] }, Text(" c")]);
+  expect(spans("*b*")).toMatchObject([{ $: "Ital", x: [Text("b")] }]);
+  expect(spans("(https://a.io/x)")).toMatchObject([Text("("), { $: "Link", x: [Text("https://a.io/x")], k: "https://a.io/x" }, Text(")")]);
+  expect(spans("https://a.io")).toMatchObject([{ $: "Link", x: [Text("https://a.io")], k: "https://a.io" }]);
+  expect(spans("xhttps://a.io")).toMatchObject([Text("xhttps://a.io")]);
   // refused at one char, tried again at the next: the italics after it
-  expect(Md.span_parse("a*b *c*")).toMatchObject([Md.Text("a*b "), { $: "Ital", x: [Md.Text("c")] }]);
+  expect(spans("a*b *c*")).toMatchObject([Text("a*b "), { $: "Ital", x: [Text("c")] }]);
 });
 
 test("a long run of links glued to a word is read once, not again from each char", () => {
   const s = "x" + "https://a.b/c".repeat(5000);
   const t = performance.now();
-  expect(Md.span_parse(s)).toEqual([Md.Text(s)]);
+  expect(spans(s)).toEqual([Text(s)]);
   expect(performance.now() - t).toBeLessThan(1000);
 });
 
 test("a table row splits at each | but an escaped one", () => {
   const t = Md.md_parse("| a | b |\n|---|---|\n| c \\| d | e |\n");
-  expect(t).toMatchObject([{ $: "Tabl", x: [[[Md.Text("a")], [Md.Text("b")]], [[Md.Text("c | d")], [Md.Text("e")]]] }]);
+  expect(t).toMatchObject([{ $: "Tabl", x: [[[Text("a")], [Text("b")]], [[Text("c | d")], [Text("e")]]] }]);
   const u = Md.md_parse("| a | b |\n|---|---|\n| c | d \\|\n");
-  expect((u[0] as { x: unknown[][] }).x[1]).toEqual([[Md.Text("c")], [Md.Text("d |")]]);
+  expect((u[0] as { x: unknown[][] }).x[1]).toEqual([[Text("c")], [Text("d |")]]);
 });

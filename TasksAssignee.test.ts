@@ -104,7 +104,7 @@ test("a turn's origin: a message of the user's among them, chat; else the first'
 });
 
 test("tools: task_add needs its origin given, never the turn's (R5); says it; who and assignee both accepted", async () => {
-  const tools = { mem: { dir }, agents: new Map(), hooks: { change: () => {} } } as unknown as Kit;
+  const tools = { mem: { dir }, agents: new Map(), log: { change: () => {} } } as unknown as Kit;
   const call = (name: string, args: object) => Tools.call(tools, "main", name, ROUND(name, args), new AbortController().signal, "x");
   expect((await call("task_add", { title: "A", origin: "chat" })).text).toBe("Added P1 [user] A (from chat, 0m)");
   tools.origin = "timer";
@@ -119,7 +119,7 @@ test("tools: task_add needs its origin given, never the turn's (R5); says it; wh
   expect((await call("task_add", { title: "C", assignee: "unii", origin: "chat", ref: "num-3182", ref_new: true })).text).toBe("Added P3 [unii] C (ref num-3182, from chat, 0m)");
   expect((await call("task_add", { title: "D", origin: "github", origin_url: "https://github.com/a/b/pull/1" })).text).toBe("Added P4 [user] D (from github https://github.com/a/b/pull/1, 0m)");
   expect(await call("task_add", { title: "E", origin: "chat", assignee: "x" })).toEqual({ text: "assignee is one of: user, unii.", fail: true });
-  const spec = Tools.list(tools, "main").find((s) => s.name === "task_add")! as any;
+  const spec = Tools.list("main").find((s) => s.name === "task_add")! as any;
   const props = (spec.schema ?? spec.input_schema ?? spec.parameters ?? spec).properties ?? JSON.stringify(spec);
   expect(JSON.stringify(props)).toContain("assignee");
   expect(JSON.stringify(props)).toContain("origin_url");

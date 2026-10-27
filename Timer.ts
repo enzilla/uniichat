@@ -1,58 +1,22 @@
-// Timer
-// =====
-// A chat's schedules: Unii's `schedule` tool sets one, a message and when
-// it comes, once (a time) or again and again (a cron expression); at that
-// time it reaches the chat as the timer's, a report "[Timer <id>]"
-// (Server.ts Chat.ring). Each is kept with its chat, in view.json
-// (Memory.ts), by when it is next due.
-// No time is read in the server's zone: a cron, and a time with no
-// offset, are read in the schedule's own zone (an IANA name, the user's),
-// so neither the server's place nor a daylight-saving change moves them.
-// A cron is five fields, minute hour day month weekday, each `*`, a
-// number or a range a-b (months and weekdays also by name: jan, mon),
-// either with a step /n, or a list of those by commas; weekday 0-7 (0 and
-// 7: Sunday); with both day and weekday set, either matches, as in cron.
-// A wall time a daylight-saving change skips doesn't come that day; one
-// it repeats comes once, the first time. A cron's times are at least GAP
-// apart, so no schedule fills the chat's log (each brings a message and a
-// turn).
+import { text_of } from "./Json.ts";
 
-// Types
-// =====
-
-// a schedule: its id, message, when next due (ISO, UTC), its cron (null:
-// once), the zone its times are read in
 export type Timer = { id: string; text: string; at: string; cron: string | null; zone: string };
 
-// a cron read: each field's values (minute, hour, day, month, weekday),
-// whether day and weekday were set (not starting `*`)
 type Cron = { sets: Array<Set<number>>; day: boolean; week: boolean };
 
-// a time's wall clock in a zone
 type Wall = { y: number; mo: number; d: number; h: number; mi: number; wd: number };
 
-// Constants
-// =========
-
-// the most schedules a chat keeps, the longest message one carries
-// (characters): they live in view.json, written as the view changes
 export const TIMERS = 50;
-export const TEXT   = 2000;
+const TEXT   = 2000;
 
-// a schedule's message past this late (ms) says so
 const LATE  = 60000;
 
-// how far ahead a cron is looked at for its next time (days): a cron
-// with none by then (February 31) is refused
 const AHEAD = 8 * 366;
 
 const MINUTE = 60000;
 
-// the least time between a cron's times (minutes): `*/5` is fine, `* *`
-// (every minute) is refused
-export const GAP = 5;
+const GAP = 5;
 
-// each field's least and most, and its names (from its least)
 const FIELDS: Array<[number, number, string[]]> = [
   [0, 59, []],
   [0, 23, []],
@@ -63,57 +27,51 @@ const FIELDS: Array<[number, number, string[]]> = [
 
 const DAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-// each zone's formatter, made once
 const CLOCKS = new Map<string, Intl.DateTimeFormat>();
 
-// Zones
-// =====
-
-// a zone's formatter; null: no such zone
 function clock(zone: string): Intl.DateTimeFormat | null {
-  if (!CLOCKS.has(zone)) {
-    try {
-      const fields = { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", weekday: "short" } as const;
-      CLOCKS.set(zone, new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", ...fields }));
-    } catch {
-      return null;
-    }
+  const had = CLOCKS.get(zone);
+  if (had !== undefined) {
+    return had;
   }
-  return CLOCKS.get(zone)!;
+  try {
+    const fields = { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", weekday: "short" } as const;
+    const made = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", ...fields });
+    CLOCKS.set(zone, made);
+    return made;
+  } catch {
+    return null;
+  }
 }
 
-export function zone_ok(zone: string): boolean {
+function zone_ok(zone: string): boolean {
   return zone !== "" && clock(zone) !== null;
 }
 
-// a time's wall clock in a zone (one that exists: zone_ok)
-export function wall(ms: number, zone: string): Wall {
-  const parts = Object.fromEntries(clock(zone)!.formatToParts(ms).map((p) => [p.type, p.value]));
+function wall(ms: number, zone: string): Wall {
+  const c = clock(zone);
+  if (c === null) {
+    throw new Error("no time zone " + zone);
+  }
+  const parts = Object.fromEntries(c.formatToParts(ms).map((p) => [p.type, p.value]));
   return { y: Number(parts.year), mo: Number(parts.month), d: Number(parts.day), h: Number(parts.hour) % 24, mi: Number(parts.minute), wd: DAYS[parts.weekday] };
 }
 
-// a wall clock as one number, in its order
 function wall_key(w: Wall): number {
   return (((w.y * 100 + w.mo) * 100 + w.d) * 100 + w.h) * 100 + w.mi;
 }
 
-// "2026-10-21 08:00"
-export function wall_show(ms: number, zone: string): string {
+function wall_show(ms: number, zone: string): string {
   const w = wall(ms, zone);
   const two = (n: number) => String(n).padStart(2, "0");
   return w.y + "-" + two(w.mo) + "-" + two(w.d) + " " + two(w.h) + ":" + two(w.mi);
 }
 
-// a wall clock in a zone as a time, the first it shows it; null: none (a
-// daylight-saving change skips it)
-export function wall_time(w: Omit<Wall, "wd">, zone: string): number | null {
+function wall_time(w: Omit<Wall, "wd">, zone: string): number | null {
   return wall_times(w, zone)[0] ?? null;
 }
 
-// each time a zone's clock shows a wall clock, in order: none (a change
-// skips it), one, or two (a change repeats it). Tried by the zone's
-// offsets over the day around it (a zone's offset is within 14 h)
-export function wall_times(w: Omit<Wall, "wd">, zone: string): number[] {
+function wall_times(w: Omit<Wall, "wd">, zone: string): number[] {
   const want = Date.UTC(w.y, w.mo - 1, w.d, w.h, w.mi);
   const key = wall_key({ ...w, wd: 0 });
   const off = (ms: number) => {
@@ -125,11 +83,7 @@ export function wall_times(w: Omit<Wall, "wd">, zone: string): number[] {
   return [...new Set(times)].sort((a, b) => a - b);
 }
 
-// Cron
-// ====
-
-// a cron expression read; else why not
-export function cron_read(expr: string): Cron | string {
+function cron_read(expr: string): Cron | string {
   const fields = expr.trim().toLowerCase().split(/\s+/);
   if (fields.length !== 5) {
     return "A cron has five fields (minute hour day month weekday), not " + fields.length + ".";
@@ -148,7 +102,6 @@ export function cron_read(expr: string): Cron | string {
   return { sets, day: !fields[2].startsWith("*"), week: !fields[4].startsWith("*") };
 }
 
-// a field's values; else why not
 function field_read(field: string, [lo, hi, names]: [number, number, string[]]): Set<number> | string {
   const set = new Set<number>();
   const num = (s: string) => (names.includes(s) ? names.indexOf(s) + lo : /^\d+$/.test(s) ? Number(s) : NaN);
@@ -171,12 +124,7 @@ function cron_day(c: Cron, w: Wall): boolean {
   return c.sets[3].has(w.mo) && (c.day && c.week ? day || week : day && week);
 }
 
-// the cron's first time after `after`, in a zone; null: none in AHEAD
-// days. Its days are walked as the zone's calendar dates, each day's
-// times as wall clocks, each made a time by the zone's own offsets
-// (wall_times), so no daylight-saving change, of any size, skips a day. A
-// wall clock a change skips is none; one it repeats, its first time
-export function cron_next(c: Cron, zone: string, after: number): number | null {
+function cron_next(c: Cron, zone: string, after: number): number | null {
   const w = wall(after, zone);
   const [hours, minutes] = [c.sets[1], c.sets[0]].map((set) => [...set].sort((a, b) => a - b));
   for (let k = 0; k <= AHEAD; k++) {
@@ -197,21 +145,13 @@ export function cron_next(c: Cron, zone: string, after: number): number | null {
   return null;
 }
 
-// the least time between two of a cron's times, by its hours and
-// minutes (minutes; a day's last to the next's first counted as if
-// every day came)
-export function cron_gap(c: Cron): number {
+function cron_gap(c: Cron): number {
   const times = [...c.sets[1]].flatMap((h) => [...c.sets[0]].map((mi) => h * 60 + mi)).sort((a, b) => a - b);
-  const gaps = times.map((t, k) => (k === 0 ? times[times.length - 1] - 1440 : times[k - 1])).map((prev, k) => times[k] - prev);
+  const gaps = times.map((_, k) => (k === 0 ? times[times.length - 1] - 1440 : times[k - 1])).map((prev, k) => times[k] - prev);
   return Math.min(...gaps);
 }
 
-// Schedules
-// =========
-
-// a time to read: "YYYY-MM-DD HH:MM" (or a T between, seconds dropped)
-// in the zone, or with an offset (Z, +02:00) that says it; else why not
-export function at_read(text: string, zone: string): number | string {
+function at_read(text: string, zone: string): number | string {
   const m = /^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d)(?::\d\d(?:\.\d+)?)?\s*(Z|[+-]\d\d:?\d\d)?$/i.exec(text.trim());
   const [y, mo, d, h, mi] = (m ?? []).slice(1, 6).map(Number);
   const day = new Date(Date.UTC(y, mo - 1, d));
@@ -225,11 +165,10 @@ export function at_read(text: string, zone: string): number | string {
   return ms ?? text + " doesn't exist in " + zone + ": a daylight-saving change skips it.";
 }
 
-// a schedule as the tool asks it, made at `now`; else why not
 export function timer_new(args: { message?: unknown; at?: unknown; cron?: unknown; zone?: unknown }, now: number): Timer | string {
-  const text = String(args.message ?? "").trim();
-  const zone = String(args.zone ?? "");
-  const [at, cron] = [args.at, args.cron].map((x) => (x === undefined || x === null || x === "" ? null : String(x)));
+  const text = text_of(args.message).trim();
+  const zone = text_of(args.zone);
+  const [at, cron] = [args.at, args.cron].map((x) => (x === undefined || x === null || x === "" ? null : text_of(x)));
   if (text === "" || text.length > TEXT) {
     return "A schedule's message has 1 to " + TEXT + " characters.";
   }
@@ -246,7 +185,7 @@ export function timer_new(args: { message?: unknown; at?: unknown; cron?: unknow
   if (read !== null && cron_gap(read) < GAP) {
     return "A cron's times must be at least " + GAP + " minutes apart (*/" + GAP + " is the most often).";
   }
-  const ms = read === null ? at_read(at!, zone) : cron_next(read, zone, now);
+  const ms = read !== null ? cron_next(read, zone, now) : at !== null ? at_read(at, zone) : null;
   if (typeof ms === "string") {
     return ms;
   }
@@ -260,23 +199,18 @@ export function timer_new(args: { message?: unknown; at?: unknown; cron?: unknow
   return { id, text, at: new Date(ms).toISOString(), cron: cron === null ? null : cron.trim(), zone };
 }
 
-// a schedule after it came at `now`: due next (a cron's first time after
-// now: one missed many times comes once), or gone (null)
 export function timer_after(t: Timer, now: number): Timer | null {
   const read = t.cron === null ? null : cron_read(t.cron);
   const next = read === null || typeof read === "string" ? null : cron_next(read, t.zone, now);
   return next === null ? null : { ...t, at: new Date(next).toISOString() };
 }
 
-// the message a schedule brings at `now`, a report of the timer: late,
-// it says when it was due
 export function timer_say(t: Timer, now: number): string {
   const due = Date.parse(t.at);
   const late = now - due > LATE ? "\n\n(Due " + wall_show(due, t.zone) + " " + t.zone + "; it came late, at " + wall_show(now, t.zone) + ".)" : "";
   return "[Timer " + t.id + "]\n" + t.text + late;
 }
 
-// when a schedule comes, as said to Unii and the user
 export function timer_when(t: Timer): string {
   const next = wall_show(Date.parse(t.at), t.zone) + " " + t.zone;
   return t.cron === null ? "once, " + next : "cron " + t.cron + ", next " + next;

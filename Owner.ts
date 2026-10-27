@@ -1,36 +1,12 @@
-// Owner
-// =====
-// The server's one owner, in one SQLite file (DIR/unii.db): the
-// sign-ins of their browsers, terminals and devices (sessions, kept as
-// hashes), the tickets that make one, their phones' and browsers' pushes,
-// and the acts done (Server.ts Chat.apply).
-//
-// Sign-in: whoever can run `unii serve link` on the server (Owner.cli)
-// is the owner. It prints a link, /auth?t=<ticket>, good once for
-// LINK, which signs a browser in (a cookie). A terminal or a device
-// (Term.ts, Device.ts) posts a token it made (/api/login) and waits
-// (/api/wait) while the owner opens the link it prints in a browser
-// signed in, and types the code it shows there (in no link). The iOS
-// app's links open it (AASA). Its phones' and browsers' push
-// subscriptions are kept here; Push.ts sends them each turn's last
-// message.
-
 import { Database } from "bun:sqlite";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as config from "./Config.ts";
 import { Disk } from "./Disk.ts";
+import { get, text_of } from "./Json.ts";
 import { Push } from "./Push.ts";
 
-// Types
-// =====
-
-// a sign-in begun: a browser's (session: null) or a terminal's or
-// device's (the hash of the session it waits for, and what it says it is)
 type Ticket = { session: string | null; what: string };
-
-// Constants
-// =========
 
 export const FILE = config.DIR + "/unii.db";
 
@@ -43,18 +19,12 @@ const ADOPTED = new WeakMap<Request, string>();
 // drops a Secure cookie an http one (a server on 127.0.0.1) sets
 const KEEP = "; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000" + (config.SITE.startsWith("https:") ? "; Secure" : "");
 
-// how long an act's answer with words is kept (ms)
 const ACTS = 7 * 864e5;
 
-// how long a ticket lives; a wait for one at most; the tickets of
-// terminals and devices waiting at once (none asks for many: no one
-// fills the db, and anyone who reaches the server would have to keep
-// that many waiting to keep the owner's out)
 const LINK  = 15 * 60 * 1000;
 const WAIT  = 5 * 60 * 1000;
 const ASKS  = 100;
 
-// the browsers that get pushes at once (the oldest beyond go)
 const WEB_PUSHES = 32;
 
 // the sign-in pages' look (Owner.page): a column a phone wide, the mark
@@ -93,13 +63,8 @@ create index if not exists acts_big on acts (at) where ans <> '{}';
 create table if not exists inbox    (hash text primary key, at integer not null);
 `;
 
-// the db (open: Owner.open), the terminals waiting for their sign-in, by
-// session
 let DB: Database | null = null;
 const WAITS = new Map<string, () => void>();
-
-// Owner
-// =====
 
 export namespace Owner {
 
@@ -107,13 +72,10 @@ export namespace Owner {
     if (DB === null) {
       fs.mkdirSync(config.DIR, { recursive: true, mode: 0o700 });
       DB = Disk.db(FILE);
-      DB.exec(SCHEMA);
+      DB.run(SCHEMA);
     }
     return DB;
   }
-
-  // Sign-in
-  // -------
 
   export function hash(token: string): string {
     return new Bun.CryptoHasher("sha256").update(token).digest("hex");
@@ -141,7 +103,6 @@ export namespace Owner {
     return COOKIE + "=" + token + KEEP;
   }
 
-  // whether a request is the owner's (a session kept)
   export function is(req: Request): boolean {
     return Owner.open().query("select 1 from sessions where hash = ?").get(Owner.hash(Owner.token(req))) !== null;
   }
@@ -158,31 +119,20 @@ export namespace Owner {
     return token;
   }
 
-  // a ticket not expired, by its token: used (gone), or kept (the
-  // confirm page reads it)
   export function ticket_read(token: string, use: boolean): Ticket | null {
     const sql = use ? "delete from tickets where hash = ? and expires >= ? returning data" : "select data from tickets where hash = ? and expires >= ?";
     const row = Owner.open().query(sql).get(Owner.hash(token), Date.now()) as { data: string } | null;
-    return row === null ? null : JSON.parse(row.data);
+    return row === null ? null : (JSON.parse(row.data) as Ticket);
   }
 
-  // the six digits a terminal's sign-in shows and the owner types on the
-  // confirm page: proof they hold that terminal (in no link); derived
-  // from the session, so nothing extra is stored
   export function code(session: string): string {
     return (parseInt(session.slice(0, 8), 16) % 1e6).toString().padStart(6, "0");
   }
 
-  // the sessions kept, by hash: a socket of one gone closes (Server.ts)
   export function kept(): Set<string> {
     return new Set((Owner.open().query("select hash from sessions").all() as { hash: string }[]).map((r) => r.hash));
   }
 
-  // `unii serve sessions`: every sign-in, numbered, this computer's
-  // terminal's and device's marked (their tokens in ~/.config/unii);
-  // `unii serve revoke <n>|--all`: one or all gone, its sockets closed
-  // within PING / 2 by the running server, its pushes with it. Last use
-  // isn't tracked
   export async function sessions(revoke?: string): Promise<void> {
     const db = Owner.open();
     const rows = db.query("select hash, what, at from sessions order by rowid").all() as { hash: string; what: string; at: number }[];
@@ -199,16 +149,14 @@ export namespace Owner {
       return console.log("Signed out " + revoke + " (" + (row.what || "a session") + ").");
     }
     const Client = await import("./Client.ts");
-    const tui = Client.read("tui").tokens ?? {};
-    const mine = new Map<string, string>([...Object.values(tui).map((t) => [Owner.hash(String(t)), "this computer's terminal"] as [string, string]), [Owner.hash(String(Client.read("device").token ?? "")), "this computer's device"]]);
+    const tui = Client.tokens(Client.read("tui"));
+    const mine = new Map<string, string>([...Object.values(tui).map((t) => [Owner.hash(t), "this computer's terminal"] as [string, string]), [Owner.hash(text_of(Client.read("device").token)), "this computer's device"]]);
     const kind = (what: string) => (what.startsWith("the device ") ? "device" : what.startsWith("the terminal ") ? "terminal" : what === "a browser" ? "browser" : "-");
     const when = (at: number) => (at > 0 ? new Date(at).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "before arteeh.17");
     rows.forEach((r, i) => console.log(String(i + 1).padStart(3) + ". " + kind(r.what).padEnd(9) + (r.what || "-").padEnd(32) + " signed in " + when(r.at) + (mine.has(r.hash) ? "  (" + mine.get(r.hash) + ")" : "")));
     console.log(rows.length === 0 ? "No sessions." : "Last use isn't tracked. `unii serve revoke <n>` signs one out; `--all`, all.");
   }
 
-  // `unii serve link`: a browser's sign-in link, printed; run where the
-  // server's files are (who can, owns them)
   export function cli(): void {
     console.log("Open this link in your browser within 15 minutes to sign in (it works once):\n\n  " + config.SITE + "/auth?t=" + Owner.ticket({ session: null, what: "" }) + "\n");
   }
@@ -252,11 +200,6 @@ export namespace Owner {
     console.log(Owner.inbox_new());
   }
 
-  // Acts
-  // ----
-  // The acts recorded (Server.ts Chat.act: posts, stops that ended work),
-  // by id, kept for good, so none runs again; an answer with words (a
-  // recording's) is kept ACTS, then only that it was done
 
   export function act_put(id: string, ans: object): void {
     const db = Owner.open();
@@ -264,30 +207,25 @@ export namespace Owner {
     db.query("insert or ignore into acts values (?, ?, ?)").run(id, JSON.stringify(ans), Date.now());
   }
 
-  // null: not done
   export function act_get(id: string): object | null {
     const row = Owner.open().query("select ans from acts where id = ?").get(id) as { ans: string } | null;
-    return row === null ? null : JSON.parse(row.ans);
+    return row === null ? null : (JSON.parse(row.ans) as object);
   }
 
-  // HTTP
-  // ----
-
-  // null: not a request of sign-in or pushes
   export async function http(req: Request): Promise<Response | null> {
     const db = Owner.open();
     const url = new URL(req.url);
     const owner = Owner.is(req);
     switch (url.pathname) {
       case "/api/login": {
-        const body = await req.json().catch(() => ({}));
-        const key = String(body.key ?? "");
+        const body: unknown = await req.json().catch(() => ({}));
+        const key = text_of(get(body, "key"));
         const asks = db.query("select count(*) n from tickets where expires >= ? and data ->> 'session' is not null").get(Date.now()) as { n: number };
         if (key.length < 32 || asks.n >= ASKS) {
           return Response.json({ error: key.length < 32 ? "No key." : "Too many sign-ins waiting: try again in 15 minutes." }, { status: key.length < 32 ? 400 : 429 });
         }
         const session = Owner.hash(key);
-        const what = String(body.what ?? "a terminal").replace(/[^\w .,:@()-]/g, "").slice(0, 80);
+        const what = text_of(get(body, "what"), "a terminal").replace(/[^\w .,:@()-]/g, "").slice(0, 80);
         const link = config.SITE + "/auth?t=" + Owner.ticket({ session, what });
         return Response.json({ url: link, code: Owner.code(session) });
       }
@@ -354,10 +292,6 @@ export namespace Owner {
     return null;
   }
 
-  // a browser's notifications (main.ts notify): GET, the server's key and
-  // whether this sign-in has that endpoint (?endpoint=); POST, its
-  // subscription, kept for this sign-in (posted from another, it moves
-  // there); DELETE, its endpoint, forgotten
   export async function web_subscribe(req: Request): Promise<Response> {
     const db = Owner.open();
     const session = Owner.hash(Owner.token(req));
@@ -366,17 +300,15 @@ export namespace Owner {
       const row = db.query("select 1 from web_pushes where endpoint = ? and session = ?").get(endpoint, session);
       return Response.json({ key: Push.keys()?.public ?? null, on: row !== null });
     }
-    const body = await req.json().catch(() => null);
+    const body: unknown = await req.json().catch(() => null);
     if (req.method === "DELETE") {
-      db.query("delete from web_pushes where endpoint = ?").run(String(body?.endpoint ?? ""));
+      db.query("delete from web_pushes where endpoint = ?").run(text_of(get(body, "endpoint")));
       return Response.json({ ok: true });
     }
     const sub = Push.sub_read(body);
     if (req.method !== "POST" || sub === null || (await Push.inside(sub.endpoint))) {
       return Response.json({ error: "Not a push subscription" }, { status: 400 });
     }
-    // kept only if this sign-in still lives (it may have ended while the
-    // body was read)
     const sql = "insert or replace into web_pushes select ?, ?, ?, hash from sessions where hash = ?";
     if (db.query(sql).run(sub.endpoint, sub.p256dh, sub.auth, session).changes === 0) {
       return Response.json({ error: "Signed out" }, { status: 401 });
@@ -385,19 +317,18 @@ export namespace Owner {
     return Response.json({ ok: true });
   }
 
-  // the answer that signs a browser out
   export function out(): Response {
     return new Response(null, { status: 204, headers: { "set-cookie": COOKIE + "=; Path=/; Max-Age=0" } });
   }
 
-  // a browser's link's button: the browser signs in (its sign-in before
-  // ends, and its pushes with it). Or the code typed on the confirm page
-  // (by the owner: a browser signed in): right, the terminal or device
-  // signs in, its wait on /api/wait woken
   export async function confirm(req: Request): Promise<Response> {
     const form = await req.formData().catch(() => new FormData());
-    const t = String(form.get("t") ?? "");
-    const typed = String(form.get("code") ?? "").replace(/\D/g, "");
+    const field = (name: string) => {
+      const got = form.get(name);
+      return typeof got === "string" ? got : "";
+    };
+    const t = field("t");
+    const typed = field("code").replace(/\D/g, "");
     const link = Owner.ticket_read(t, false);
     if (link !== null && link.session === null) {
       Owner.ticket_read(t, true);

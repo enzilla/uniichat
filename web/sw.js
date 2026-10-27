@@ -1,20 +1,5 @@
 // UniiChat's service worker
-// =========================
-// The app's shell (SHELL), kept as last fetched: a page opened while the
-// server is down gets it, and waits there for the server (main.ts
-// boot_me) instead of the browser's error page. The server's answer
-// always comes first, so a deploy shows at once; nothing else (the API,
-// the socket, the chat's pages and images) is ever kept or answered here.
-// A push (Push.ts, Push.browsers) shows the start of a reply, or which
-// tasks of the pending list need the user (TaskPush.ts: only their ids),
-// unless a tab of the chat is in front, in place of the one before of its
-// kind; it sets the app's badge to the user's count of tasks (where the
-// browser has one: an installed app). A tap opens the chat; a task's, the
-// Mesa (main.ts: ?mesa, or a message to a tab open).
-
-// (named by the web app's build, which the server writes in: a new
-// build's drops the old one's as it starts)
-const CACHE = "unii-shell-{build}";
+// ==================const CACHE = "unii-shell-{build}";
 const SHELL = ["/", "/app.js", "/style.css", "/favicon.svg", "/mark.svg", "/manifest.webmanifest", "/icon-192.png"];
 const PAGES = ["/", "/settings", "/account", "/tree"];
 
@@ -30,8 +15,6 @@ self.addEventListener("activate", (ev) => {
   ev.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
 });
 
-// the shell's files, and a page of the app (PAGES: all index.html, kept
-// as "/")
 self.addEventListener("fetch", (ev) => {
   const req = ev.request;
   const url = new URL(req.url);
@@ -42,9 +25,6 @@ self.addEventListener("fetch", (ev) => {
   ev.respondWith(fresh(req, page ? "/" : url.pathname));
 });
 
-// the server's answer (never the browser's cache unchecked: a new build
-// shows at once), kept; none, or the server down behind a proxy (5xx),
-// the one kept
 async function fresh(req, key) {
   const cache = await caches.open(CACHE);
   try {

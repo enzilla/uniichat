@@ -1,16 +1,6 @@
-// Write
-// =====
-// A file replaced at once by `text` (null: removed): written whole beside
-// it (<file>.<pid>.new), readable by `mode` from its first byte, synced,
-// then moved in, and its folder synced (the move durable too; not on
-// Windows, which can't), so a crash leaves the old file or the new, never
-// half, and two processes writing it never share a temp file. Imports nothing
-// of the server's: devices and terminals write their files with it too.
-// On Windows a mode is no protection (only its write bit counts): the
-// file's ACL, from the user's profile folder it is in, keeps others out.
-
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { err_code } from "./Err.ts";
 
 const WIN = process.platform === "win32";
 
@@ -44,8 +34,6 @@ export function write_whole(file: string, text: string | null, mode = 0o600): vo
   sync_dir(path.dirname(file));
 }
 
-// a folder's entries made durable (a file moved in); skipped on Windows,
-// and if it fails: the file is in place already
 function sync_dir(dir: string): void {
   if (WIN) {
     return;
@@ -67,8 +55,8 @@ export function move_over(from: string, to: string): void {
     try {
       fs.renameSync(from, to);
       return;
-    } catch (err: any) {
-      if (!WIN || k >= TRIES || !["EPERM", "EACCES", "EBUSY"].includes(err?.code)) {
+    } catch (err) {
+      if (!WIN || k >= TRIES || !["EPERM", "EACCES", "EBUSY"].includes(err_code(err) ?? "")) {
         throw err;
       }
       Bun.sleepSync(APART);
