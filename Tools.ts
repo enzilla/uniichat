@@ -362,9 +362,9 @@ export namespace Tools {
   }
 
   // the skills block: each skill, by device (in their names' order), with
-  // what it is for. A call puts it before the memory's view, where it
-  // stays the same from turn to turn, so the vendor's cache keeps it: it
-  // changes only as a device opens or closes or its skills do
+  // what it is for. A call puts it after the memory's view: skills come
+  // and go (a plugin writes them by itself, several a day), and a change
+  // before the view would cost the cache the whole prompt
   export function skills(tools: Tools): Block {
     const opened = Tools.opened(tools).sort(([a], [b]) => a.localeCompare(b));
     const lines = opened.flatMap(([name, d]) => d.skills.map((s) => "- " + name + ": " + s.name + ": " + s.description.replace(/\s+/g, " ")));
@@ -376,12 +376,17 @@ export namespace Tools {
   // organization's, its user's, then those of the repositories and files
   // worked on so far. A call puts it first, before the memory's view,
   // where it stays the same from turn to turn while they do, so the
-  // vendor's cache keeps it
-  export function instructions(tools: Tools): Block {
+  // vendor's cache keeps it. hooks: only its SessionStart hooks' output
+  // instead, which changes as the device's Claude Code does (a plugin
+  // that lists its skills): a call puts it after the view, with the
+  // skills, so a change there costs the cache only what follows the view
+  export function instructions(tools: Tools, hooks = false): Block {
     const opened = Tools.opened(tools).sort(([a], [b]) => a.localeCompare(b));
     const one = ([name, d]: [string, Device]) => {
-      const parts = [...d.rules, ...d.proj.filter((p) => !d.rules.some((r) => r.id === p.id))];
-      return parts.length === 0 ? "" : "# Instructions on device " + name + "\n\nWhat Claude Code would load there, in its order: the organization's and the user's standing instructions, then those of the repositories and files worked on so far. Follow them in all work on that device, as the user's own.\n\n" + Instructions.parts_text(parts);
+      const all = [...d.rules, ...d.proj.filter((p) => !d.rules.some((r) => r.id === p.id))];
+      const parts = all.filter((p) => p.id.startsWith("hook:") === hooks);
+      const head = hooks ? "# Session start on device " + name + "\n\nWhat Claude Code's SessionStart hooks there gave as context, part of its instructions above.\n\n" : "# Instructions on device " + name + "\n\nWhat Claude Code would load there, in its order: the organization's and the user's standing instructions, then those of the repositories and files worked on so far. Follow them in all work on that device, as the user's own.\n\n";
+      return parts.length === 0 ? "" : head + Instructions.parts_text(parts);
     };
     const text = opened.map(one).filter((t) => t !== "").join("\n\n");
     return { text: text === "" ? "" : text + "\n\n", mark: false };
@@ -1230,7 +1235,7 @@ export namespace Tools {
     const run = Pick.ask(Tools.pick(tools, agent));
     const own = Memory.file_text(PROMPTS.prompt.file);
     const system = own === "" ? SUB : SUB + "\n\n" + AGENT_PROMPT + "\n\n" + own;
-    const blocks = [Tools.instructions(tools), Tools.skills(tools), ...agent.view, Tools.devices(tools), log];
+    const blocks = [Tools.instructions(tools), ...agent.view, Tools.skills(tools), Tools.instructions(tools, true), Tools.devices(tools), log];
     return { ...run, system, blocks, searches: SEARCHES, server, agent: true, who: agent.name };
   }
 

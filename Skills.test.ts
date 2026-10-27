@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Machine } from "./Machine.ts";
+import { Tools } from "./Tools.ts";
 
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-skills-");
 
@@ -76,4 +77,16 @@ test("without Claude Code, only the Agent Skills, as before", () => {
   put(h + "/.agents/skills/so/SKILL.md", md("name: so\ndescription: Só esta."));
   put(h + "/.agents/skills/pasta/SKILL.md", md("description: Sem nome não vale aqui."));
   expect(Machine.skills(h).map((s) => s.name)).toEqual(["so"]);
+});
+
+test("the standing instructions leave out the session start hooks' output, which comes apart (after the view: it changes as plugins write skills)", () => {
+  const rules = [{ id: "user", title: "the user's", text: "Regra fixa." }, { id: "hook:/p:cmd", title: "a SessionStart hook's output (p plugin)", text: "Skills: 12 novas." }];
+  const d = { terms: new Map([["t", {}]]), rules, proj: [] };
+  const tools = { devices: new Map([["enzo", d]]) } as unknown as Parameters<typeof Tools.instructions>[0];
+  const standing = Tools.instructions(tools).text;
+  const hooks = Tools.instructions(tools, true).text;
+  expect(standing).toContain("Regra fixa.");
+  expect(standing).not.toContain("Skills: 12 novas.");
+  expect(hooks).toContain("Skills: 12 novas.");
+  expect(hooks).not.toContain("Regra fixa.");
 });
