@@ -1,4 +1,4 @@
-UniiChat (enzilla's fork)
+UniiChat
 =========================
 
 A fork of [arteeh's fork](https://github.com/arteeh/uniichat), with
