@@ -361,7 +361,7 @@ test("views: acts for a draft and a talk; /p shows fields and the thread", () =>
 });
 
 test("web: fields and thread drawn escaped, drafts checked, whose turn shown; Unii's Markdown without raw HTML", async () => {
-  const Html = await import("./web/src/Html.ts");
+  const Html = await import("./web/src/Render.tsx");
   const s = T.tasks_load(dir);
   const bad = "<img src=x onerror=alert(1)>\"'";
   add(s, { title: "A", fields: [
@@ -379,8 +379,8 @@ test("web: fields and thread drawn escaped, drafts checked, whose turn shown; Un
   expect(html).not.toContain('href="javascript:');
   expect(html).not.toContain("\u001b");
   expect(html).toContain("&lt;/textarea&gt;&lt;script&gt;");
-  expect(html).toContain('<input type="checkbox" name="f-P1-dias" value="ter" checked>');
-  expect(html).toContain('<input type="checkbox" name="f-P1-dias" value="seg">');
+  expect(html).toContain('<input type="checkbox" name="f-P1-dias" checked="" value="ter"/>');
+  expect(html).toContain('<input type="checkbox" name="f-P1-dias" value="seg"/>');
   expect(html).toContain('<span class="talk user">sua vez</span>');
   expect(html).toContain("<strong>ok</strong>");
   expect(html).toContain('<section class="thread"><p class="sub">Conversa (2)</p>');

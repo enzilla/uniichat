@@ -1,8 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   // what Build.ts compiles, and the page's script (bun run web); Build.ts itself comes from the build script
-  "entry": ["Cli.ts", "web/src/main.ts"],
-  "project": ["*.ts", "web/src/*.ts"],
+  "entry": ["Cli.ts", "web/src/main.tsx"],
+  "project": ["*.ts", "*.tsx", "web/src/*.ts", "web/src/*.tsx"],
   // macOS's own: Device.ts asks it the computer's name
   "ignoreBinaries": ["scutil"]
 }

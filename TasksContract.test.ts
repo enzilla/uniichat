@@ -14,10 +14,10 @@ import * as Restart from "./Restart.ts";
 import * as T from "./Tasks.ts";
 import { Tools, type Tools as Kit } from "./Tools.ts";
 import * as View from "./View.ts";
-import * as Html from "./web/src/Html.ts";
+import * as Html from "./web/src/Render.tsx";
 
 // the markup without its icons (Icons.ts), which these don't test
-const bare = (html: string | undefined) => (html ?? "").replace(/<svg class="ic"[\s\S]*?<\/svg>/g, "");
+const bare = (html: string | undefined) => (html ?? "").replace(/<span class="icw" aria-hidden="true">[\s\S]*?<\/svg><\/span>/g, "");
 
 // evidence that closes a task (the evidence round): a file that exists
 const EV = { type: "file", path: import.meta.path };

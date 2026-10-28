@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as Pipeline from "./Pipeline.ts";
 import * as Tasks from "./Tasks.ts";
 import * as View from "./View.ts";
-import * as Html from "./web/src/Html.ts";
+import * as Html from "./web/src/Render.tsx";
 
 const ROOT = fs.mkdtempSync("/tmp/unii-pipeline-");
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));

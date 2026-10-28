@@ -11,10 +11,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as T from "./Tasks.ts";
 import * as View from "./View.ts";
-import * as Html from "./web/src/Html.ts";
+import * as Html from "./web/src/Render.tsx";
 
 // the markup without its icons (Icons.ts), which these don't test
-const bare = (html: string | undefined) => (html ?? "").replace(/<svg class="ic"[\s\S]*?<\/svg>/g, "");
+const bare = (html: string | undefined) => (html ?? "").replace(/<span class="icw" aria-hidden="true">[\s\S]*?<\/svg><\/span>/g, "");
 
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-desk-");
 const NOW  = Date.parse("2026-10-23T12:00:00Z");

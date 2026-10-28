@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as T from "./Tasks.ts";
 import * as View from "./View.ts";
-import * as Html from "./web/src/Html.ts";
+import * as Html from "./web/src/Render.tsx";
 
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-recommend-");
 const NOW  = Date.parse("2026-10-25T12:00:00Z");
@@ -133,7 +133,7 @@ test("web: the recommended choice framed and tagged (not twice if its text says 
   expect(html).toContain('>Pode seguir <span class="rec-tag">recomendada</span></button>');
   expect(html).toContain('<button class="accept" aria-keyshortcuts="a" title="Atalho: a"');
   expect(html).toContain(">Aceitar as recomendadas</button>");
-  expect(html).toContain('<label class="rec"><input type="checkbox" name="f-' + t.id + '-dias" value="seg"> seg <span class="rec-tag">recomendada</span></label>');
+  expect(html).toContain('<label class="rec"><input type="checkbox" name="f-' + t.id + '-dias" value="seg"/> seg <span class="rec-tag">recomendada</span></label>');
   expect(html).toContain('<p class="rec-text"><span class="rec-tag">recomendado</span> nenhuma</p>');
   expect(html).toContain("O Unii é avisado sozinho em até 1 min.");
   expect(html).not.toContain("Avisar o Unii agora");
@@ -149,7 +149,7 @@ test("web: the recommended choice framed and tagged (not twice if its text says 
   T.task_say(s, u.id, View.CHASE, NOW);
   const asked = Html.desk_html(T.tasks_view(s, NOW), "", "", u.id, NOW).detail.join("");
   // why: visible text, the button's description (R3), not a title alone
-  expect(asked).toContain('<button class="chase" disabled aria-describedby="chase-why-' + u.id + '"');
+  expect(asked).toContain('<button class="chase" disabled="" aria-describedby="chase-why-' + u.id + '"');
   expect(asked).toContain('<span class="hint" id="chase-why-' + u.id + '">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>');
   expect(asked).not.toContain('title="O Unii ainda não respondeu');
   expect(asked).toContain(">Cobrado: aguardando o Unii</button>");

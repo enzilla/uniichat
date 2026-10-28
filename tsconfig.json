@@ -13,7 +13,8 @@
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    "noImplicitOverride": true
+    "noImplicitOverride": true,
+    "jsx": "react-jsx"
   },
-  "include": ["*.ts", "web/src/*.ts"]
+  "include": ["*.ts", "*.tsx", "web/src/*.ts", "web/src/*.tsx"]
 }
