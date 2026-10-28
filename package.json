@@ -4,7 +4,7 @@
   "scripts": {
     "build": "bun Build.ts",
     "test": "bun test",
-    "web": "bun build web/src/main.tsx --outfile web/app.js --target browser --minify",
+    "web": "bun build web/src/main.tsx --outfile web/app.js --target browser --minify --define process.env.NODE_ENV='\"production\"'",
     "check": "tsc && bun --bun eslint && knip"
   },
   "dependencies": {

@@ -30,10 +30,21 @@ function Choice({ c }: { c: View.Choice }): ReactNode {
   );
 }
 
-export function Pick({ fold, on, knobs, talk }: { fold: string | null; on: boolean; knobs: View.Knob[]; talk?: View.Talk | null }): ReactNode {
-  const parts = knobs.map((k) => (k.choices.length === 0
-    ? <span className="knob" title={k.hint}>{k.text}</span>
-    : <Knob move={k.move} hint={k.hint} text={k.text}>{k.choices.map((c, i) => <Choice key={i} c={c} />)}</Knob>));
+// the model, effort and speed, each a menu of its choices (one with none,
+// a word)
+export function Knobs({ knobs }: { knobs: View.Knob[] }): ReactNode {
+  return knobs.map((k, i) => (
+    <Fragment key={k.move}>
+      {i === 0 ? null : <span className="dot">·</span>}
+      {k.choices.length === 0
+        ? <span className="knob" title={k.hint}>{k.text}</span>
+        : <Knob move={k.move} hint={k.hint} text={k.text}>{k.choices.map((c, j) => <Choice key={j} c={c} />)}</Knob>}
+    </Fragment>
+  ));
+}
+
+// fold all, the talk's mode, and how much of its space it used (a meter)
+export function Talk({ fold, on, talk }: { fold: string | null; on: boolean; talk?: View.Talk | null }): ReactNode {
   const [now, about] = MODES[talk == null ? 0 : 1];
   const used = talk == null ? 0 : Math.round(talk.used * 100);
   const heat = used >= 80 ? " hot" : used >= 50 ? " warm" : "";
@@ -48,10 +59,7 @@ export function Pick({ fold, on, knobs, talk }: { fold: string | null; on: boole
           })}
         </Knob>
       )}
-      {talk == null
-        ? <span className="rule"></span>
-        : <span className={"rule meter" + heat} style={{ "--used": used + "%" } as CSSProperties} title={`Conversation: ${used}% of space used (${View.talk_tokens(talk)})`} role="meter" aria-valuenow={used} aria-valuemin={0} aria-valuemax={100} aria-label="Conversation space used"></span>}
-      {parts.map((part, i) => <Fragment key={i}>{i === 0 ? null : <span className="dot">·</span>}{part}</Fragment>)}
+      {talk == null ? null : <span className={"rule meter" + heat} style={{ "--used": used + "%" } as CSSProperties} title={`Conversation: ${used}% of space used (${View.talk_tokens(talk)})`} role="meter" aria-valuenow={used} aria-valuemin={0} aria-valuemax={100} aria-label="Conversation space used"></span>}
     </>
   );
 }

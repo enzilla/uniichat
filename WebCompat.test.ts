@@ -12,7 +12,8 @@ import * as Md from "./Md.ts";
 test("web/app.js and the sources bundled in it hold no regex lookbehind", () => {
   const LB = /\(\?<[!=]/;
   expect(LB.test(fs.readFileSync(import.meta.dir + "/web/app.js", "utf8"))).toBe(false);
-  for (const f of ["Md.ts", "TaskDeps.ts", "web/src/Html.ts", "web/src/main.ts", "View.ts"]) {
+  const web = fs.readdirSync(import.meta.dir + "/web/src").filter((f) => /\.tsx?$/.test(f)).map((f) => "web/src/" + f);
+  for (const f of ["Md.ts", "TaskDeps.ts", "View.ts", ...web]) {
     expect(LB.test(fs.readFileSync(import.meta.dir + "/" + f, "utf8"))).toBe(false);
   }
 });

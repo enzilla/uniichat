@@ -104,7 +104,7 @@ function Chip({ url, name }: { url: string; name: string }): ReactNode {
   return <a className="file" href={url} download={shown} title={"Download " + shown}><Icon name="read" /><span className="fname">{shown}</span><small data-of={url}></small></a>;
 }
 
-export function Spans({ spans }: { spans: Md.Span[] }): ReactNode {
+function Spans({ spans }: { spans: Md.Span[] }): ReactNode {
   return spans.map((s, k) => <Span key={k} s={s} />);
 }
 

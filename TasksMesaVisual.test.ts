@@ -211,15 +211,14 @@ test("the limit: the user's by its kind, past due said, waiting for Unii not lat
   expect([View.ago_said(new Date(NOW).toISOString(), NOW + 30e3), View.ago_said(new Date(NOW).toISOString(), NOW + 5 * 60e3), View.ago_said(new Date(NOW + 2 * H).toISOString(), NOW), View.ago_said("x", NOW)]).toEqual(["agora", "há 5 min", "em 2 h", ""]);
 });
 
-test("the Conversa shows no list: only the header's Mesa · N; the Mesa's article in two columns, stacked on a phone", () => {
+test("the Conversa shows no list: only the rail's Mesa with its count; the Mesa's article in two columns, stacked on a phone", () => {
   const html = fs.readFileSync(import.meta.dir + "/web/index.html", "utf8");
   expect(html).not.toContain('id="tasks"');
   expect(html).not.toContain('class="tasks"');
-  expect(html).toContain('<button class="mode"');
-  const main = fs.readFileSync(import.meta.dir + "/web/src/main.ts", "utf8");
-  expect(main).not.toContain('"#tasks');
-  expect(main).not.toContain("tasks_bar");
-  expect(main).toContain('"Mesa · " + turn');
+  const app = fs.readFileSync(import.meta.dir + "/web/src/App.tsx", "utf8");
+  expect(app).not.toContain('"#tasks');
+  expect(app).not.toContain("tasks_bar");
+  expect(app).toContain('label="Mesa" here={place === "desk"} badge={turn}');
   expect("tasks_html" in Html).toBe(false);
   const css = fs.readFileSync(import.meta.dir + "/web/style.css", "utf8");
   expect(css).not.toContain("#tasks");

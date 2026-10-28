@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
@@ -8,123 +8,22 @@
 <link rel="icon" href="/favicon.svg">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2">
-<meta name="theme-color" content="#f7f6f2">
-<!-- the theme picked in the menu (main.ts theme_set), light unless dark, set before the page paints -->
-<script>try{if(localStorage.getItem("unii.theme")==="dark"){document.documentElement.dataset.theme="dark";document.querySelector('meta[name="theme-color"]').content="#121212"}}catch{}</script>
+<meta name="theme-color" content="#0b0b0d">
+<!-- the theme picked in the menu (main.tsx theme_swap), dark unless light, set before the page paints -->
+<script>document.documentElement.dataset.theme="dark";try{if(localStorage.getItem("unii.theme")==="light"){document.documentElement.dataset.theme="light";document.querySelector('meta[name="theme-color"]').content="#f6f5f2"}}catch{}</script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="UniiChat">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<!-- Bricolage Grotesque (titles) and IBM Plex Sans and Mono (text, code); offline, the system's -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
 <link rel="stylesheet" href="/style.css">
 <script type="module" src="/app.js"></script>
 </head>
 <body class="guest">
-<header>
-  <button class="brand" aria-label="UniiChat" data-go="/" data-act='{"$":"Goto","name":null}'><i class="mark"></i><span>UniiChat</span></button>
-  <span class="net">offline</span>
-  <button class="imping" popovertarget="import" hidden><span></span><progress max="1" value="0"></progress></button>
-  <button class="timers" popovertarget="timers" title="Schedules" aria-label="Schedules" hidden><span></span></button>
-  <button class="mode" type="button" title="Abrir a Mesa de pendências (m)" hidden><span></span></button>
-  <button class="menu" popovertarget="menu" aria-label="Menu"></button>
-</header>
-<main id="log"><div class="rows"></div><div class="tail"></div></main>
-<main id="account" hidden></main>
-<!-- the Mesa: the pending list, a modal over the chat (main.ts desk; Html.desk_html); Esc or m closes it -->
-<dialog id="mesa" aria-labelledby="mesa-title">
-<div class="bar"><h2 id="mesa-title">Mesa</h2><span class="keys"><kbd>m</kbd> ou <kbd>Esc</kbd> fecha</span><button class="shut" type="button" aria-label="Fechar a Mesa" title="Fechar (Esc)"></button></div>
-<div id="desk" hidden>
-  <nav class="list" aria-label="Pendências">
-    <div class="find"><input class="q" type="search" placeholder="Buscar pendências" aria-label="Buscar pendências" autocomplete="off"><select class="ref" aria-label="Projeto"></select></div>
-    <div class="rows" role="listbox" aria-label="Pendências"></div>
-    <button class="tell" type="button" data-act='{"$":"TasksTell"}' title="Suas respostas já estão salvas; o Unii as vê quando voltar a trabalhar. Este botão o chama agora." hidden>Avisar o Unii agora (<span></span>)</button>
-    <p class="pipe-go"><button type="button" class="link" data-go="/pipeline">Ver o painel da pipeline</button></p>
-    <p class="keys"><kbd>j</kbd> <kbd>k</kbd> ou setas navegam · <kbd>Enter</kbd> abre · <kbd>/</kbd> busca</p>
-  </nav>
-  <section class="pane" aria-label="Pendência"></section>
-  <p class="sr live" aria-live="polite" aria-atomic="true"></p>
-</div>
-</dialog>
-<main id="tree" hidden>
-  <nav class="top"><a class="back" href="/" data-go="/">← Chat</a><a class="tab" href="/tree#view" data-go="/tree#view" data-tab="VIEW">VIEW</a><a class="tab" href="/tree" data-go="/tree" data-tab="TREE">TREE</a><small class="legend"></small><button class="prev" aria-label="Level below">‹</button><button class="next" aria-label="Level above">›</button></nav>
-  <section class="view" tabindex="-1"></section>
-  <section class="bracket" tabindex="-1"></section>
-</main>
-<footer>
-  <button class="mine" type="button" title="Up to your message" hidden><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
-  <button class="down" type="button" title="Down to the end" hidden><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
-  <div id="toast" hidden></div>
-  <!-- what Unii is doing while it works (main.ts bars) -->
-  <p id="doing" role="status" aria-live="polite" hidden></p>
-  <nav id="pick"></nav>
-  <form class="composer">
-    <div class="field" role="textbox" aria-multiline="true" aria-label="Mensagem" spellcheck="true"></div><div class="voice"><canvas></canvas><span>0:00</span></div>
-    <div class="bar">
-      <button class="attach" type="button" aria-label="Anexar arquivos" title="Anexar arquivos"></button>
-      <input type="file" multiple hidden>
-      <button class="mic" type="button" aria-label="Ditar" title="Ditar"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
-      <!-- the queue jump: only while Unii works and a message waits (main.ts bars, View.view_queued) -->
-      <span class="queued" hidden></span><button class="force" type="button" title="Interrompe o turno do Unii; as mensagens na fila vão em seguida" hidden>Enviar agora</button>
-      <button class="send" type="submit" aria-label="Enviar"><span class="go"></span><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
-    </div>
-  </form>
-  <nav id="tabs"></nav>
-</footer>
-<div id="timers" popover>
-  <p class="title">Schedules</p>
-  <ul></ul>
-</div>
-<div id="menu" popover>
-  <button data-go="/settings" data-ic="cog">Configurações</button>
-  <button data-go="/pipeline" data-ic="pipeline">Pipeline</button>
-  <button data-go="/tree" data-ic="memory">Memória</button>
-  <button class="imp" data-ic="import">Importar histórico</button>
-  <button class="theme" type="button"></button>
-  <button class="out" data-ic="out">Sair</button>
-</div>
-<div id="import" popover>
-  <section class="start" hidden>
-    <p class="title">How do you want to start?</p>
-    <p class="sub">Both are fine. You can import any time from the menu.</p>
-    <div class="acts two"><button type="button" class="into">Import my past AI chats</button><button type="button" class="skip">Start fresh</button></div>
-  </section>
-  <form>
-    <p class="title">Import your past AI chats</p>
-    <p class="desk sub">Choose your <code>~/.claude</code> or <code>~/.codex</code> folder (hidden: <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd> in the dialog).</p>
-    <p class="phone sub">Import on your computer: open this site there, or type <code>/import</code> in unii.</p>
-    <input type="file" name="dir" webkitdirectory hidden>
-    <input type="file" name="zip" accept=".zip,.json" multiple hidden>
-    <fieldset class="src desk" data-app="Claude">
-      <legend>Claude</legend>
-      <details class="pick" hidden><summary></summary><div class="sessions"></div></details>
-      <button type="button" class="pickzip">Add a website export</button>
-    </fieldset>
-    <fieldset class="src desk" data-app="ChatGPT">
-      <legend>ChatGPT</legend>
-      <details class="pick" hidden><summary></summary><div class="sessions"></div></details>
-      <button type="button" class="pickzip">Add a website export</button>
-    </fieldset>
-    <fieldset class="want" hidden>
-      <label class="tools"><input type="checkbox" name="tools"> Tool calls</label>
-      <label class="since"><span class="from"></span><span class="to"></span><input type="range" name="back" min="0"></label>
-    </fieldset>
-    <p class="found"></p>
-    <p class="guess"></p>
-    <div class="acts"><button type="button" class="skip">Skip</button><button type="button" class="pickdir desk">Choose folder</button><button class="go" hidden>Import</button></div>
-  </form>
-  <section class="prog" hidden>
-    <p class="title">Importing your history</p>
-    <progress max="1" value="0"></progress>
-    <p class="pct"></p>
-    <p class="sub"></p>
-    <div class="acts"><button type="button" class="skip">Go to the chat</button><button type="button" class="go flow"></button></div>
-  </section>
-</div>
-<!-- the settings, a modal over the chat at /settings: main.ts route moves #account in -->
-<dialog id="settings" aria-label="Configurações"><button class="shut" type="button" aria-label="Fechar as configurações" title="Fechar (Esc)"></button></dialog>
-<!-- a picture seen whole, over the chat (web/src/Viewer.ts) -->
-<dialog id="viewer" aria-label="Picture">
-  <div class="bar"><p class="name"></p><span class="zoom"></span><a class="get" title="Download" aria-label="Download"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg></a><button class="shut" type="button" title="Close" aria-label="Close" autofocus><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
-  <div class="stage"><img alt="" draggable="false"><p class="why" hidden>Could not load this picture.</p><button class="prev" type="button" aria-label="Previous picture" hidden><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><button class="next" type="button" aria-label="Next picture" hidden><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button></div>
-</dialog>
+<!-- the page, drawn by React (web/src/main.tsx) -->
+<div id="root"></div>
 </body>
 </html>

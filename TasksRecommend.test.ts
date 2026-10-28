@@ -183,10 +183,11 @@ test("accept with choices and only the fields recommended (R1): fills the fields
 
 test("contrast (R3): the accent of .rec-tag and .accept, and the disabled Cobrar's text, at least 4.5:1 on every fill they may sit on, light and dark (style.css)", () => {
   const css = fs.readFileSync(import.meta.dir + "/web/style.css", "utf8");
-  const dark = css.indexOf("@media (prefers-color-scheme: dark)");
+  // the tokens: the dark theme's (:root, the default) and the light one's
+  const block = (head: string) => css.slice(css.indexOf(head), css.indexOf("\n}\n", css.indexOf(head)));
   const vars = (part: string) => Object.fromEntries([...part.matchAll(/--([a-z]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
-  const light = vars(css.slice(0, dark));
-  const night = { ...light, ...vars(css.slice(dark, css.indexOf("}\n}", dark))) };
+  const night = vars(block(":root {\n  --ink"));
+  const light = { ...night, ...vars(block(":root[data-theme=light] {")) };
   const hex = (x: Record<string, string>, k: string): string => (x[k].startsWith("var(--") ? hex(x, x[k].slice(6, -1)) : x[k]);
   const lum = (h: string) => {
     const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
