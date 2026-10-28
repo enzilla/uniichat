@@ -140,7 +140,7 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 .send.stop svg { fill: currentColor; stroke-width: 0; width: 16px; height: 16px; }
 /* the queue jump, beside send while a message waits: how many, and the
    button that stops the turn so they go now */
-.composer .queued { font: 13px/1 var(--mono); color: var(--mid); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.composer .queued { font: 13px/1 var(--mono); color: var(--mid); margin-right: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .force { flex: none; height: 32px; margin-right: 4px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); font: 600 13.5px/1 var(--sans); }
 .force:hover { background: var(--accent); color: var(--paper); }
 .composer .voice { display: none; flex: 1; align-items: center; gap: 12px; height: 38px; color: var(--ink); }
@@ -954,7 +954,7 @@ dialog .shut svg.ic { width: 20px; height: 20px; }
 @keyframes dialog-rise { from { opacity: 0; transform: translateY(10px) scale(.985); } }
 @keyframes veil-in { from { opacity: 0; } }
 @media (max-width: 760px) {
-  dialog:is(#mesa, #settings)[open] { width: 100%; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
+  dialog:is(#mesa, #settings)[open] { width: 100%; height: 100dvh; max-width: none; max-height: none; border: 0; border-radius: 0; }
   #mesa > .bar { padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); }
   #mesa > .bar .keys { display: none; }
   #settings #account { padding: 0 16px 32px; }
