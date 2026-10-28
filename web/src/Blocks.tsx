@@ -1,6 +1,6 @@
 // Markdown (Md.ts) as elements: a message's blocks, a task's detail, a
-// thread's message. The same markup Html.ts wrote as strings, class for
-// class, so style.css and the tests read it the same
+// thread's message; the same classes the page always had, so style.css
+// and the tests read it the same
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 import * as Md from "../../Md.ts";
 import * as View from "../../View.ts";

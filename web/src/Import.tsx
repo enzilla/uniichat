@@ -5,10 +5,11 @@
 // export (zip), each app's sessions listed to pick, how far back, tool
 // calls or not; Import sends them (View link "import"), then the import's
 // progress, paused or going (the server's v.importing), and the bar's
-// button in the top bar while it runs. main.ts's importer, as a component
+// button in the top bar while it runs
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as Import from "../../Import.ts";
 import * as View from "../../View.ts";
+import { INTRO } from "./Intro.tsx";
 import { DESK, IMPORT, draw, kept, toast, useTick, v } from "./state.ts";
 
 const NONE = "No Claude or ChatGPT chats in that folder. Choose ~/.claude or ~/.codex.";
@@ -31,6 +32,7 @@ export async function import_open(first: boolean): Promise<void> {
 
 // a first visit on a computer, a fresh chat: the import offered once
 export async function import_welcome(): Promise<void> {
+  await INTRO;
   const key = kept("welcomed");
   if (localStorage.getItem(key) === null && v.pick !== null && v.parts.length === View.OPENING && v.importing === null && DESK.matches) {
     localStorage.setItem(key, "1");

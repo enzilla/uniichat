@@ -1,7 +1,7 @@
 // Push
 // ====
 // The pending list's pushes (TaskPush.ts, Server.ts task_push) to the
-// owner's phones (the iOS app, by APNs) and browsers (main.ts notify). Web Push (RFC 8030) with no vendor's account: the server's own VAPID
+// owner's phones (the iOS app, by APNs) and browsers (main.tsx notify). Web Push (RFC 8030) with no vendor's account: the server's own VAPID
 // key pair (RFC 8292), made at its first start and kept beside its config
 // (config.DIR/vapid.json; a new pair loses every browser's subscription),
 // signs each request, and each message is encrypted to its browser's

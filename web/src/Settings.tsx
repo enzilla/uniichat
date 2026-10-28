@@ -4,8 +4,7 @@
 // export); the MCP switches; then the server's settings (config.json):
 // models (vendors, models, the default pick, the compactor's, the
 // subagents'), Cursor's plan, profiles (ranked models), keys, server.
-// Html.ts's account_html and settings_html, and main.ts's form logic, as
-// a form whose state is the component's. Esc in a box leaves the box
+// A form whose state is the component's. Esc in a box leaves the box
 // first (an edit not saved stays)
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Vendor } from "../../AskAI.ts";

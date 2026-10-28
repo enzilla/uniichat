@@ -4,7 +4,7 @@
 // when, its cycles of verification, the notes still open, its PRs live,
 // its metrics (Pipeline.ts reads them; View.ts says them). panel null:
 // not read (why says so); opened: the fronts shown open (null: those with
-// the user or stalled, as the page opens). Html.ts's pipeline_html
+// the user or stalled, as the page opens)
 import { Fragment, type ReactNode } from "react";
 import type * as P from "../../Pipeline.ts";
 import * as View from "../../View.ts";

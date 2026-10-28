@@ -14,6 +14,7 @@ import { Talk, Tabs, Timers } from "./Bars.tsx";
 import { Composer } from "./Composer.tsx";
 import { Icon, type IconName } from "./Icon.tsx";
 import { ImportBar, ImportPop, import_open } from "./Import.tsx";
+import { Intro } from "./Intro.tsx";
 import { Log } from "./Log.tsx";
 import { Mesa } from "./Mesa.tsx";
 import { PipelinePage } from "./PipelinePage.tsx";
@@ -157,6 +158,7 @@ export function App(): ReactNode {
       </div>
       <ImportPop />
       <ViewerDialog />
+      <Intro />
     </>
   );
 }

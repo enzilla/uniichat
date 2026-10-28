@@ -142,19 +142,20 @@ footer > * { width: min(var(--col), 100%); margin-inline: auto; }
 .composer .knobs .dot { display: none; }
 /* attach: a liquid + whose two picks flow out of it along the bar (the
    pick's knobs step aside meanwhile: the box's beam clips anything above) */
-.composer .plus.open + input + input + .knobs { opacity: 0; }
+.composer .plus.parted + input + input + .knobs { opacity: 0; }
 .composer .knobs { transition: opacity 160ms var(--ease-out); }
 .composer .plus { z-index: 1; }
 .composer .plus { position: relative; width: 40px; height: 40px; }
 .composer .plus :is(.attach, .drop) { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; color: var(--mid); }
-.composer .plus .attach:hover, .composer .plus.open .attach { color: var(--ink); }
+.composer .plus .attach:hover, .composer .plus.parted .attach { color: var(--ink); }
 .composer .plus .drop { color: var(--ink); }
-/* the liquid's items in a row, the two picks moved onto the + (Composer
-   x, y), so the + alone shows; they part from it as it opens */
-.composer .plus > div { width: 120px; margin-left: -80px; white-space: nowrap; line-height: 0; }
+/* the liquid's items in a row after the +, the two picks moved back onto
+   it (Composer x), so the + alone shows; they part from it as it opens */
+.composer .plus > div { width: 120px; white-space: nowrap; line-height: 0; }
 :root[data-theme=light] .send { background: #fdfcfa; color: #1c1b19; }
-.composer .plus > div > div:last-child { z-index: 1; }
-.composer .plus:not(.open) .drop { pointer-events: none; opacity: 0; }
+.composer .plus > div > div { vertical-align: top; }
+.composer .plus > div > div:first-of-type { position: relative; z-index: 1; }
+.composer .plus:not(.parted) .drop { pointer-events: none; opacity: 0; }
 .composer .plus .drop { transition: opacity 160ms var(--ease-out); }
 .composer .plus svg.ic { width: 20px; height: 20px; }
 .mic { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; color: var(--mid); }
@@ -356,7 +357,7 @@ header.top > .imping { flex-direction: column; justify-content: center; align-it
 .msg .brand { font: 600 .92em var(--brand); font-style: normal; letter-spacing: -.01em; color: var(--accent); }
 .msg .name { font: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .msg .name:hover { background: var(--ink); color: var(--paper); }
-/* a labeled agent's generated name, after its label (Html.ts) */
+/* a labeled agent's generated name, after its label (the web view (ts)) */
 :is(.msg .name, #tabs button) small { font-size: .85em; font-weight: 400; opacity: .6; }
 
 .copy { position: absolute; right: 0; bottom: calc(100% + 4px); z-index: 1; display: grid; place-items: center; width: 26px; height: 26px; color: var(--mid); background: var(--paper); border-radius: 6px; opacity: 0; user-select: none; }
@@ -458,7 +459,7 @@ header.top > .imping { flex-direction: column; justify-content: center; align-it
 #desk .thread li.user p { margin: 0; white-space: pre-wrap; }
 #desk .thread .acts { justify-content: flex-end; }
 }
-/* the Mesa (main.ts desk): the pending list as a screen, Conversa's
+/* the Mesa (main.tsx desk): the pending list as a screen, Conversa's
    alternative (the rail's Mesa opens it, a sheet). The list at the left,
    searched and filtered by project, its groups each under a heading, a
    task a row (the one shown marked); the task shown whole at the right.
@@ -509,7 +510,7 @@ header.top > .imping { flex-direction: column; justify-content: center; align-it
 #desk article .answers dd { margin: 0; overflow-wrap: anywhere; }
 /* late (the user's move over a day): red, as the push says it; its PRs,
    links by repo#n over the detail; a choice concludes ("Concluir como");
-   a required field left empty at Concluir, framed red (main.ts
+   a required field left empty at Concluir, framed red (main.tsx
    task_missing); after one resolved, the next of Agora */
 #desk .late { padding: 0 6px; border-radius: 6px; color: var(--red); border: 1px solid currentColor; font-weight: 500; }
 #desk .pr { padding: 0 6px; border-radius: 6px; background: var(--block); white-space: nowrap; }
@@ -716,7 +717,7 @@ header.top > .imping { flex-direction: column; justify-content: center; align-it
 .profiles :is(.grip, .out):is(:hover, :focus-visible) { background: var(--hover); color: var(--ink); }
 .profiles .pnew { margin-top: 6px; }
 @media (pointer: coarse) { .profiles :is(.grip, .out) { width: 44px; height: 44px; } }
-/* the pipeline's panel (R6; Html.pipeline_html), a page in #account:
+/* the pipeline's panel (R6; Pipeline.tsx), a page in #account:
    the totals, then each front a <details>: its stage, tasks, PRs live,
    cycles of verification and metrics */
 #account.pipe { width: min(1080px, 100% - 40px); }
@@ -903,13 +904,13 @@ svg.ic { flex: none; width: 1.15em; height: 1.15em; stroke: none; vertical-align
 .call svg.ic { margin-right: 8px; }
 #menu > button { display: flex; align-items: center; gap: 10px; }
 #menu > button svg.ic { color: var(--mid); }
-/* the theme swaps by a crossfade of the whole page, not a jump (main.ts;
+/* the theme swaps by a crossfade of the whole page, not a jump (main.tsx;
    skipped under reduced motion) */
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 320ms; animation-timing-function: var(--ease-out); }
 /* a tool's chip is one line: a long command ends in an ellipsis instead of
    wrapping past the chip's height (seen at 390px) */
 .block.tool .call { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-/* arrival (main.ts arrive, Arrive.ts): a row new to the screen rises in,
+/* arrival (main.tsx arrive, Arrive.ts): a row new to the screen rises in,
    each kind its own way, so the eye follows what just happened: your
    message leaves from the box below, a reply's text comes into focus, a
    tool's chip pops in beside the last; never a row redrawn or history */
@@ -953,7 +954,7 @@ dialog .shut svg.ic { width: 20px; height: 20px; }
 @keyframes sheet-in { from { transform: translateX(48px); opacity: 0; } }
 @keyframes dialog-rise { from { opacity: 0; transform: translateY(10px) scale(.985); } }
 @keyframes veil-in { from { opacity: 0; } }
-/* the Mesa's and the states' marks (Html.desk_html, main.ts account): a
+/* the Mesa's and the states' marks (Desk.tsx desk_parts, main.tsx account): a
    group's state, a PR, a verdict; the empty, loading and error states
    lead with their icon, larger, so the state is read before the text */
 #desk .find { position: relative; }
@@ -983,7 +984,7 @@ dialog .shut svg.ic { width: 20px; height: 20px; }
   .composer .field { padding: 14px 16px 4px; }
   .composer .knobs > :not(:first-child) { display: none; }
   .composer .plus, .composer .plus :is(.attach, .drop), .mic, .send { width: 44px; height: 44px; }
-  .composer .plus > div { width: 132px; margin-left: -88px; }
+  .composer .plus > div { width: 132px; }
   .force { height: 44px; }
   .mine { right: 14px; }
   footer > .down { right: 14px; }

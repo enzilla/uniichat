@@ -1,6 +1,6 @@
 // Material Line Icons (line-md), MIT, (c) Vjacheslav Trushkin: https://github.com/cyberalien/line-md
 // each draws itself in once, by SMIL, as it's put on the page; under reduced
-// motion main.ts jumps it to its end (motion_end)
+// motion main.tsx jumps it to its end (motion_end)
 // ponytail: write, dark and light keep line-md's fixed mask ids, so two of one
 // on a page share the first's mask; same end state, give each its own id if it shows
 export const ICON = {

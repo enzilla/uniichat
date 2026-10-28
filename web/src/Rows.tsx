@@ -1,6 +1,5 @@
 // The chat's rows (View.view_body, View.view_tail): a message, a tool's
-// or thought's one-line summary, an unfolded box of them, a caption.
-// Html.ts's row_html, element for element
+// or thought's one-line summary, an unfolded box of them, a caption
 import { memo, type ReactNode } from "react";
 import * as Call from "../../Call.ts";
 import * as Theme from "../../Theme.ts";

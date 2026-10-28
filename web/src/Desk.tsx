@@ -2,8 +2,7 @@
 // ====================================
 // The list at the left, by group (View.desk_list), a task a row; the
 // task shown whole at the right: its head, whose move it is, then what to
-// read and decide beside its ficha. Html.ts's desk_html, element for
-// element. What's typed in a task (its comment, fields, thread box) is
+// read and decide beside its ficha. What's typed in a task (its comment, fields, thread box) is
 // the browser's own (uncontrolled inputs): the article is keyed by the
 // task, so a draw keeps it as typed
 import { Fragment, type ReactElement, type ReactNode } from "react";

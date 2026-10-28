@@ -84,16 +84,16 @@ export function Composer({ hooks }: { hooks: ComposerHooks }): ReactNode {
         </div>
       ) : null}
       <div className="bar">
-        <div className={"plus" + (plus ? " open" : "")} onBlur={(ev) => !ev.currentTarget.contains(ev.relatedTarget as Node | null) && setPlus(false)} onKeyDown={(ev) => ev.key === "Escape" && plus && (ev.stopPropagation(), setPlus(false))}>
-          <Liquid blur={7} contrast={20} filterPadding={140} fill={hooks.dark ? "#26262c" : "#e6e3db"}>
-            <Liquid.Item x={plus ? step * 4 + 16 : step * 2} y={0} transition="bouncy">
-              <button type="button" className="drop" tabIndex={plus ? 0 : -1} aria-hidden={!plus} aria-label="Anexar arquivos" title="Arquivos" onClick={() => pick(files.current)}><Icon name="read" /></button>
-            </Liquid.Item>
-            <Liquid.Item x={plus ? step * 2 + 8 : step} y={0} transition="bouncy" delay={40}>
-              <button type="button" className="drop" tabIndex={plus ? 0 : -1} aria-hidden={!plus} aria-label="Anexar imagens" title="Imagens" onClick={() => pick(images.current)}><Icon name="image" /></button>
-            </Liquid.Item>
+        <div className={"plus" + (plus ? " parted" : "")} onBlur={(ev) => !ev.currentTarget.contains(ev.relatedTarget as Node | null) && setPlus(false)} onKeyDown={(ev) => ev.key === "Escape" && plus && (ev.stopPropagation(), setPlus(false))}>
+          <Liquid blur={7} contrast={20} filterPadding={60} fill={hooks.dark ? "#26262c" : "#e6e3db"}>
             <Liquid.Item>
               <button type="button" className="attach" aria-expanded={plus} aria-label={plus ? "Fechar o anexo" : "Anexar"} title="Anexar" onClick={() => setPlus(!plus)}><Icon name={plus ? "close" : "plus"} /></button>
+            </Liquid.Item>
+            <Liquid.Item x={plus ? 8 : -step} y={0} transition="bouncy">
+              <button type="button" className="drop" tabIndex={plus ? 0 : -1} aria-hidden={!plus} aria-label="Anexar imagens" title="Imagens" onClick={() => pick(images.current)}><Icon name="image" /></button>
+            </Liquid.Item>
+            <Liquid.Item x={plus ? 16 : -step * 2} y={0} transition="bouncy" delay={40}>
+              <button type="button" className="drop" tabIndex={plus ? 0 : -1} aria-hidden={!plus} aria-label="Anexar arquivos" title="Arquivos" onClick={() => pick(files.current)}><Icon name="read" /></button>
             </Liquid.Item>
           </Liquid>
         </div>

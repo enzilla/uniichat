@@ -3,7 +3,7 @@
 // Boots (signed in or not), connects to the server (View.link_open), and
 // draws App.tsx on each change (state.ts draw). The acts a click makes
 // are read off the element clicked (data-act, data-go, data-desk, a
-// copy), one handler for the page, as Html.ts's markup had them
+// copy), one handler for the page
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { get } from "../../Json.ts";

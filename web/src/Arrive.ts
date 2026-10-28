@@ -7,7 +7,7 @@
 // paint that had none) rise in none, nor does a paint that brings a crowd
 
 export type Paint = {
-  shown: string;            // the page (main.ts shown_key)
+  shown: string;            // the page (main.tsx shown_key)
   body: Array<number | null>; // each body row new to the DOM, its data-a
   tail: number[];           // each tail row new to the DOM, its place
   tail_was: number;         // the tail's rows before the paint

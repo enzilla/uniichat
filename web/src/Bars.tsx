@@ -1,7 +1,6 @@
 // The bars around the box: the pick (model, effort, speed, the talk's
 // mode and its meter), the tabs (the chat and each agent at work), the
-// schedules, the MCP switches. Html.ts's pick_html, tabs_html,
-// timers_html, mcp_html
+// schedules, the MCP switches
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 import * as Timer from "../../Timer.ts";
 import * as View from "../../View.ts";
