@@ -47,9 +47,19 @@ export function row_html(row: View.Row): string {
 function row_make(row: View.Row): string {
   switch (row.$) {
     case "Sum": {
+      const cls = row.mark === undefined ? "block" : "block " + row.mark;
+      if (row.n === 0) {
+        const body = row.mark === "live"
+          ? `<div class="shimmer" data-text="${esc(row.text)}">${esc(row.text)}</div>`
+          : `<div>${esc(row.text)}</div>`;
+        const role = row.mark === "live" ? " role=\"status\"" : "";
+        const mark = row.mark === "live" ? "" : `<span class="lv">${esc(Theme.GLYPH.open)}</span>`;
+        return `<div class="${cls}"${role}>${mark}${body}</div>`;
+      }
       const open = act_html({ $: "Open", id: row.id, n: row.n });
       const text = row.call === null ? esc(row.text) : head_html(row.call, Call.call_line(row.call), "");
-      return `<div class="block"${open} data-a="${row.id}"><span class="lv">${row.n}x</span><div>${text}</div></div>`;
+      const lv = View.line_local(row.n) ? "1" : String(row.n);
+      return `<div class="${cls}"${open} data-a="${row.id}"><span class="lv">${lv}x</span><div>${text}</div></div>`;
     }
     case "Box": {
       const shut = act_html({ $: "Shut", id: row.id, n: row.n });
@@ -574,6 +584,7 @@ const SETTING: Record<string, [string, string]> = {
   pick      : ["Default model", "What a chat runs on until it picks another."],
   compactor : ["Compactor model", "What writes the memory's summaries."],
   agents    : ["Subagent model", "What subagents run on."],
+  cursor_fast: ["Cursor fast", "Desligado por padrão: o cursor-sub roda o Composer sem a variante fast, que consome mais do plano."],
   site      : ["Site", "The server's address, for sign-in links and the installer."],
   apple     : ["iOS App ID", "The app's team and bundle ID, whose sign-in links it opens."],
   apns      : ["APNs key ID", "The ID of the key the app's pushes are signed with."],
@@ -591,6 +602,7 @@ export const PICKS = ["pick", "compactor", "agents"];
 
 const GROUPS: Array<[string, string[]]> = [
   ["Models", ["vendors", "models", "pick", "compactor", "agents"]],
+  ["Plano do Cursor", ["cursor_fast"]],
   ["Server", ["site", "apple", "apns"]],
 ];
 
@@ -607,7 +619,7 @@ export function settings_html(page: Page): string {
   const save = `<div class="save"><p class="why"></p><button class="chip go"${page.error === null ? "" : " disabled"}>Save</button></div>`;
   const head = `<p class="sub">The server's settings, in config.json in its folder.</p>`;
   const profiles = page.profiles === null ? "" : section_html("Profiles", `<p class="sub">Ranked models: a chat on a profile runs on the first and falls back to the next when one is out.</p><div class="set profiles" data-key="profiles"><div class="field"></div><p class="err"></p></div>`);
-  return head + error + none + `<form class="settings" autocomplete="off">` + group(GROUPS[0]) + profiles + keys + group(GROUPS[1]) + save + `</form>`;
+  return head + error + none + `<form class="settings" autocomplete="off">` + group(GROUPS[0]) + group(GROUPS[1]) + profiles + keys + group(GROUPS[2]) + save + `</form>`;
 }
 
 export function offered(vendors: string[], models: string[]): string[] {
@@ -649,6 +661,10 @@ function control_html(r: Row): string {
     case "compactor":
     case "agents": {
       return `<input type="hidden" name="${r.key}" value="${esc(r.value)}"><div class="four"></div>`;
+    }
+    case "cursor_fast": {
+      const on = r.value.trim() === "on";
+      return `<select id="set-${r.key}" name="${r.key}"><option value="off"${on ? "" : " selected"}>desligado</option><option value="on"${on ? " selected" : ""}>ligado</option></select>`;
     }
   }
   return `<input id="set-${r.key}" name="${r.key}" value="${esc(r.value)}" placeholder="${esc(r.def)}" spellcheck="false" autocapitalize="off">`;

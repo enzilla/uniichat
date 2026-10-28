@@ -250,7 +250,14 @@ export namespace Settings {
     if (changed.has("apns") && apns !== "" && !APNS.test(apns)) {
       return { error: "The APNs key ID is 10 letters and digits.", key: "apns" };
     }
+    for (const key of ["cursor_fast"]) {
+      const value = config.config_value(file, key).trim();
+      if (changed.has(key) && value !== "on" && value !== "off") {
+        return { error: key + " is on or off.", key };
+      }
+    }
     return null;
   }
+
 
 }

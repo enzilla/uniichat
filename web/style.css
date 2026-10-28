@@ -16,6 +16,7 @@
   --warm   : #e8590c;
   --veil   : rgb(0 0 0 / .3);
   --shadow : 0 1px 2px rgba(0, 0, 0, .05), 0 6px 20px rgba(0, 0, 0, .05);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -51,7 +52,7 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html { color-scheme: light dark; -webkit-text-size-adjust: 100%; scrollbar-gutter: stable; overflow-anchor: none; }
-body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 18px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 ::selection { background: var(--ink); color: var(--paper); }
@@ -77,7 +78,7 @@ footer { position: sticky; bottom: 0; z-index: 2; padding: 18px max(20px, env(sa
 body:is(.account, .tree) footer { position: fixed; inset: auto 0 0; background: none; pointer-events: none; }
 body:is(.account, .tree) footer > :not(#toast) { display: none; }
 /* what Unii is doing while it works: a spinner, its step, the subagents (main.ts bars) */
-#doing { width: min(var(--col), 100%); margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; font: 13px/20px var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; }
+#doing { width: min(var(--col), 100%); margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; font: 15px/20px var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; }
 #doing[hidden] { display: none; }
 #doing .spin { flex: none; width: 12px; height: 12px; border: 2px solid var(--hair); border-top-color: var(--accent); border-radius: 50%; animation: doing-spin .8s linear infinite; }
 #doing .step { overflow: hidden; text-overflow: ellipsis; }
@@ -120,6 +121,7 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 .field .item[data-state=bad] { border-color: var(--red); }
 .field .item[data-state=bad] .state { background: var(--red); }
 .send, .attach, .mic { flex: none; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; }
+.force { flex: none; height: 38px; padding: 0 12px; border-radius: 19px; background: var(--ink); color: var(--paper); font: 600 14px/1 var(--sans); }
 .send svg, .attach svg, .mic svg { width: 20px; height: 20px; stroke-width: 2; }
 .send { background: var(--ink); color: var(--paper); }
 .send.stop { background: var(--block); color: var(--ink); }
@@ -225,6 +227,24 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 .block { display: flex; gap: 12px; padding: 10px 14px; background: var(--block); border-radius: 10px; font: 15px/1.55 var(--serif); cursor: pointer; overflow-wrap: anywhere; }
 .block:hover { background: var(--hover); }
 .block .lv { flex: none; min-width: 38px; font: 600 11.5px/24px var(--sans); color: var(--mid); }
+.block.tool, .block.mind, .block.live { align-items: center; width: fit-content; max-width: 100%; gap: 8px; border-radius: 999px; font: 500 14px/20px var(--sans); color: var(--mid); white-space: nowrap; overflow: hidden; transition: color 160ms var(--ease-out), background-color 160ms var(--ease-out), border-color 160ms var(--ease-out); }
+.block.tool .lv, .block.mind .lv, .block.live .lv { min-width: 0; font: 600 12px/20px var(--sans); color: var(--mid); }
+.block.tool > div, .block.mind > div, .block.live > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.block.tool { height: 30px; padding: 0 12px 0 10px; border: 1px solid var(--hair); background: var(--paper); }
+.block.mind { min-height: 28px; padding: 0 6px; gap: 2px; background: transparent; }
+.block.live { padding: 0 2px; gap: 8px; background: transparent; cursor: default; font-size: 13px; line-height: 18px; }
+.block.live .shimmer { position: relative; }
+.block.live .shimmer::before { content: attr(data-text); position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(90deg, transparent 0%, transparent 40%, var(--ink) 50%, transparent 60%, transparent 100%); background-size: 400% 100%; background-repeat: no-repeat; -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; animation: line-shimmer 2000ms linear infinite; }
+@keyframes line-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0% 0; } }
+@media (hover: hover) and (pointer: fine) {
+  .block.tool:hover { border-color: var(--frame); background: var(--paper); color: var(--ink); }
+  .block.mind:hover { background: var(--hover); color: var(--ink); }
+}
+.block.live:hover { background: transparent; }
+@media (prefers-reduced-motion: reduce) {
+  .block.tool, .block.mind, .block.live { transition: none; }
+  .block.live .shimmer::before { display: none; }
+}
 
 .open { border: 1.25px solid var(--frame); border-radius: 12px; padding: 0 10px 10px; }
 .open > * { margin: 10px 0 0; }
@@ -245,7 +265,7 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 .msg.long > .unfold:hover { color: var(--ink); }
 .msg.long:not(.shown) > .cut { max-height: 8lh; overflow: hidden; cursor: pointer; -webkit-mask-image: linear-gradient(#000 calc(100% - 3lh), transparent); mask-image: linear-gradient(#000 calc(100% - 3lh), transparent); }
 
-.msg { position: relative; border-width: 0; overflow-wrap: anywhere; font: 17.5px/1.68 var(--serif); color: var(--fg); font-style: var(--it); }
+.msg { position: relative; border-width: 0; overflow-wrap: anywhere; font: 19px/1.68 var(--serif); color: var(--fg); font-style: var(--it); }
 .msg > :first-child, .msg > .copy + * { margin-top: 0; }
 .msg > :last-child { margin-bottom: 0; }
 .msg p, .msg ul, .msg ol, .msg pre, .msg blockquote { margin: 0 0 .85em; }
@@ -289,7 +309,8 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 .msg pre.diff .del { color: var(--del); }
 .msg pre.diff .gap { color: var(--soft); }
 .msg pre .lang { display: block; margin-bottom: 4px; font: 600 11px var(--sans); color: var(--mid); }
-.msg.note, .msg.mind { font-size: 14.5px; line-height: 1.6; }
+.msg.note { font-size: 14.5px; line-height: 1.6; }
+.msg.mind { font-size: 17px; line-height: 1.6; }
 .msg .brand { font: 600 .92em var(--brand); font-style: normal; letter-spacing: -.01em; color: var(--accent); }
 .msg .name { font: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .msg .name:hover { background: var(--ink); color: var(--paper); }

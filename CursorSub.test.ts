@@ -42,6 +42,14 @@ test("every model Pick offers, at every effort and speed, is one Cursor lists", 
   expect(CursorSub.model("composer-2.5", "low", "fast")).toBe("composer-2.5-fast");
 });
 
+test("a call keeps fast off unless the plan allows it", () => {
+  expect(CursorSub.locked("grok-4.7-medium", false)).toBe("grok-4.7-medium[fast=false]");
+  expect(CursorSub.locked("grok-4.7-medium-fast", false)).toBe("grok-4.7-medium[fast=false]");
+  expect(CursorSub.locked("composer-2.5", false)).toBe("composer-2.5[fast=false]");
+  expect(CursorSub.locked("composer-2.5-fast", false)).toBe("composer-2.5[fast=false]");
+  expect(CursorSub.locked("grok-4.7-high-fast", true)).toBe("grok-4.7-high-fast");
+});
+
 test("bubblewrap's command: the system read only, no user's home, the agent's home and work dir alone writable, a clean environment", () => {
   const home = "/srv/unii/cursor-sub";
   const work = home + "/work/x";
@@ -199,5 +207,26 @@ test("a model Cursor won't run (the plan's usage spent) ends the call off, sayin
     acp.close();
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test("cursor_fast is read again as Settings saves it: off by default, on only when set", () => {
+  const file = config.DIR + "/config.json";
+  const was = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  try {
+    fs.mkdirSync(config.DIR, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ cursor_fast: "on" }));
+    config.config_reload();
+    expect(config.CURSOR_FAST).toBe(true);
+    fs.writeFileSync(file, JSON.stringify({}));
+    config.config_reload();
+    expect(config.CURSOR_FAST).toBe(false);
+  } finally {
+    if (was === null) {
+      fs.rmSync(file, { force: true });
+    } else {
+      fs.writeFileSync(file, was);
+    }
+    config.config_reload();
   }
 });

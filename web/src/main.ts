@@ -195,6 +195,10 @@ function chat(): void {
     ev.preventDefault();
     submit();
   };
+  $(".force").onclick = () => {
+    submit();
+    v.force();
+  };
   $(".attach").onclick = () => file.click();
   $("#pick").onkeydown = roam;
   $("#pick").addEventListener("focusout", left);

@@ -112,6 +112,17 @@ export namespace CursorSub {
     return id + at + (speed === "fast" && FAST.includes(id) ? "-fast" : "");
   }
 
+  // the model as the call runs it: with fast=false unless config
+  // cursor_fast allows the fast variant, since the Cursor CLI writes
+  // fast=true back into its own config and obeys only the model's
+  export function locked(model: string, allowFast: boolean): string {
+    if (allowFast) {
+      return model;
+    }
+    const bare = model.replace(/\[.*]$/, "").replace(/-fast$/, "");
+    return bare + "[fast=false]";
+  }
+
   // the agent's script (in its version's dir, beside its node): config
   // `cursor`, else the `agent` on PATH or in ~/.local/bin, resolved
   export function bin(): string | null {
@@ -324,7 +335,7 @@ export namespace CursorSub {
     }
     CursorSub.home();
     const work = CursorSub.work();
-    const argv = await CursorSub.isolated(mode, script, work, CursorSub.model(ask.model, ask.effort, ask.speed));
+    const argv = await CursorSub.isolated(mode, script, work, CursorSub.locked(CursorSub.model(ask.model, ask.effort, ask.speed), config.CURSOR_FAST));
     if (!Array.isArray(argv)) {
       fs.rmSync(work, { recursive: true, force: true });
       return argv;

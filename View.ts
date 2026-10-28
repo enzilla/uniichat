@@ -12,7 +12,7 @@ import { rec } from "./Json.ts";
 
 export type Part = [number, number];
 
-export type Entry = { kind: Kind; text: string; date?: string; images?: string[]; of?: string; tool?: string };
+export type Entry = { kind: Kind; text: string; date?: string; images?: string[]; of?: string; tool?: string; id?: number };
 
 export type Queued = { kind: Kind; text: string };
 
@@ -100,6 +100,7 @@ export type View = State & {
   ws    : WebSocket | null;
   up    : boolean;
   flush : () => void;
+  force : () => void;
 };
 
 type Pack = { nodes?: Record<string, Node>; whole?: Record<string, Entry> };
@@ -172,7 +173,7 @@ export type Act =
   | { $: "TasksTell" }                          // Avisar o Unii agora
 
 export type Row =
-  | { $: "Sum"; id: number; n: number; text: string; call: Call.Call | null }
+  | { $: "Sum"; id: number; n: number; text: string; call: Call.Call | null; mark?: "live" | "tool" | "mind" }
   | { $: "Box"; id: number; n: number; text: string; rows: Row[] }
   | { $: "Msg"; id: number | null; kind: Kind; who: string; text: string; body: Md.Block[]; call: Call.Call | null; images: string[]; queued?: boolean }
   | { $: "Cap"; text: string }
@@ -309,6 +310,7 @@ export function view_new(): View {
     ws        : null,
     up        : false,
     flush     : () => {},
+    force     : () => {},
   };
 }
 
@@ -447,7 +449,7 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Open": {
       v.open.set(act.id + "+" + act.n, true);
-      return act.n === 1 ? [] : [{ $: "zoom", part: [act.id, act.n] }];
+      return act.n === 1 || line_local(act.n) ? [] : [{ $: "zoom", part: [act.id, act.n] }];
     }
     case "Shut": {
       v.open.set(act.id + "+" + act.n, false);
@@ -1638,14 +1640,24 @@ export function view_rows(v: View, parts: Part[]): Row[][] {
 }
 
 export function rows_wait(v: View, rows: Row[]): boolean {
-  return rows.some((row) => (row.$ === "Sum" && !v.nodes.has(row.id + "+" + row.n)) || (row.$ === "Box" && rows_wait(v, row.rows)));
+  return rows.some((row) => (row.$ === "Sum" && sum_waits(v, row)) || (row.$ === "Box" && rows_wait(v, row.rows)));
+}
+
+function sum_waits(v: View, row: Extract<Row, { $: "Sum" }>): boolean {
+  if (line_local(row.n)) {
+    return false;
+  }
+  if (row.n === 1 && row.id >= v.turn && v.whole.get(row.id)?.kind === "tool") {
+    return false;
+  }
+  return !v.nodes.has(row.id + "+" + row.n);
 }
 
 export function view_tail(v: View, live = view_stream(v)): Row[] {
   if (v.page === null && v.fold !== null) {
     return [];
   }
-  const rows = live.flatMap((l) => entry_rows(null, l.kind, l.text));
+  const rows = stream_rows(live);
   const load = v.page === null && v.importing !== null ? [Cap(progress_show(v.importing))] : [];
   const said = v.page === null && !v.up ? v.out.flatMap((p) => entry_rows(null, "user", p.said)) : [];
   const kept = said.length > 0 ? [...said, Cap(UNSENT)] : [];
@@ -1853,7 +1865,7 @@ function view_entry(v: View, msg: Server & { $: "entry" }): void {
   if (agent !== undefined) {
     const log = v.pages.get(agent)?.log;
     if (Array.isArray(log)) {
-      log.push(entry);
+      log.push(id === undefined ? entry : { ...entry, id });
     }
   } else if (id !== undefined) {
     v.whole.set(id, entry);
@@ -1911,7 +1923,16 @@ export function link_open(v: View, link: Link): void {
       void drop();
     }
   }
-  [v.ws, v.flush] = [ws, flush];
+  function force(): void {
+    for (const post of v.out) {
+      if ("body" in post.msg) {
+        void upload(post, post.msg);
+      } else if (v.ws === ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(post.msg));
+      }
+    }
+  }
+  [v.ws, v.flush, v.force] = [ws, flush, force];
   ws.onmessage = (ev) => {
     heard = Date.now();
     if (ev.data === TICK) {
@@ -1976,9 +1997,10 @@ function part_rows(v: View, id: number, n: number, t: number, talk: boolean): Ro
   const entry = v.whole.get(id);
   const half  = n / 2;
   if (n === 1 && id >= t && entry !== undefined) {
-    const minds = v.minds.get(id) ?? [];
-    const after = minds.flatMap((x) => entry_rows(null, "mind", x));
-    return [...whole_rows(id, entry, v.whole.get(id - 1)), ...after];
+    const before = v.whole.get(id - 1);
+    const main = entry.kind === "tool" ? tool_rows(v, id, entry, before) : whole_rows(id, entry, before);
+    const after = (v.minds.get(id) ?? []).flatMap((text, i) => mind_rows(v, id, i, text));
+    return [...main, ...after];
   }
   const open  = talk && n === 1 && ["user", "unii"].includes(entry?.kind ?? "");
   if (!(v.open.get(key) ?? open)) {
@@ -2013,7 +2035,109 @@ function sum_rows(id: number, n: number, node: Node = { text: WAIT, to: "" }): R
 export function page_rows(v: View, page: Page, from = 0): Row[] {
   const head = Cap(agent_shown(page.name) + (v.agents.includes(page.name) ? " · at work" : " · done"));
   const log = page.log ?? [];
-  return [head, ...log.slice(from).flatMap((e, k) => whole_rows(null, e, log[from + k - 1]))];
+  return [head, ...log.slice(from).flatMap((e, k) => held_rows(v, e, log[from + k - 1]))];
+}
+
+const LINE = 80;
+export const THINKING = "Pensando…";
+
+function cut_line(s: string): string {
+  const one = s.replace(/\s+/g, " ").trim();
+  if (one === "") {
+    return "…";
+  }
+  return one.length > LINE ? one.slice(0, LINE - 1) + "…" : one;
+}
+
+function tool_sum(text: string): string {
+  const call = Call.call_parse(text);
+  const raw  = text.split(" ", 1)[0] ?? "";
+  const name = call.name !== "" ? call.name : Call.tool_name(raw);
+  const line = Call.call_line(call);
+  const rest = call.name === "" && line.startsWith(name) ? line.slice(name.length).trim() : line;
+  return cut_line([name, rest].filter((s) => s !== "").join(" "));
+}
+
+function mind_sum(text: string): string {
+  return cut_line(Md.md_flat(text));
+}
+
+export function line_local(n: number): boolean {
+  return n === 0 || (n > 1 && n % 2 === 1);
+}
+
+function mind_n(index: number): number {
+  return index * 2 + 3;
+}
+
+function thinking_row(): Row {
+  return { $: "Sum", id: 0, n: 0, text: THINKING, call: null, mark: "live" };
+}
+
+function stream_rows(live: Live[]): Row[] {
+  const rows: Row[] = [];
+  let held = false;
+  for (const l of live) {
+    if (l.kind === "tool" || l.kind === "mind") {
+      if (!held) {
+        rows.push(thinking_row());
+        held = true;
+      }
+      continue;
+    }
+    rows.push(...entry_rows(null, l.kind, l.text));
+  }
+  return rows;
+}
+
+function tool_rows(v: View, id: number, entry: Entry, before: Entry | undefined): Row[] {
+  if (v.open.get(id + "+1") === true) {
+    return [{ $: "Box", id, n: 1, text: "fold", rows: whole_rows(id, entry, before) }];
+  }
+  return [{ $: "Sum", id, n: 1, text: tool_sum(entry.text), call: null, mark: "tool" }];
+}
+
+function mind_rows(v: View, id: number, index: number, text: string): Row[] {
+  const n = mind_n(index);
+  if (v.open.get(id + "+" + n) === true) {
+    return [{ $: "Box", id, n, text: "fold", rows: entry_rows(null, "mind", text) }];
+  }
+  return [{ $: "Sum", id, n, text: mind_sum(text), call: null, mark: "mind" }];
+}
+
+function held_rows(v: View, entry: Entry, before: Entry | undefined): Row[] {
+  if (entry.kind === "tool" && entry.id !== undefined) {
+    return tool_rows(v, entry.id, entry, before);
+  }
+  if (entry.kind === "tool" || entry.kind === "mind") {
+    const mark = entry.kind === "tool" ? "tool" : "mind";
+    return [{ $: "Sum", id: 0, n: 0, text: mark === "tool" ? tool_sum(entry.text) : mind_sum(entry.text), call: null, mark }];
+  }
+  return whole_rows(null, entry, before);
+}
+
+export function arrived_rows(v: View, msg: { id?: number; agent?: string; kind: Kind; text: string }): Row[] {
+  if (msg.kind === "tool" && msg.id !== undefined) {
+    const entry = msg.agent === undefined ? v.whole.get(msg.id) : v.pages.get(msg.agent)?.log?.find((e) => e.id === msg.id);
+    if (entry !== undefined) {
+      const before = msg.agent === undefined ? v.whole.get(msg.id - 1) : undefined;
+      return tool_rows(v, msg.id, entry, before);
+    }
+  }
+  if (msg.kind === "mind" && msg.agent === undefined) {
+    const last = v.parts.at(-1);
+    if (last !== undefined) {
+      const at = last[0] + last[1] - 1;
+      const minds = v.minds.get(at) ?? [];
+      const i = Math.max(0, minds.lastIndexOf(msg.text));
+      return mind_rows(v, at, i, minds[i] ?? msg.text);
+    }
+  }
+  if (msg.kind === "tool" || msg.kind === "mind") {
+    const mark = msg.kind === "tool" ? "tool" : "mind";
+    return [{ $: "Sum", id: 0, n: 0, text: mark === "tool" ? tool_sum(msg.text) : mind_sum(msg.text), call: null, mark }];
+  }
+  return [];
 }
 
 export function live_push(live: Live[], kind: Kind, text: string, fresh = false): void {

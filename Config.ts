@@ -20,6 +20,7 @@ type Made = {
   context   : number;
   agents    : Pick | null;
   after     : string;
+  fast      : boolean;
 };
 
 // Types
@@ -58,6 +59,7 @@ export const SETTINGS: Setting[] = [
   { key: "pick",      def: "claude-api:sonnet-5.5:medium:slow", apply: "now",     server_only: null },
   { key: "compactor", def: "claude-api:sonnet-5.5:medium:slow", apply: "now",     server_only: null },
   { key: "compactor_context", def: "4",                         apply: "now",     server_only: null },
+  { key: "cursor_fast", def: "off",                              apply: "now",     server_only: null },
   { key: "agents",    def: "",                                  apply: "now",     server_only: null },
   { key: "site",      def: "http://127.0.0.1:8788",             apply: "restart", server_only: null },
   { key: "apple",     def: "",                                  apply: "restart", server_only: null },
@@ -143,6 +145,10 @@ export const TAILNET_OWNER = config_value(FILE, "tailnet_owner").trim();
 export const OFFER: Offer = MADE.offer;
 
 export let   AFTER      = MADE.after;
+
+// whether cursor-sub may run Cursor's fast variant (config cursor_fast:
+// "on"); off, every call says fast=false, as the CLI turns it on by itself
+export let   CURSOR_FAST = MADE.fast;
 export let   PICK       = MADE.pick;
 
 export let   COMPACTOR  = MADE.compactor;
@@ -339,6 +345,7 @@ export function config_make(file: Record<string, unknown>): Made {
     context   : config_context(config_value(file, "compactor_context")),
     agents    : agents ? config_run("agents", agents, offer) : null,
     after     : config_value(file, "after"),
+    fast      : config_value(file, "cursor_fast").trim() === "on",
   };
 }
 
@@ -490,6 +497,7 @@ export function config_reload(): void {
   COMPACTOR_CONTEXT = made.context;
   AGENTS = made.agents;
   AFTER = made.after;
+  CURSOR_FAST = made.fast;
   Object.assign(KEYS, keys);
   RELOADED.forEach((f) => f());
 }

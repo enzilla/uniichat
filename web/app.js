@@ -1907,12 +1907,6 @@ var MODELS = {
   "openai-sub": PLAN,
   "claude-sub": [{ ...OPUS, speeds: ["slow"] }, SONNET, HAIKU],
   "cursor-sub": [
-    OPUS,
-    SONNET,
-    { label: "fable-5.1", id: "claude-fable-5-1", speeds: ["slow"], window: CURSOR_WINDOW },
-    { label: "gpt-5.6-sol", id: "gpt-5.6-sol", speeds: ["slow", "fast"], window: CURSOR_WINDOW },
-    { label: "grok-4.7", id: "grok-4.7", speeds: ["slow", "fast"], window: CURSOR_WINDOW },
-    { label: "gemini-3.8-flash", id: "gemini-3.8-flash", speeds: ["slow"], window: CURSOR_WINDOW },
     { label: "composer-2.5", id: "composer-2.5", speeds: ["slow", "fast"], window: CURSOR_WINDOW }
   ]
 };
@@ -2253,7 +2247,8 @@ function view_new() {
     out: [],
     ws: null,
     up: false,
-    flush: () => {}
+    flush: () => {},
+    force: () => {}
   };
 }
 function view_hear(v, msg) {
@@ -2386,7 +2381,7 @@ function view_act(v, act) {
     }
     case "Open": {
       v.open.set(act.id + "+" + act.n, true);
-      return act.n === 1 ? [] : [{ $: "zoom", part: [act.id, act.n] }];
+      return act.n === 1 || line_local(act.n) ? [] : [{ $: "zoom", part: [act.id, act.n] }];
     }
     case "Shut": {
       v.open.set(act.id + "+" + act.n, false);
@@ -2997,7 +2992,7 @@ function view_tail(v, live = view_stream(v)) {
   if (v.page === null && v.fold !== null) {
     return [];
   }
-  const rows = live.flatMap((l) => entry_rows(null, l.kind, l.text));
+  const rows = stream_rows(live);
   const load = v.page === null && v.importing !== null ? [Cap(progress_show(v.importing))] : [];
   const said = v.page === null && !v.up ? v.out.flatMap((p) => entry_rows(null, "user", p.said)) : [];
   const kept = said.length > 0 ? [...said, Cap(UNSENT)] : [];
@@ -3124,7 +3119,7 @@ function view_entry(v, msg) {
   if (agent !== undefined) {
     const log = v.pages.get(agent)?.log;
     if (Array.isArray(log)) {
-      log.push(entry);
+      log.push(id === undefined ? entry : { ...entry, id });
     }
   } else if (id !== undefined) {
     v.whole.set(id, entry);
@@ -3180,7 +3175,16 @@ function link_open(v, link) {
       drop();
     }
   }
-  [v.ws, v.flush] = [ws, flush];
+  function force() {
+    for (const post of v.out) {
+      if ("body" in post.msg) {
+        upload(post, post.msg);
+      } else if (v.ws === ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(post.msg));
+      }
+    }
+  }
+  [v.ws, v.flush, v.force] = [ws, flush, force];
   ws.onmessage = (ev) => {
     heard = Date.now();
     if (ev.data === TICK) {
@@ -3232,9 +3236,10 @@ function part_rows(v, id, n, t, talk) {
   const entry = v.whole.get(id);
   const half = n / 2;
   if (n === 1 && id >= t && entry !== undefined) {
-    const minds = v.minds.get(id) ?? [];
-    const after = minds.flatMap((x) => entry_rows(null, "mind", x));
-    return [...whole_rows(id, entry, v.whole.get(id - 1)), ...after];
+    const before = v.whole.get(id - 1);
+    const main = entry.kind === "tool" ? tool_rows(v, id, entry, before) : whole_rows(id, entry, before);
+    const after = (v.minds.get(id) ?? []).flatMap((text2, i) => mind_rows(v, id, i, text2));
+    return [...main, ...after];
   }
   const open = talk && n === 1 && ["user", "unii"].includes(entry?.kind ?? "");
   if (!(v.open.get(key) ?? open)) {
@@ -3265,7 +3270,74 @@ function sum_rows(id, n, node = { text: WAIT, to: "" }) {
 function page_rows(v, page, from = 0) {
   const head = Cap(agent_shown(page.name) + (v.agents.includes(page.name) ? " · at work" : " · done"));
   const log = page.log ?? [];
-  return [head, ...log.slice(from).flatMap((e, k) => whole_rows(null, e, log[from + k - 1]))];
+  return [head, ...log.slice(from).flatMap((e, k) => held_rows(v, e, log[from + k - 1]))];
+}
+var LINE = 80;
+var THINKING = "Pensando…";
+function cut_line(s) {
+  const one = s.replace(/\s+/g, " ").trim();
+  if (one === "") {
+    return "…";
+  }
+  return one.length > LINE ? one.slice(0, LINE - 1) + "…" : one;
+}
+function tool_sum(text) {
+  const call = call_parse(text);
+  const raw = text.split(" ", 1)[0] ?? "";
+  const name = call.name !== "" ? call.name : tool_name(raw);
+  const line = call_line(call);
+  const rest = call.name === "" && line.startsWith(name) ? line.slice(name.length).trim() : line;
+  return cut_line([name, rest].filter((s) => s !== "").join(" "));
+}
+function mind_sum(text) {
+  return cut_line(md_flat(text));
+}
+function line_local(n) {
+  return n === 0 || n > 1 && n % 2 === 1;
+}
+function mind_n(index) {
+  return index * 2 + 3;
+}
+function thinking_row() {
+  return { $: "Sum", id: 0, n: 0, text: THINKING, call: null, mark: "live" };
+}
+function stream_rows(live) {
+  const rows = [];
+  let held = false;
+  for (const l of live) {
+    if (l.kind === "tool" || l.kind === "mind") {
+      if (!held) {
+        rows.push(thinking_row());
+        held = true;
+      }
+      continue;
+    }
+    rows.push(...entry_rows(null, l.kind, l.text));
+  }
+  return rows;
+}
+function tool_rows(v, id, entry, before) {
+  if (v.open.get(id + "+1") === true) {
+    return [{ $: "Box", id, n: 1, text: "fold", rows: whole_rows(id, entry, before) }];
+  }
+  return [{ $: "Sum", id, n: 1, text: tool_sum(entry.text), call: null, mark: "tool" }];
+}
+function mind_rows(v, id, index, text) {
+  const n = mind_n(index);
+  if (v.open.get(id + "+" + n) === true) {
+    return [{ $: "Box", id, n, text: "fold", rows: entry_rows(null, "mind", text) }];
+  }
+  return [{ $: "Sum", id, n, text: mind_sum(text), call: null, mark: "mind" }];
+}
+function held_rows(v, entry, before) {
+  if (entry.kind === "tool" && entry.id !== undefined) {
+    return tool_rows(v, entry.id, entry, before);
+  }
+  if (entry.kind === "tool" || entry.kind === "mind") {
+    const mark = entry.kind === "tool" ? "tool" : "mind";
+    return [{ $: "Sum", id: 0, n: 0, text: mark === "tool" ? tool_sum(entry.text) : mind_sum(entry.text), call: null, mark }];
+  }
+  return whole_rows(null, entry, before);
 }
 function live_push(live, kind, text, fresh = false) {
   const top = live[live.length - 1];
@@ -3906,9 +3978,17 @@ function row_html(row) {
 function row_make(row) {
   switch (row.$) {
     case "Sum": {
+      const cls = row.mark === undefined ? "block" : "block " + row.mark;
+      if (row.n === 0) {
+        const body = row.mark === "live" ? `<div class="shimmer" data-text="${esc(row.text)}">${esc(row.text)}</div>` : `<div>${esc(row.text)}</div>`;
+        const role = row.mark === "live" ? ' role="status"' : "";
+        const mark = row.mark === "live" ? "" : `<span class="lv">${esc(GLYPH.open)}</span>`;
+        return `<div class="${cls}"${role}>${mark}${body}</div>`;
+      }
       const open = act_html({ $: "Open", id: row.id, n: row.n });
       const text = row.call === null ? esc(row.text) : head_html(row.call, call_line(row.call), "");
-      return `<div class="block"${open} data-a="${row.id}"><span class="lv">${row.n}x</span><div>${text}</div></div>`;
+      const lv = line_local(row.n) ? "1" : String(row.n);
+      return `<div class="${cls}"${open} data-a="${row.id}"><span class="lv">${lv}x</span><div>${text}</div></div>`;
     }
     case "Box": {
       const shut = act_html({ $: "Shut", id: row.id, n: row.n });
@@ -4308,6 +4388,7 @@ var SETTING = {
   pick: ["Default model", "What a chat runs on until it picks another."],
   compactor: ["Compactor model", "What writes the memory's summaries."],
   agents: ["Subagent model", "What subagents run on."],
+  cursor_fast: ["Cursor fast", "Desligado por padrão: o cursor-sub roda o Composer sem a variante fast, que consome mais do plano."],
   site: ["Site", "The server's address, for sign-in links and the installer."],
   apple: ["iOS App ID", "The app's team and bundle ID, whose sign-in links it opens."],
   apns: ["APNs key ID", "The ID of the key the app's pushes are signed with."]
@@ -4321,6 +4402,7 @@ var VENDOR_KEY = { "claude-api": "anthropic", "openai-api": "openai" };
 var PICKS = ["pick", "compactor", "agents"];
 var GROUPS = [
   ["Models", ["vendors", "models", "pick", "compactor", "agents"]],
+  ["Plano do Cursor", ["cursor_fast"]],
   ["Server", ["site", "apple", "apns"]]
 ];
 function settings_html(page) {
@@ -4336,7 +4418,7 @@ function settings_html(page) {
   const save = `<div class="save"><p class="why"></p><button class="chip go"${page.error === null ? "" : " disabled"}>Save</button></div>`;
   const head = `<p class="sub">The server's settings, in config.json in its folder.</p>`;
   const profiles = page.profiles === null ? "" : section_html("Profiles", `<p class="sub">Ranked models: a chat on a profile runs on the first and falls back to the next when one is out.</p><div class="set profiles" data-key="profiles"><div class="field"></div><p class="err"></p></div>`);
-  return head + error + none + `<form class="settings" autocomplete="off">` + group(GROUPS[0]) + profiles + keys + group(GROUPS[1]) + save + `</form>`;
+  return head + error + none + `<form class="settings" autocomplete="off">` + group(GROUPS[0]) + group(GROUPS[1]) + profiles + keys + group(GROUPS[2]) + save + `</form>`;
 }
 function offered(vendors, models) {
   return Pick.models(VENDORS.filter((v) => vendors.includes(v)), models).map(([v, m]) => v + ":" + m.label);
@@ -4373,6 +4455,10 @@ function control_html(r) {
     case "compactor":
     case "agents": {
       return `<input type="hidden" name="${r.key}" value="${esc(r.value)}"><div class="four"></div>`;
+    }
+    case "cursor_fast": {
+      const on = r.value.trim() === "on";
+      return `<select id="set-${r.key}" name="${r.key}"><option value="off"${on ? "" : " selected"}>desligado</option><option value="on"${on ? " selected" : ""}>ligado</option></select>`;
     }
   }
   return `<input id="set-${r.key}" name="${r.key}" value="${esc(r.value)}" placeholder="${esc(r.def)}" spellcheck="false" autocapitalize="off">`;
@@ -5575,6 +5661,10 @@ function chat() {
   $2("form").onsubmit = (ev) => {
     ev.preventDefault();
     submit();
+  };
+  $2(".force").onclick = () => {
+    submit();
+    v.force();
   };
   $2(".attach").onclick = () => file.click();
   $2("#pick").onkeydown = roam;

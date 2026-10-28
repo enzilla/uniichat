@@ -799,7 +799,7 @@ function term_block(t: Term, arg: string, open: boolean): void {
     return;
   }
   term_act(t, { $: open ? "Open" : "Shut", id, n });
-  if (t.panel === null && (!open || n === 1)) {
+  if (t.panel === null && (!open || n === 1 || View.line_local(n))) {
     term_shown(t, id, n, open);
   }
 }
@@ -1180,7 +1180,8 @@ function term_print(t: Term, msg: View.Server): void {
       const due  = main && msg.id !== undefined && View.part_due(v, [msg.id, 1], v.parts[v.parts.length - 2]);
       const head = due ? [View.Cap(View.AI)] : [];
       const before = main ? v.whole.get((msg.id ?? 0) - 1) : v.page?.log?.[n - 2];
-      term_rows(t, [...head, ...View.entry_rows(msg.id ?? null, msg.kind, text, msg.images, View.entry_of(msg, before))], false);
+      const body = msg.kind === "tool" || msg.kind === "mind" ? View.arrived_rows(v, msg) : View.entry_rows(msg.id ?? null, msg.kind, text, msg.images, View.entry_of(msg, before));
+      term_rows(t, [...head, ...body], false);
       return;
     }
     case "root": {
@@ -1246,6 +1247,9 @@ function term_flow(t: Term): void {
     }
   }
   for (const [k, l] of live.entries()) {
+    if (l.kind === "tool" || l.kind === "mind") {
+      continue;
+    }
     const done  = t.flow.get(l) ?? 0;
     const end   = done + View.entry_settled(l.kind, l.text.slice(done), k < live.length - 1);
     const piece = piece_trim(l.text.slice(done, end));

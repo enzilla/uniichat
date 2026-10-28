@@ -161,13 +161,19 @@ function row_lines(row: View.Row, w: number): Line[] {
 }
 
 function sum_lines(id: number, n: number, head: Line, text: string, w: number): Line[] {
+  if (n === 0) {
+    const lvl = { ...DIM, b: true };
+    const rows = runs_wrap([Run(text_clean(text))], w - 2, false);
+    return rows.map((l, k) => [Run(" " + (k === 0 ? Theme.GLYPH.open : "").padEnd(GUTTER), lvl), ...l]);
+  }
   const room = w - GUTTER - 2;
   const cmd  = Run("/open " + View.block_name(id, n), DIM);
   const rows = runs_wrap([...head, Run(text_clean(text))], room, false);
   const last = rows.pop() ?? [];
   const ends = line_width(last) + 2 + text_width(cmd.x) <= room ? [[...last, Run("  "), cmd]] : [last, [cmd]];
   const lvl  = { ...DIM, b: true };
-  return [...rows, ...ends].map((l, k) => [Run(" " + (k === 0 ? n + "x" : "").padEnd(GUTTER), lvl), ...l]);
+  const mark = View.line_local(n) ? "1x" : n + "x";
+  return [...rows, ...ends].map((l, k) => [Run(" " + (k === 0 ? mark : "").padEnd(GUTTER), lvl), ...l]);
 }
 
 function msg_lines(kind: Kind, who: string, body: Md.Block[], w: number, queued: boolean): Line[] {
