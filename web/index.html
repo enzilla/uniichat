@@ -8,8 +8,9 @@
 <link rel="icon" href="/favicon.svg">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#171719" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff">
+<!-- the theme picked in the menu (main.ts theme_set), light unless dark, set before the page paints -->
+<script>try{if(localStorage.getItem("unii.theme")==="dark"){document.documentElement.dataset.theme="dark";document.querySelector('meta[name="theme-color"]').content="#171719"}}catch{}</script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="UniiChat">
@@ -19,12 +20,12 @@
 </head>
 <body class="guest">
 <header>
-  <button class="brand" data-go="/" data-act='{"$":"Goto","name":null}'><i class="mark"></i><span>UniiChat</span></button>
+  <button class="brand" aria-label="UniiChat" data-go="/" data-act='{"$":"Goto","name":null}'><i class="mark"></i><span>UniiChat</span></button>
   <span class="net">offline</span>
   <button class="imping" popovertarget="import" hidden><span></span><progress max="1" value="0"></progress></button>
-  <button class="timers" popovertarget="timers" title="Schedules" hidden>⏰ <span></span></button>
+  <button class="timers" popovertarget="timers" title="Schedules" aria-label="Schedules" hidden><span></span></button>
   <button class="mode" type="button" title="Pendências: alternar entre a Mesa e a Conversa (m)" hidden>Mesa</button>
-  <button class="menu" popovertarget="menu">☰</button>
+  <button class="menu" popovertarget="menu" aria-label="Menu"></button>
 </header>
 <main id="log"><div class="rows"></div><div class="tail"></div></main>
 <main id="account" hidden></main>
@@ -68,12 +69,13 @@
   <button data-go="/pipeline">Pipeline</button>
   <button data-go="/tree">Memory</button>
   <button class="imp">Import History</button>
+  <button class="theme" type="button"></button>
   <button class="out">Sign out</button>
 </div>
 <div id="import" popover>
   <section class="start" hidden>
     <p class="title">How do you want to start?</p>
-    <p class="sub">Both are fine. You can import any time from the ☰ menu.</p>
+    <p class="sub">Both are fine. You can import any time from the menu.</p>
     <div class="acts two"><button type="button" class="into">Import my past AI chats</button><button type="button" class="skip">Start fresh</button></div>
   </section>
   <form>

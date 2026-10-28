@@ -203,7 +203,7 @@ function call_lines(c: Call.Call, w: number): Line[] {
   return [[...top, gap, ...where], ...heads, ...c.blocks.flatMap((b) => code_lines(b.k, b.x, w, DIM, false))];
 }
 
-// a call's emoji and name, bold, in the tool's color
+// a call's icon and name, bold, in the tool's color
 function verb_runs(c: Call.Call): Line {
   const ink = { ...INK, b: true, c: Theme.ANSI.tool };
   return [Run(Theme.tool_glyph(c.name) + " ", ink), ...(c.name === "" ? [] : [Run(c.name + " ", ink)])];
@@ -335,7 +335,7 @@ function span_runs(s: Md.Span, ink: Ink): Run[] {
     case "Pict": {
       const url = text_clean(site_url(s.k));
       const file = View.store_file(s.k);
-      return [Run((file ? "📎 " : "🖼 ") + (text_clean(s.x) || (file ? "file" : "image")) + " ", ink), Run(url, { ...ink, u: true, k: url })];
+      return [Run((file ? "\uf0c6 " : "\uf03e ") + (text_clean(s.x) || (file ? "file" : "image")) + " ", ink), Run(url, { ...ink, u: true, k: url })];
     }
     case "Name": { // an agent: its label, if it has one, then its name dimmed
       const label = View.agent_label(s.x);

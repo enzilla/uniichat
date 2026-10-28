@@ -7,6 +7,8 @@ import * as View from "../../View.ts";
 import * as Box from "./Box.ts";
 import { find, must } from "./Dom.ts";
 import * as Html from "./Html.ts";
+import * as Arrive from "./Arrive.ts";
+import { ICON } from "./Icons.ts";
 import * as Tree from "./Tree.ts";
 import * as Viewer from "./Viewer.ts";
 
@@ -21,6 +23,7 @@ declare global {
 const APP = window.webkit?.messageHandlers?.unii ?? null;
 
 const DESK = matchMedia("(hover: hover)");
+const STILL = matchMedia("(prefers-reduced-motion: reduce)");
 
 const NONE   = "No Claude or ChatGPT chats in that folder. Choose ~/.claude or ~/.codex.";
 
@@ -203,6 +206,19 @@ function chat(): void {
   $("#pick").onkeydown = roam;
   $("#pick").addEventListener("focusout", left);
   $("#menu .out").onclick = signout;
+  $(".menu").innerHTML = ICON.menu;
+  $(".timers").insertAdjacentHTML("afterbegin", ICON.bell);
+  motion_end($("header"));
+  theme_set(document.documentElement.dataset.theme === "dark", false);
+  $("#menu .theme").onclick = () => {
+    const dark = document.documentElement.dataset.theme !== "dark";
+    const swap = () => theme_set(dark, true);
+    if (STILL.matches || document.startViewTransition === undefined) {
+      swap();
+    } else {
+      document.startViewTransition(swap);
+    }
+  };
   $(".mic").onclick = mic;
   file.onchange = () => {
     attach([...(file.files ?? [])]);
@@ -1318,6 +1334,50 @@ async function import_copy(file: File): Promise<Blob> {
 
 const MARKUP = new WeakMap<Element, string>();
 
+// the theme: light unless picked dark in the menu, kept on this device
+// (index.html reads it before the page paints); its button offers the other
+function theme_set(dark: boolean, keep: boolean): void {
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#171719" : "#ffffff");
+  if (keep) {
+    try {
+      localStorage.setItem(kept("theme"), dark ? "dark" : "light");
+    } catch {}
+  }
+  $("#menu .theme").innerHTML = (dark ? ICON.light : ICON.dark) + (dark ? "Light theme" : "Dark theme");
+  motion_end($("#menu .theme"));
+}
+
+// the icons draw themselves in (Icons.ts, SMIL, which CSS can't stop):
+// under reduced motion, each jumps to its end
+function motion_end(root: ParentNode): void {
+  if (STILL.matches) {
+    root.querySelectorAll<SVGSVGElement>("svg.ic").forEach((svg) => svg.setCurrentTime(60));
+  }
+}
+
+// the children a paint of el put in: markup keeps an unchanged row's element
+function fresh(el: Element, paint: () => void): Element[] {
+  const had = new Set(el.children);
+  paint();
+  return [...el.children].filter((child) => !had.has(child));
+}
+
+// the rows that just arrived rise in (Arrive.ts says which), a few apart
+const LAST = new Map<string, number>();
+function arrive(shown: string, born: Element[], streamed: Element[], was: number): void {
+  const kids = [...$("#log .tail").children];
+  const a = (el: Element) => (el instanceof HTMLElement && el.dataset.a !== undefined ? Number(el.dataset.a) : null);
+  const ids = [...document.querySelectorAll<HTMLElement>("#log .rows > [data-a]")].map((el) => Number(el.dataset.a));
+  const up = Arrive.arrivals(LAST, { shown, body: born.map(a), tail: streamed.map((el) => kids.indexOf(el)), tail_was: was, tail_now: kids.length, ids });
+  const rise = [...up.body.map((k) => born[k]), ...up.tail.map((k) => kids[k])];
+  rise.forEach((el, k) => {
+    (el as HTMLElement).style.animationDelay = k * 50 + "ms";
+    el.classList.add("arrive");
+    el.addEventListener("animationend", () => el.classList.remove("arrive"), { once: true });
+  });
+}
+
 function markup(el: Element, htmls: string[]): void {
   const had = new Map<string | undefined, Element[]>();
   for (const child of el.children) {
@@ -1378,15 +1438,19 @@ function paint(): void {
   P.frame = 0;
   SCROLL.stick = true;
   bars();
+  const tail = $("#log .tail");
+  const was = tail.childElementCount;
+  const born = P.rows ? fresh($("#log .rows"), () => markup($("#log .rows"), View.view_body(v).map(Html.row_html))) : [];
   if (P.rows) {
-    markup($("#log .rows"), View.view_body(v).map(Html.row_html));
     Box.box_sizes($("#log .rows"));
     P.rows = false;
   }
-  markup($("#log .tail"), View.view_tail(v).map(Html.row_html));
-  Box.box_sizes($("#log .tail"));
+  const streamed = fresh(tail, () => markup(tail, View.view_tail(v).map(Html.row_html)));
+  Box.box_sizes(tail);
+  arrive(shown, born, streamed, was);
   folds();
   frames();
+  motion_end($("#log"));
   const back = RENEW.back === null ? null : document.querySelector<HTMLElement>(`#log [data-a="${RENEW.back.a}"]`);
   if (back !== null && RENEW.back !== null) {
     P.shown = shown;
@@ -1397,6 +1461,10 @@ function paint(): void {
   }
   if (shown !== P.shown) {
     P.shown = shown;
+    // another tab: its rows fade in, so the swap reads as a move, not a blink
+    if (!STILL.matches) {
+      $("#log .rows").animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: "cubic-bezier(0.23, 1, 0.32, 1)" });
+    }
     SCROLL.end = v.fold === null;
     scrollTo(0, v.fold === null ? doc.scrollHeight : 0);
     return;

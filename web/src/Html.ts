@@ -7,6 +7,7 @@ import type { Field, Task } from "../../Tasks.ts";
 import type * as Pipeline from "../../Pipeline.ts";
 import * as Deps from "../../TaskDeps.ts";
 import * as Theme from "../../Theme.ts";
+import { ICON } from "./Icons.ts";
 import * as Timer from "../../Timer.ts";
 import * as View from "../../View.ts";
 
@@ -91,8 +92,14 @@ function call_html(c: Call.Call): string {
   return head_html(c, c.head, c.device) + c.blocks.map(block_html).join("");
 }
 
+// a tool's icon (Icons.ts); one not listed, the cog
+const TOOL_ICON: Record<string, string> = {
+  zoom: ICON.search, date: ICON.calendar, shell: ICON.code, read: ICON.read, write: ICON.write, edit: ICON.edit,
+  spawn: ICON.spawn, tell: ICON.tell, computer: ICON.computer, schedule: ICON.bell, schedules: ICON.bell, unschedule: ICON.bell,
+};
+
 function head_html(c: Call.Call, text: string, device: string): string {
-  const icon  = `<span class="ic">${Theme.tool_glyph(c.name)}</span>`;
+  const icon  = TOOL_ICON[c.name] ?? ICON.any;
   const verb  = c.name === "" ? "" : `<b>${esc(c.name)}</b> `;
   const where = device === "" ? "" : `<span class="on">· ${esc(device)}</span>`;
   return `<p class="call">${where}${icon}${verb}${esc(text)}</p>`;
@@ -805,7 +812,7 @@ function file_html(shown: string, from: number, lines: string[]): string {
 
 function chip_html(url: string, name: string): string {
   const shown = name.trim() || (url.split("/").pop() ?? "");
-  return `<a class="file" href="${esc(url)}" download="${esc(shown)}" title="Download ${esc(shown)}"><span class="ic">📎</span><span class="fname">${esc(shown)}</span><small data-of="${esc(url)}"></small></a>`;
+  return `<a class="file" href="${esc(url)}" download="${esc(shown)}" title="Download ${esc(shown)}">${ICON.read}<span class="fname">${esc(shown)}</span><small data-of="${esc(url)}"></small></a>`;
 }
 
 function spans_html(spans: Md.Span[]): string {
@@ -875,8 +882,8 @@ export function pipeline_html(panel: Pipeline.Panel | null, now = Date.now(), wh
     + card(String(t.active), t.active === 1 ? "frente ativa" : "frentes ativas")
     + card(String(t.user), "com você")
     + card(String(t.stalled), t.stalled === 1 ? "parada com o Unii" : "paradas com o Unii")
-    + card(t.cycles === null ? "—" : num_said(t.cycles), "ciclos por PR", "mediana")
-    + card(t.decide === null ? "—" : View.took_said(t.decide), "até a sua decisão", t.decided === 0 ? "nenhuma decisão registrada" : "mediana de " + t.decided + (t.decided === 1 ? " decisão" : " decisões"))
+    + card(t.cycles === null ? "sem dados" : num_said(t.cycles), "ciclos por PR", "mediana")
+    + card(t.decide === null ? "sem dados" : View.took_said(t.decide), "até a sua decisão", t.decided === 0 ? "nenhuma decisão registrada" : "mediana de " + t.decided + (t.decided === 1 ? " decisão" : " decisões"))
     + card(View.span_said(t.idle), "tempo parado", "frentes ativas, sem agente e sem você")
     + `</section>`;
   const read = `<p class="pipe-read">Lido às ${esc(View.when_said(panel.at).slice(6))}${panel.refreshing ? " · lendo o estado dos PRs no GitHub…" : ""} · <button type="button" class="link pipe-reload">Atualizar</button></p>`;
