@@ -46,13 +46,10 @@ const MODELS: Record<Vendor, Model[]> = {
   "claude-sub": [{ ...OPUS, speeds: ["slow"] }, SONNET, HAIKU],
   // a Cursor plan's (CursorSub.ts): each by its id less effort and speed,
   // which the call adds as Cursor names its variants
+  // only what the plan includes whatever its usage: the others draw on
+  // the plan's usage, and past it on on-demand billing, which this fork
+  // never uses (with the usage spent, Cursor accepts Composer alone)
   "cursor-sub": [
-    OPUS,
-    SONNET,
-    { label: "fable-5.1",        id: "claude-fable-5-1", speeds: ["slow"], window: CURSOR_WINDOW },
-    { label: "gpt-5.6-sol",      id: "gpt-5.6-sol",      speeds: ["slow", "fast"], window: CURSOR_WINDOW },
-    { label: "grok-4.7",         id: "grok-4.7",         speeds: ["slow", "fast"], window: CURSOR_WINDOW },
-    { label: "gemini-3.8-flash", id: "gemini-3.8-flash", speeds: ["slow"], window: CURSOR_WINDOW },
     { label: "composer-2.5",     id: "composer-2.5",     speeds: ["slow", "fast"], window: CURSOR_WINDOW },
   ],
 };

@@ -29,7 +29,8 @@ const LISTED = new Set(("claude-opus-5-5-low claude-opus-5-5-low-fast claude-opu
 
 test("every model Pick offers, at every effort and speed, is one Cursor lists", () => {
   const models = Pick.models(["cursor-sub"], ["opus-5.5", "sonnet-5.5", "fable-5.1", "gpt-5.6-sol", "grok-4.7", "gemini-3.8-flash", "composer-2.5"]);
-  expect(models.length).toBe(7);
+  // only Composer: the plan includes it whatever its usage (never on-demand)
+  expect(models.map(([, m]) => m.label)).toEqual(["composer-2.5"]);
   for (const [, m] of models) {
     for (const effort of EFFORTS) {
       for (const speed of m.speeds) {
@@ -37,8 +38,8 @@ test("every model Pick offers, at every effort and speed, is one Cursor lists", 
       }
     }
   }
-  expect(CursorSub.model("grok-4.7", "max", "slow")).toBe("grok-4.7-xhigh");
-  expect(CursorSub.model("gemini-3.8-flash", "low", "fast")).toBe("gemini-3.8-flash-low");
+  expect(CursorSub.model("composer-2.5", "max", "slow")).toBe("composer-2.5");
+  expect(CursorSub.model("composer-2.5", "low", "fast")).toBe("composer-2.5-fast");
 });
 
 test("bubblewrap's command: the system read only, no user's home, the agent's home and work dir alone writable, a clean environment", () => {
@@ -185,3 +186,18 @@ test("closed, the agent's input ends and it exits on its own; one that won't is 
     fs.rmSync(work, { recursive: true, force: true });
   }
 }, 15000);
+
+test("a model Cursor won't run (the plan's usage spent) ends the call off, saying so, not as a sign-in to redo", async () => {
+  const work = fs.mkdtempSync(os.tmpdir() + "/unii-cs-");
+  try {
+    const agent = 'read l; id=$(printf %s "$l" | sed -n \'s/.*"id":\\([0-9]*\\).*/\\1/p\'); printf \'{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1}}\\n\' "$id"; read l; echo "Cannot use this model: grok-4.7-medium[fast=false]. Available models: composer-2.5" >&2; exit 1';
+    const acp = CursorSub.spawn(["/bin/sh", "-c", agent], work);
+    const end = await CursorSub.open(acp, "", new AbortController().signal);
+    expect(end).toMatchObject({ stop: "down", off: true });
+    expect((end as { text: string }).text).toContain("Cannot use this model");
+    expect((end as { text: string }).text).not.toBe(SIGN_IN);
+    acp.close();
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+});

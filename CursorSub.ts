@@ -57,17 +57,11 @@ export const SERVER = "unii";
 // Cursor's permissions: our tools only
 export const CLI_JSON = { permissions: { allow: ["Mcp(" + SERVER + ":*)"], deny: ["Shell(*)", "Read(**)", "Write(**)", "WebFetch(*)"] } };
 
-// each model's efforts as Cursor names its variants (none: one variant),
-// and those with a fast one ("-fast")
-export const EFFORTS: Record<string, string[]> = {
-  "claude-opus-5-5"  : ["low", "medium", "high", "xhigh", "max"],
-  "claude-sonnet-5-5": ["low", "medium", "high", "xhigh", "max"],
-  "claude-fable-5-1" : ["low", "medium", "high", "xhigh", "max"],
-  "gpt-5.6-sol"      : ["low", "medium", "high", "xhigh", "max"],
-  "grok-4.7"         : ["low", "medium", "high", "xhigh"],
-  "gemini-3.8-flash" : ["low", "medium", "high"],
-};
-const FAST = ["claude-opus-5-5", "gpt-5.6-sol", "grok-4.7", "composer-2.5"];
+// each model's efforts as Cursor names its variants (none: one variant,
+// as Composer, the only model offered: Pick.ts), and those with a fast
+// one ("-fast")
+export const EFFORTS: Record<string, string[]> = {};
+const FAST = ["composer-2.5"];
 const ORDER = ["low", "medium", "high", "xhigh", "max"];
 
 // the files of /etc (and where Ubuntu's resolver lives) a program needs
@@ -78,6 +72,10 @@ const TOP = ["/bin", "/sbin", "/lib", "/lib64"];
 
 export const SIGN_IN = "cursor-sub is not signed in, or its sign-in expired: run `unii serve cursor` on the server";
 export const NO_SANDBOX = "cursor-sub runs Cursor's agent only inside bubblewrap, which isn't here: install it on the server (sudo apt install bubblewrap) and ask again";
+// what one ends with when Cursor refuses its model (one the plan's usage
+// no longer covers): off, so a fallback goes on, not a sign-in to redo
+const NO_MODEL = "Cursor won't run this model now (the plan's usage for it is spent, or it isn't offered): ";
+
 const SANDBOX_FAILED = "cursor-sub couldn't start Cursor's agent inside its sandbox, so it didn't run it: ";
 export const NO_DOCKER = "cursor-sub runs Cursor's agent in Docker here (cursor_sandbox), and Docker isn't usable, so it didn't run it: ";
 export const BAD_SANDBOX = "cursor-sub's cursor_sandbox must be bwrap or docker, so it didn't run Cursor's agent";
@@ -392,6 +390,11 @@ export namespace CursorSub {
     }
     const auth = await step("authenticate", { methodId: "cursor_login" });
     if (auth.error !== undefined) {
+      const said = acp.err().trim();
+      if (/Cannot use this model/i.test(said)) {
+        console.error("cursor-sub: " + said.slice(0, 300));
+        return { text: NO_MODEL + said.slice(0, 200), stop: "down", off: true };
+      }
       return { text: SIGN_IN };
     }
     if (signal.aborted) {
