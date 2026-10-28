@@ -12,7 +12,7 @@ import * as os from "node:os";
 import * as Modal from "./Modal.ts";
 import * as T from "./Tasks.ts";
 import * as View from "./View.ts";
-import * as Html from "./web/src/Html.ts";
+import * as Html from "./web/src/Render.tsx";
 
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-choices-");
 const NOW  = Date.parse("2026-10-23T12:00:00Z");

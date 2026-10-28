@@ -3,7 +3,7 @@
 // The pending list's dependencies (Tasks.ts): a task's `after` lists the
 // ids it waits for. It's blocked while any of them is open; one done or
 // dropped (or gone: archived, so closed) frees it. Pure, on any list of
-// tasks, so the server (Tasks.ts) and the views (View.ts, web Html.ts)
+// tasks, so the server (Tasks.ts) and the views (View.ts, web the web view (ts))
 // read a list the same way: views get every open task, so whether one
 // is blocked, and how many it frees, is known there too.
 

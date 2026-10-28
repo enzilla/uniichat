@@ -574,7 +574,7 @@ export function view_act(v: View, act: Act): Client[] {
 // and those closed lately, as the server sent them (Tasks.tasks_view)
 // an open task with no change in COLD (its state, an edit, a message
 // in its thread) is old: it goes down to "Antigas", folded, in the
-// lists (Panel.ts, Html.ts); any change brings it back. Never closed
+// lists (Panel.ts, the web view (ts)); any change brings it back. Never closed
 // ones (those go to the archive, Tasks.tasks_archive)
 export const COLD = 7 * 86400e3;
 export function task_cold(t: Task, now = Date.now()): boolean {
@@ -891,8 +891,8 @@ export function tasks_by_assignee(open: Task[]): [string, Task[]][] {
   return keys.map((k) => [k, open.filter((t) => t.assignee === k)] as [string, Task[]]).filter(([, ts]) => ts.length > 0);
 }
 
-// The Mesa (the desk): the pending list as a screen of its own (main.ts,
-// Html.desk_html), each task in one group, by whose move it is: "now",
+// The Mesa (the desk): the pending list as a screen of its own (main.tsx,
+// Desk.tsx desk_parts), each task in one group, by whose move it is: "now",
 // the user's (theirs and free, or Unii answered in its thread); "unii",
 // the user wrote in its thread and Unii hasn't answered; "others",
 // someone else's (Unii's, an agent's) at work, or one waiting for
@@ -1727,7 +1727,7 @@ export function view_tabs(v: View): Tab[] {
 
 // the agents' labels, by name, as the last state told (State.labels):
 // one for whatever names an agent, as a message's [Name] (Paint.ts,
-// Html.ts)
+// the web view (ts))
 const AGENT_LABELS = new Map<string, string>();
 
 export function agent_label(name: string): string | undefined {
@@ -1780,7 +1780,7 @@ export function view_typing(v: View): boolean {
 }
 
 // what Unii is doing now, for a line always in sight while it works
-// (Term.ts, main.ts): its step (the tool it runs, what it reads, thinks
+// (Term.ts, main.tsx): its step (the tool it runs, what it reads, thinks
 // or writes, what it waits for) and the subagents at work, each by its
 // label; null while nothing runs
 export type Activity = { step: string; agents: { name: string; label: string }[] };
@@ -2202,7 +2202,7 @@ function entry_body(kind: Kind, text: string, label: string, tool: string): Md.B
 // The pipeline's panel (R6)
 // -------------------------
 // Pipeline.ts reads where each front is; these say it, for the panel's
-// page (Html.pipeline_html)
+// page (Pipeline.tsx)
 
 // a front's stage, as the panel says it
 export const STAGE_SAID: Record<Stage, string> = { impl: "implementando", verif: "verificando", user: "com você", others: "com terceiros", stalled: "parada com o Unii", closed: "encerrada" };

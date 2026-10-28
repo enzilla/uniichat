@@ -16,7 +16,7 @@ import * as Deps from "./TaskDeps.ts";
 import * as TaskPush from "./TaskPush.ts";
 import * as T from "./Tasks.ts";
 import * as View from "./View.ts";
-import * as Html from "./web/src/Html.ts";
+import * as Html from "./web/src/Render.tsx";
 
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-mesa-visual-");
 const NOW  = Date.parse("2026-10-26T12:00:00Z");
@@ -177,7 +177,7 @@ test("the ficha: whose, origin, front, kind, priority, limit, next step, done wh
     '<dt>Depende de</dt><dd><button class="goto" data-desk="P1">P1 (sua)</button></dd>',
     '<dt>Libera</dt><dd><button class="goto" data-desk="P3">P3 (sua)</button></dd>',
     '<dt>PR</dt><dd><span class="pr-fact"><a class="pr" href="https://github.com/morum/uniichat/pull/20" target="_blank" rel="noopener noreferrer">uniichat#20</a> <span class="verdict rejected">reprovado</span> <code>8c80f79</code></span></dd>',
-    '<dt>Criada</dt><dd><time datetime="2026-10-26T10:00:00.000Z">',
+    '<dt>Criada</dt><dd><time dateTime="2026-10-26T10:00:00.000Z">',
   ]) {
     expect(ficha).toContain(fact);
   }
@@ -211,15 +211,14 @@ test("the limit: the user's by its kind, past due said, waiting for Unii not lat
   expect([View.ago_said(new Date(NOW).toISOString(), NOW + 30e3), View.ago_said(new Date(NOW).toISOString(), NOW + 5 * 60e3), View.ago_said(new Date(NOW + 2 * H).toISOString(), NOW), View.ago_said("x", NOW)]).toEqual(["agora", "há 5 min", "em 2 h", ""]);
 });
 
-test("the Conversa shows no list: only the header's Mesa · N; the Mesa's article in two columns, stacked on a phone", () => {
+test("the Conversa shows no list: only the rail's Mesa with its count; the Mesa's article in two columns, stacked on a phone", () => {
   const html = fs.readFileSync(import.meta.dir + "/web/index.html", "utf8");
   expect(html).not.toContain('id="tasks"');
   expect(html).not.toContain('class="tasks"');
-  expect(html).toContain('<button class="mode"');
-  const main = fs.readFileSync(import.meta.dir + "/web/src/main.ts", "utf8");
-  expect(main).not.toContain('"#tasks');
-  expect(main).not.toContain("tasks_bar");
-  expect(main).toContain('"Mesa · " + turn');
+  const app = fs.readFileSync(import.meta.dir + "/web/src/App.tsx", "utf8");
+  expect(app).not.toContain('"#tasks');
+  expect(app).not.toContain("tasks_bar");
+  expect(app).toContain('label="Mesa" here={place === "desk"} badge={turn}');
   expect("tasks_html" in Html).toBe(false);
   const css = fs.readFileSync(import.meta.dir + "/web/style.css", "utf8");
   expect(css).not.toContain("#tasks");

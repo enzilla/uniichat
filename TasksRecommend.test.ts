@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as T from "./Tasks.ts";
 import * as View from "./View.ts";
-import * as Html from "./web/src/Html.ts";
+import * as Html from "./web/src/Render.tsx";
 
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-recommend-");
 const NOW  = Date.parse("2026-10-25T12:00:00Z");
@@ -133,7 +133,7 @@ test("web: the recommended choice framed and tagged (not twice if its text says 
   expect(html).toContain('>Pode seguir <span class="rec-tag">recomendada</span></button>');
   expect(html).toContain('<button class="accept" aria-keyshortcuts="a" title="Atalho: a"');
   expect(html).toContain(">Aceitar as recomendadas</button>");
-  expect(html).toContain('<label class="rec"><input type="checkbox" name="f-' + t.id + '-dias" value="seg"> seg <span class="rec-tag">recomendada</span></label>');
+  expect(html).toContain('<label class="rec"><input type="checkbox" name="f-' + t.id + '-dias" value="seg"/> seg <span class="rec-tag">recomendada</span></label>');
   expect(html).toContain('<p class="rec-text"><span class="rec-tag">recomendado</span> nenhuma</p>');
   expect(html).toContain("O Unii é avisado sozinho em até 1 min.");
   expect(html).not.toContain("Avisar o Unii agora");
@@ -149,7 +149,7 @@ test("web: the recommended choice framed and tagged (not twice if its text says 
   T.task_say(s, u.id, View.CHASE, NOW);
   const asked = Html.desk_html(T.tasks_view(s, NOW), "", "", u.id, NOW).detail.join("");
   // why: visible text, the button's description (R3), not a title alone
-  expect(asked).toContain('<button class="chase" disabled aria-describedby="chase-why-' + u.id + '"');
+  expect(asked).toContain('<button class="chase" disabled="" aria-describedby="chase-why-' + u.id + '"');
   expect(asked).toContain('<span class="hint" id="chase-why-' + u.id + '">Você já cobrou e o Unii ainda não respondeu. “Cobrar agora” volta quando ele responder na conversa.</span>');
   expect(asked).not.toContain('title="O Unii ainda não respondeu');
   expect(asked).toContain(">Cobrado: aguardando o Unii</button>");
@@ -183,10 +183,11 @@ test("accept with choices and only the fields recommended (R1): fills the fields
 
 test("contrast (R3): the accent of .rec-tag and .accept, and the disabled Cobrar's text, at least 4.5:1 on every fill they may sit on, light and dark (style.css)", () => {
   const css = fs.readFileSync(import.meta.dir + "/web/style.css", "utf8");
-  const dark = css.indexOf("@media (prefers-color-scheme: dark)");
+  // the tokens: the dark theme's (:root, the default) and the light one's
+  const block = (head: string) => css.slice(css.indexOf(head), css.indexOf("\n}\n", css.indexOf(head)));
   const vars = (part: string) => Object.fromEntries([...part.matchAll(/--([a-z]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
-  const light = vars(css.slice(0, dark));
-  const night = { ...light, ...vars(css.slice(dark, css.indexOf("}\n}", dark))) };
+  const night = vars(block(":root {\n  --ink"));
+  const light = { ...night, ...vars(block(":root[data-theme=light] {")) };
   const hex = (x: Record<string, string>, k: string): string => (x[k].startsWith("var(--") ? hex(x, x[k].slice(6, -1)) : x[k]);
   const lum = (h: string) => {
     const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));

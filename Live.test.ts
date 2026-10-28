@@ -4,7 +4,7 @@
 // line is a summary and the body opens like any other block.
 
 import { expect, test } from "bun:test";
-import * as Html from "./web/src/Html.ts";
+import * as Html from "./web/src/Render.tsx";
 import * as Paint from "./Paint.ts";
 import * as View from "./View.ts";
 

@@ -20,7 +20,7 @@ import { Chat, RESTARTED } from "./Server.ts";
 import * as Deps from "./TaskDeps.ts";
 import * as Tasks from "./Tasks.ts";
 import * as View from "./View.ts";
-import * as Html from "./web/src/Html.ts";
+import * as Html from "./web/src/Render.tsx";
 
 if (!config.DIR.startsWith("/tmp/")) {
   throw new Error("run with UNII_DIR in /tmp: " + config.DIR);

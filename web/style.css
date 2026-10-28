@@ -1,57 +1,73 @@
+/* Noite espectral (DESIGN.md): dark by default, a light theme picked in
+   the menu. One accent (periwinkle on the dark, cobalt on the light) for
+   what the user acts on; the spectrum only where something is live: the
+   beam while Unii works, the voice while dictating, the logo */
 :root {
+  --ink    : #ecebef;
+  --mid    : #a3a2ab;
+  --soft   : #8e8d97;
+  --hair   : #26262b;
+  --paper  : #0b0b0d;
+  --lift   : #141417;
+  --lift-2 : #1b1b1f;
+  --block  : #1b1b1f;
+  --hover  : #26262c;
+  --frame  : #34343b;
+  --edge   : #6f6e78;
+  --field  : #6b6a74;
+  --add    : #7ee2a8;
+  --del    : #ff8a80;
+  --accent : #8aa2ff;
+  --on-accent: #0b0b0d;
+  --red    : var(--del);
+  --warm   : #ffb35b;
+  --veil   : rgb(0 0 0 / .6);
+  --shadow : 0 1px 2px rgb(0 0 0 / .5), 0 18px 48px rgb(0 0 0 / .55);
+  --spectrum: linear-gradient(135deg, #5b8cff, #b07cff, #ff7ab6, #ffb35b);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  color-scheme: dark;
+}
+:root[data-theme=light] {
   --ink    : #1c1b19;
   --mid    : #5c5a54;
   --soft   : #66645e;
   --hair   : #e4e1d9;
-  --paper  : #f7f6f2;
+  --paper  : #f6f5f2;
   --lift   : #fdfcfa;
+  --lift-2 : #efede7;
   --block  : #eeece6;
   --hover  : #e6e3db;
   --frame  : #cbc7bd;
   --edge   : #1c1b19;
+  --field  : #8a877f;
   --add    : #1a7f37;
   --del    : #cf222e;
   --accent : #2747d6;
+  --on-accent: #fdfcfa;
   --red    : #b42318;
-  --warm   : #e8590c;
-  --veil   : rgb(0 0 0 / .3);
-  --shadow : 0 1px 2px rgba(0, 0, 0, .05), 0 6px 20px rgba(0, 0, 0, .05);
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-}
-/* dark, when picked in the menu (main.ts theme_set) */
-:root[data-theme=dark] {
-  --ink    : #ecebe6;
-  --mid    : #a7a59e;
-  --soft   : #9a988f;
-  --hair   : #2d2c29;
-  --paper  : #121212;
-  --lift   : #1b1b1a;
-  --block  : #242422;
-  --hover  : #2f2e2b;
-  --frame  : #4a4944;
-  --edge   : #8a887f;
-  --add    : #55b874;
-  --del    : #f8857c;
-  --accent : #8aa2ff;
-  --red    : var(--del);
-  --warm   : #f59f4c;
-  --veil   : rgb(0 0 0 / .5);
-  --shadow : 0 1px 2px rgb(0 0 0 / .4), 0 8px 28px rgb(0 0 0 / .45);
+  --warm   : #c2410c;
+  --veil   : rgb(28 27 25 / .35);
+  --shadow : 0 1px 2px rgb(0 0 0 / .05), 0 14px 40px rgb(0 0 0 / .12);
+  color-scheme: light;
 }
 
 :root {
-  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
-  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  --brand: "Avenir Next", Avenir, Futura, var(--sans);
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-  --col: 740px;
-  --head: 57px;
+  /* Bricolage Grotesque: the brand and the screens' titles, a grotesque
+     with a small ink trap, technical without monospace; IBM Plex Sans and
+     Mono: the text and the code, one family drawn for interfaces */
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --brand: "Bricolage Grotesque", var(--sans);
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --col: 760px;
+  --head: 56px;
+  --rail: 68px;
 }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html { color-scheme: light dark; -webkit-text-size-adjust: 100%; scrollbar-gutter: stable; overflow-anchor: none; }
-body { margin: 0; background: var(--paper); color: var(--ink); font: 18px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+html { -webkit-text-size-adjust: 100%; scrollbar-gutter: stable; overflow-anchor: none; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 :is(button, select, input, textarea):disabled { cursor: not-allowed; }
 /* the keyboard's place: a cobalt ring on any control (rules below may move it inside) */
@@ -63,58 +79,102 @@ body { text-wrap: balance; }
 .msg:not(.note) { text-wrap: pretty; }
 textarea { text-wrap: wrap; }
 
-body.guest :is(.net, .all, .menu, .mode, .attach, .mic, #pick, #tabs) { display: none !important; }
 body.solo main { width: min(420px, 100% - 48px); margin: 18vh auto; text-align: center; }
-body.solo h1 { margin: 0; font: 400 46px/1.05 var(--serif); letter-spacing: -.015em; }
+body.solo h1 { margin: 0; font: 600 44px/1.05 var(--brand); letter-spacing: -.02em; }
 .sub { margin: 18px 0 0; color: var(--mid); font-size: 14.5px; }
+.icw { display: contents; }
 
-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; height: var(--head); padding: 0 max(20px, env(safe-area-inset-right)) 0 max(20px, env(safe-area-inset-left)); background: var(--paper); border-bottom: 1px solid var(--hair); }
-header > :is(button, a) { height: 32px; padding: 0 12px; border-radius: 8px; background: var(--block); font-size: 13.5px; font-weight: 500; }
-header > :is(button, a):hover { background: var(--hover); }
-header > .brand { margin-right: auto; display: flex; align-items: center; gap: 10px; height: auto; padding: 0; background: none; font: 600 20px/1 var(--brand); letter-spacing: -.01em; }
-header > .brand:hover { background: none; }
-i.mark { display: block; width: 26px; height: 26px; background: var(--ink); -webkit-mask: url(/mark.svg) center / contain no-repeat; }
-header .net { font-size: 13px; color: var(--mid); }
+/* The rail (App.tsx): the screens, one icon each, at the left; on a
+   phone, a bar at the foot. Fixed, so the page scrolls as before */
+.rail { position: fixed; z-index: 4; inset: 0 auto 0 0; width: var(--rail); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 0 max(14px, env(safe-area-inset-bottom)); border-right: 1px solid var(--hair); background: var(--lift); }
+.rail .logo { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 12px; border-radius: 12px; background: var(--spectrum); }
+.rail .logo i.mark { width: 22px; height: 22px; background: var(--paper); }
+.rail .go { position: relative; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; color: var(--soft); transition: color 160ms var(--ease-out), background-color 160ms var(--ease-out); }
+.rail .go svg.ic { width: 21px; height: 21px; }
+.rail .go:hover, .rail .go[aria-expanded=true] { color: var(--ink); background: var(--hover); }
+.rail .go.here { color: var(--ink); background: var(--block); }
+/* the screen shown: a short line of the accent at the rail's edge */
+.rail .go.here::before { content: ""; position: absolute; left: -12px; top: 12px; bottom: 12px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+.rail .go .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.rail .badge { position: absolute; top: 5px; right: 4px; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font: 600 10.5px/17px var(--mono); }
+.rail .space { flex: 1; }
+i.mark { display: block; width: 26px; height: 26px; background: var(--ink); -webkit-mask: url(/mark.svg) center / contain no-repeat; mask: url(/mark.svg) center / contain no-repeat; }
 
-footer { position: sticky; bottom: 0; z-index: 2; padding: 18px max(20px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); background: linear-gradient(transparent, var(--paper) 14px); }
-body:is(.account, .tree) footer { position: fixed; inset: auto 0 0; background: none; pointer-events: none; }
-body:is(.account, .tree) footer > :not(#toast) { display: none; }
-/* what Unii is doing while it works: a spinner, its step, the subagents (main.ts bars) */
-#doing { width: min(var(--col), 100%); margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; font: 15px/20px var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; }
-#doing[hidden] { display: none; }
-#doing .spin { flex: none; width: 12px; height: 12px; border: 2px solid var(--hair); border-top-color: var(--accent); border-radius: 50%; animation: doing-spin .8s linear infinite; }
+.col { min-height: 100dvh; margin-left: var(--rail); display: flex; flex-direction: column; }
+header.top { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 12px; height: var(--head); padding: 0 max(24px, env(safe-area-inset-right)) 0 28px; border-bottom: 1px solid var(--hair); background: color-mix(in srgb, var(--paper) 86%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+header.top h1 { margin: 0; font: 600 17px/1 var(--brand); letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+header.top .ctx { display: flex; align-items: center; gap: 8px; margin-right: auto; min-width: 0; font: 12.5px var(--mono); color: var(--mid); }
+header.top .ctx .all { padding: 4px 8px; border-radius: 7px; }
+header.top .ctx .all:hover { background: var(--hover); color: var(--ink); }
+header.top .ctx .rule.meter { width: 96px; height: 4px; border-radius: 2px; --fill: var(--accent); background: linear-gradient(to right, var(--fill) var(--used), var(--hair) var(--used)); }
+header.top .ctx .rule.meter.warm { --fill: var(--warm); }
+header.top .ctx .rule.meter.hot { --fill: var(--del); }
+header.top .net { font: 12.5px var(--mono); color: var(--warm); }
+header.top > :is(.timers, .imping) { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 16px; background: var(--block); font: 12.5px var(--mono); }
+header.top > :is(.timers, .imping):hover { background: var(--hover); }
+header.top > .timers svg.ic { width: 16px; height: 16px; }
+
+/* the foot: back to your message or to the end, what Unii is doing, the
+   box, the tabs; sticky at the page's bottom, the chat scrolling under */
+footer { position: sticky; bottom: 0; z-index: 2; margin-top: auto; padding: 20px max(24px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) 24px; background: linear-gradient(transparent, var(--paper) 22px); }
+footer > * { width: min(var(--col), 100%); margin-inline: auto; }
+/* what Unii is doing while it works: an orb thinking, its step, the
+   subagents; a pill, so it reads as the state of the turn, not a row */
+#doing { width: fit-content; max-width: min(var(--col), 100%); margin: 0 auto 10px; display: flex; align-items: center; gap: 10px; padding: 5px 16px 5px 6px; border: 1px solid var(--hair); border-radius: 20px; background: var(--lift); font: 14px/20px var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; }
+#doing .orb { flex: none; width: 26px; height: 26px; }
 #doing .step { overflow: hidden; text-overflow: ellipsis; }
-#doing .agents { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; color: var(--mid); }
-#doing .agents::before { content: "·"; margin-right: 8px; color: var(--soft); }
-@keyframes doing-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { #doing .spin { animation-duration: 2.4s; } }
-#pick { width: min(var(--col), 100%); margin: 0 auto 6px; display: flex; align-items: center; gap: 6px; font: 12.5px/20px var(--sans); color: var(--mid); }
-#pick .rule { flex: 1; height: 1px; background: var(--hair); margin-right: 4px; }
-#pick .rule.meter { --fill: var(--mid); position: relative; background: linear-gradient(to right, var(--fill) var(--used), var(--hair) var(--used)); }
-#pick .rule.meter.warm { --fill: var(--warm); }
-#pick .rule.meter.hot { --fill: var(--del); }
-#pick .rule.meter::before { content: ""; position: absolute; inset: -7px 0; }
-#pick > :is(button, .knob) { padding: 0 6px; border-radius: 6px; }
-#pick > button:hover, #pick > button:has(+ :popover-open) { background: var(--block); color: var(--ink); }
-#pick .dot { color: var(--soft); }
-@media (max-width: 600px) {
-  #pick { flex-wrap: wrap; white-space: nowrap; gap: 2px; }
-  #pick > :is(button, .knob) { padding: 0 4px; }
-}
-#pick .choices { inset: auto; width: max-content; min-width: 150px; padding: 6px; overflow: auto; font: 14px/20px var(--sans); }
-#pick .choices p { margin: 6px 8px 2px; font-size: 12px; color: var(--mid); }
-#pick .choices > button { display: flex; padding: 7px 10px 7px 28px; }
-#pick .choices > button:focus-visible { outline: 2px solid var(--soft); outline-offset: -2px; }
-#pick .choices [aria-checked=true] { font-weight: 600; }
-#pick .choices [aria-checked=true]::before { content: "✓"; content: "✓" / ""; position: absolute; margin-left: -18px; }
+#doing .agents { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; font: 12.5px var(--mono); color: var(--mid); }
 
-/* the message box: the text on top, its tools in a row below (attach and
-   dictate left, send right); the cobalt only on send and on the focus */
-.composer { width: min(var(--col), 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--frame); border-radius: 18px; padding: 12px 10px 8px 16px; background: var(--lift); transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out); }
-.composer .field { position: relative; min-width: 0; outline: 0; color: var(--ink); font: 16px/1.5 var(--sans); padding: 2px 6px 4px 0; min-height: 28px; max-height: 40vh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: wrap; cursor: text; }
+/* the box (Composer.tsx): the beam rides its border while Unii works */
+.composer { position: relative; display: flex; flex-direction: column; border-radius: 22px; background: var(--lift); border: 1px solid var(--field); }
+.composer .queue { display: flex; align-items: center; gap: 10px; padding: 10px 12px 0 18px; font: 12.5px var(--mono); color: var(--mid); }
+.composer .queue .queued { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer .queue b { font-weight: 500; color: var(--ink); }
+.force { flex: none; height: 30px; padding: 0 14px; border-radius: 15px; background: var(--ink); color: var(--paper); font: 600 13px/1 var(--sans); }
+.force:hover { background: var(--accent); color: var(--on-accent); }
+.composer .field { position: relative; min-width: 0; outline: 0; color: var(--ink); font: 16px/1.55 var(--sans); padding: 16px 20px 6px; min-height: 54px; max-height: 40vh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: wrap; cursor: text; }
 .composer .field.blank::before { content: attr(data-placeholder); position: absolute; color: var(--soft); pointer-events: none; }
-.composer .bar { display: flex; align-items: center; gap: 4px; margin-left: -6px; }
-.field .item { position: relative; display: inline-block; width: 96px; height: 72px; max-width: 100%; margin: 2px 2px; padding: 0; vertical-align: bottom; overflow: hidden; border: 1px solid var(--hair); border-radius: 8px; background: var(--block); }
+.composer .bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px 10px; }
+.composer .grow { flex: 1; }
+.composer .knobs { display: flex; align-items: center; gap: 2px; min-width: 0; font: 12.5px var(--mono); color: var(--mid); }
+.composer .knobs > :is(button, .knob) { height: 30px; padding: 0 10px; border-radius: 15px; border: 1px solid var(--hair); white-space: nowrap; }
+.composer .knobs > button:hover, .composer .knobs > button:has(+ :popover-open) { color: var(--ink); background: var(--hover); }
+.composer .knobs .dot { display: none; }
+/* attach: a liquid + whose two picks flow out of it along the bar (the
+   pick's knobs step aside meanwhile: the box's beam clips anything above) */
+.composer .plus.parted + input + input + .knobs { opacity: 0; }
+.composer .knobs { transition: opacity 160ms var(--ease-out); }
+.composer .plus { z-index: 1; }
+.composer .plus { position: relative; width: 40px; height: 40px; }
+.composer .plus :is(.attach, .drop) { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; color: var(--mid); }
+.composer .plus .attach:hover, .composer .plus.parted .attach { color: var(--ink); }
+.composer .plus .drop { color: var(--ink); }
+/* the liquid's items in a row after the +, the two picks moved back onto
+   it (Composer x), so the + alone shows; they part from it as it opens */
+.composer .plus > div { width: 120px; white-space: nowrap; line-height: 0; }
+:root[data-theme=light] .send { background: #fdfcfa; color: #1c1b19; }
+.composer .plus > div > div { vertical-align: top; }
+.composer .plus > div > div:first-of-type { position: relative; z-index: 1; }
+.composer .plus:not(.parted) .drop { pointer-events: none; opacity: 0; }
+.composer .plus .drop { transition: opacity 160ms var(--ease-out); }
+.composer .plus svg.ic { width: 20px; height: 20px; }
+.mic { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; color: var(--mid); }
+.mic:hover { color: var(--ink); background: var(--hover); }
+.mic svg { width: 20px; height: 20px; stroke-width: 1.9; }
+.mic.rec { background: var(--del); color: #fff; }
+.mic:disabled { opacity: .4; }
+i.sq { display: block; width: 12px; height: 12px; border-radius: 3px; background: currentColor; }
+/* send: liquid metal; stop, the same disc with a square */
+.send { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; color: #fff; background: #17171b; }
+.send svg { width: 19px; height: 19px; stroke-width: 2.2; }
+:is(.send, .mic, .attach, .drop):active { scale: .94; }
+.composer.off { opacity: .55; }
+/* dictating: the ring that bends with the voice, how long, how to stop */
+.composer .voice { display: flex; align-items: center; gap: 14px; padding: 10px 20px 0; min-height: 84px; }
+.composer .voice canvas { flex: none; }
+.composer .voice .secs { font: 500 18px var(--mono); font-variant-numeric: tabular-nums; }
+.composer .voice .said { font-size: 13.5px; color: var(--mid); }
+.field .item { position: relative; display: inline-block; width: 96px; height: 72px; max-width: 100%; margin: 2px 2px; padding: 0; vertical-align: bottom; overflow: hidden; border: 1px solid var(--hair); border-radius: 10px; background: var(--block); }
 .field .item:has(> :is(img, video)) { box-sizing: content-box; }
 .field .item > :is(img, video) { display: block; width: 100%; height: 100%; object-fit: scale-down; pointer-events: none; }
 .field .item .tile { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 4px 6px; font: 12px/1.3 var(--sans); color: var(--mid); text-align: center; overflow: hidden; overflow-wrap: anywhere; }
@@ -124,45 +184,19 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 .field .item[data-state=up] > :is(img, video) { opacity: .6; }
 .field .item[data-state=bad] { border-color: var(--red); }
 .field .item[data-state=bad] .state { background: var(--red); }
-.send, .attach, .mic { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; }
-.send svg, .attach svg, .mic svg { width: 20px; height: 20px; stroke-width: 2; }
-.attach, .mic { color: var(--mid); }
-.mic { margin-right: auto; }
-:is(.attach, .mic):hover { color: var(--ink); background: var(--hover); }
-:is(.attach, .mic, .send):active { scale: .94; }
-.mic.rec { background: var(--ink); color: var(--paper); }
-.mic:disabled { opacity: .4; }
-.send { background: var(--accent); color: var(--paper); transition: background-color 160ms var(--ease-out), scale 120ms var(--ease-out); }
-.send:hover { background: color-mix(in srgb, var(--accent) 86%, var(--ink)); }
-.send.stop { background: var(--block); color: var(--ink); }
-.send.stop:hover { background: var(--hover); }
-.send:not(.stop) svg + svg, .send.stop svg:first-child { display: none; }
-.send.stop svg { fill: currentColor; stroke-width: 0; width: 16px; height: 16px; }
-/* the queue jump, beside send while a message waits: how many, and the
-   button that stops the turn so they go now */
-.composer .queued { font: 13px/1 var(--mono); color: var(--mid); margin-right: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.force { flex: none; height: 32px; margin-right: 4px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); font: 600 13.5px/1 var(--sans); }
-.force:hover { background: var(--accent); color: var(--paper); }
-.composer .voice { display: none; flex: 1; align-items: center; gap: 12px; height: 38px; color: var(--ink); }
-.composer.rec .voice { display: flex; }
-.composer.rec .field { display: none; }
-/* width 0, the row gives it the rest: else its drawn pixels (main.ts meter)
-   set its width through their aspect, a little wider each frame where the
-   screen's pixel ratio isn't whole, until it pushes the buttons off */
-.voice canvas { flex: 1; width: 0; height: 28px; }
-.voice span { font: 14px var(--mono); color: var(--mid); font-variant-numeric: tabular-nums; }
-.composer.off { border-color: var(--hair); }
-.composer.off .send { background: var(--hair); color: var(--mid); cursor: not-allowed; }
-.composer.off :is(.attach, .mic) { visibility: hidden; }
-.mine, .down { width: 30px; height: 26px; display: grid; place-items: center; border-radius: 7px; background: var(--block); }
-.mine { position: fixed; top: calc(var(--head) + 6px); right: max(20px, env(safe-area-inset-right), 50% - var(--col) / 2); }
-.down { position: absolute; bottom: calc(100% - 10px); right: max(20px, env(safe-area-inset-right), 50% - var(--col) / 2); }
-:is(.mine, .down):hover { background: var(--hover); }
-:is(.mine, .down) svg { width: 14px; height: 14px; stroke-width: 2.2; }
-#toast { width: fit-content; max-width: min(560px, 100%); margin: 0 auto 10px; padding: 8px 16px; border-radius: 12px; background: var(--ink); color: var(--paper); font-size: 13.5px; }
 
-#tabs { width: min(var(--col), 100%); margin: 6px auto 0; display: flex; gap: 16px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; font: 13px/20px var(--sans); color: var(--mid); }
-#tabs button { flex: none; }
+.mine, .down { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--hair); background: var(--lift); color: var(--mid); }
+.mine { position: fixed; z-index: 3; top: calc(var(--head) + 10px); right: max(20px, env(safe-area-inset-right), 50% - var(--col) / 2 - var(--rail) / 2); }
+footer > .down { position: absolute; width: 34px; margin: 0; bottom: calc(100% - 6px); right: max(24px, 50% - var(--col) / 2); }
+:is(.mine, .down):hover { color: var(--ink); background: var(--hover); }
+:is(.mine, .down) svg { width: 15px; height: 15px; stroke-width: 2.2; }
+#toast { position: fixed; z-index: 6; left: calc(50% + var(--rail) / 2); bottom: 132px; translate: -50% 0; width: max-content; max-width: min(560px, 100% - 32px - var(--rail)); padding: 9px 16px; border-radius: 14px; background: var(--ink); color: var(--paper); font-size: 13.5px; box-shadow: var(--shadow); }
+@media (prefers-reduced-motion: no-preference) {
+  #toast:not([hidden]) { transition: opacity 200ms var(--ease-out), translate 200ms var(--ease-out); @starting-style { opacity: 0; translate: -50% 8px; } }
+}
+
+#tabs { display: flex; gap: 16px; margin-top: 10px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; font: 13px/22px var(--sans); color: var(--mid); }
+#tabs button { flex: none; position: relative; }
 #tabs button:hover, #tabs .here { color: var(--ink); }
 #tabs .here { font-weight: 600; }
 
@@ -170,7 +204,7 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 [popover] p { margin: 8px 0 6px; font-size: 14px; }
 [popover] > :is(button, a) { display: block; width: 100%; padding: 8px 4px; text-align: left; font-size: 14.5px; border-radius: 10px; text-decoration: none; }
 [popover] > :is(button, a):hover { background: var(--hover); }
-#menu { width: 210px; padding: 6px; box-shadow: 0 8px 24px rgb(0 0 0 / .12); }
+#menu { inset: auto auto 14px calc(var(--rail) + 8px); width: 230px; padding: 6px; box-shadow: var(--shadow); }
 #timers { width: 340px; max-height: 70vh; overflow: auto; }
 #timers .title { margin-top: 4px; font-weight: 600; }
 #timers ul { margin: 0; padding: 0; list-style: none; }
@@ -222,7 +256,7 @@ progress { --track: var(--block); --bar: var(--ink); display: block; width: 100%
 progress::-webkit-progress-bar { background: var(--track); }
 progress::-webkit-progress-value { background: var(--bar); transition: width .4s; }
 progress::-moz-progress-bar { background: var(--bar); }
-header > .imping { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 112px; font: 500 12.5px var(--sans); }
+header.top > .imping { flex-direction: column; justify-content: center; align-items: stretch; gap: 4px; min-width: 120px; height: 36px; border-radius: 10px; }
 .imping progress { --track: rgb(0 0 0 / .14); height: 3px; margin: 0; }
 .imping.why progress { --bar: var(--mid); }
 @media (pointer: fine) { #import .phone { display: none; } }
@@ -323,7 +357,7 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 .msg .brand { font: 600 .92em var(--brand); font-style: normal; letter-spacing: -.01em; color: var(--accent); }
 .msg .name { font: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .msg .name:hover { background: var(--ink); color: var(--paper); }
-/* a labeled agent's generated name, after its label (Html.ts) */
+/* a labeled agent's generated name, after its label (the web view (ts)) */
 :is(.msg .name, #tabs button) small { font-size: .85em; font-weight: 400; opacity: .6; }
 
 .copy { position: absolute; right: 0; bottom: calc(100% + 4px); z-index: 1; display: grid; place-items: center; width: 26px; height: 26px; color: var(--mid); background: var(--paper); border-radius: 6px; opacity: 0; user-select: none; }
@@ -341,8 +375,8 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 /* a touch browser zooms the page into a field whose font is under 16px */
 @media (hover: none) { input, select { font-size: 16px; } }
 @media (pointer: coarse) {
-  :is(header > :is(button, a), #pick > button, #tabs button, #tree .tab) { position: relative; }
-  :is(header > :is(button, a), #pick > button, #tabs button, #tree .tab, .mine, .down, .copy, .open.one > .fold)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+  :is(header.top > button, .composer .knobs > button, header.top .ctx .all, #tabs button, #tree .tab) { position: relative; }
+  :is(header.top > button, .composer .knobs > button, header.top .ctx .all, #tabs button, #tree .tab, .mine, .down, .copy, .open.one > .fold)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
   .foot a { padding: 14px 0; }
   .chip { height: 44px; }
   [popover] > button { min-height: 44px; }
@@ -424,17 +458,12 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 #desk .thread .who { display: block; font-size: 12px; color: var(--mid); }
 #desk .thread li.user p { margin: 0; white-space: pre-wrap; }
 #desk .thread .acts { justify-content: flex-end; }
-}
-/* the Mesa (main.ts desk): the pending list as a screen, Conversa's
-   alternative (the header's .mode switches them). The list at the left,
+/* the Mesa (main.tsx desk): the pending list as a screen, Conversa's
+   alternative (the rail's Mesa opens it, a sheet). The list at the left,
    searched and filtered by project, its groups each under a heading, a
    task a row (the one shown marked); the task shown whole at the right.
    On a narrow screen, one at a time: the list, or the task (← back).
    While it shows, the chat's footer is out */
-header > .mode { font-weight: 600; }
-/* the user's move (main.ts turn_show): the Mesa's switch marked */
-header > .mode.turn { background: var(--ink); color: var(--paper); border-radius: 999px; }
-body.desk header > .mode.turn { background: none; color: inherit; }
 #desk { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); flex: 1; min-height: 0; }
 #desk .list { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--hair); }
 #desk .find { display: flex; gap: 6px; padding: 12px 14px 8px; }
@@ -452,7 +481,7 @@ body.desk header > .mode.turn { background: none; color: inherit; }
 #desk .row .head { font-size: 14px; }
 #desk .row .meta { display: block; margin: 2px 0 0; }
 #desk .row:is(.closed, .waiting, .others) .title { color: var(--mid); }
-#desk .none, #desk .empty { margin: 16px 14px; color: var(--mid); font-size: 14px; }
+#desk p.none, #desk .empty { margin: 16px 14px; color: var(--mid); font-size: 14px; }
 #desk .keys { margin: 0; padding: 8px 14px 12px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--mid); }
 #desk kbd { padding: 0 4px; border: 1px solid var(--frame); border-radius: 4px; font: 11.5px var(--mono); }
 #desk .list .tell { margin: 0 14px 10px; padding: 8px; border-radius: 8px; background: var(--block); font-size: 13.5px; }
@@ -480,7 +509,7 @@ body.desk header > .mode.turn { background: none; color: inherit; }
 #desk article .answers dd { margin: 0; overflow-wrap: anywhere; }
 /* late (the user's move over a day): red, as the push says it; its PRs,
    links by repo#n over the detail; a choice concludes ("Concluir como");
-   a required field left empty at Concluir, framed red (main.ts
+   a required field left empty at Concluir, framed red (main.tsx
    task_missing); after one resolved, the next of Agora */
 #desk .late { padding: 0 6px; border-radius: 6px; color: var(--red); border: 1px solid currentColor; font-weight: 500; }
 #desk .pr { padding: 0 6px; border-radius: 6px; background: var(--block); white-space: nowrap; }
@@ -588,23 +617,6 @@ body.desk header > .mode.turn { background: none; color: inherit; }
 @media (hover: none) { #viewer :is(.prev, .next) { display: none; } }
 @media (prefers-reduced-motion: reduce) { #viewer.ease .stage img { transition: none; } }
 
-@media (max-width: 600px) {
-  :root { --head: 51px; }
-  header { padding: 0 14px; }
-  .mine, .down { right: 14px; }
-  .down { bottom: calc(100% - 4px); }
-  .brand span { display: none; }
-  header > :is(button, a) { height: 30px; padding: 0 10px; font-size: 13px; }
-  #log { width: calc(100% - 28px); }
-  footer { padding: 12px 14px max(8px, env(safe-area-inset-bottom)); }
-  .composer { padding: 10px 8px 6px 14px; }
-  .send, .attach, .mic { width: 44px; height: 44px; }
-  .force { height: 44px; }
-  #account { width: calc(100% - 28px); }
-  [popover] { left: 12px; right: 12px; width: auto; }
-  #menu { left: auto; width: 210px; }
-  #timers { width: auto; }
-}
 
 #account { width: min(var(--col), 100% - 40px); margin: 0 auto; padding: 18px 0 64px; font-size: 15px; }
 #account .back { display: inline-block; padding: 8px 0; font-size: 14px; color: var(--mid); text-decoration: none; }
@@ -704,7 +716,7 @@ body.desk header > .mode.turn { background: none; color: inherit; }
 .profiles :is(.grip, .out):is(:hover, :focus-visible) { background: var(--hover); color: var(--ink); }
 .profiles .pnew { margin-top: 6px; }
 @media (pointer: coarse) { .profiles :is(.grip, .out) { width: 44px; height: 44px; } }
-/* the pipeline's panel (R6; Html.pipeline_html), a page in #account:
+/* the pipeline's panel (R6; Pipeline.tsx), a page in #account:
    the totals, then each front a <details>: its stage, tasks, PRs live,
    cycles of verification and metrics */
 #account.pipe { width: min(1080px, 100% - 40px); }
@@ -885,34 +897,19 @@ body.tree { height: 100dvh; }
 }
 
 /* the design pass (DESIGN.md): what it adds, each with its reason */
-/* light unless dark is picked: the theme is the user's, not the system's */
-html { color-scheme: light; }
-:root[data-theme=dark] { color-scheme: dark; }
-/* a field's edge at 3:1 on paper and block, so a field is found by its
-   frame (WCAG 1.4.11); --frame stays for the frames that only group */
-:root { --field: #8a8a8a; }
-:root[data-theme=dark] { --field: #75757d; }
-.composer:not(.off), .set .field :where(input:not([type=checkbox]), select, textarea), #desk .find :is(input, select), #desk :is(.note, .field textarea, .thread textarea), .prompt textarea { border-color: var(--field); }
-/* the message box's focus: a cobalt edge and halo, as its field draws no outline */
-.composer:not(.off):focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
-/* the icons (Icons.ts): each draws itself in as it appears, a tool's on
-   the call that just ran, the theme's sun or moon as it swaps */
+/* a field's edge at 3:1 on its surface (WCAG 1.4.11): --field */
+.set .field :where(input:not([type=checkbox]), select, textarea), #desk .find :is(input, select), #desk :is(.note, .field textarea, .thread textarea), .prompt textarea { border-color: var(--field); }
 svg.ic { flex: none; width: 1.15em; height: 1.15em; stroke: none; vertical-align: -.2em; }
 .call svg.ic { margin-right: 8px; }
-header > :is(.menu, .timers) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-header > .menu { width: 36px; padding: 0; }
-header > :is(.menu, .timers) svg.ic { width: 18px; height: 18px; }
 #menu > button { display: flex; align-items: center; gap: 10px; }
 #menu > button svg.ic { color: var(--mid); }
-header > .mode { display: inline-flex; align-items: center; gap: 6px; }
-header > .mode svg.ic { width: 17px; height: 17px; }
-/* the theme swaps by a crossfade of the whole page, not a jump (main.ts;
+/* the theme swaps by a crossfade of the whole page, not a jump (main.tsx;
    skipped under reduced motion) */
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 320ms; animation-timing-function: var(--ease-out); }
 /* a tool's chip is one line: a long command ends in an ellipsis instead of
    wrapping past the chip's height (seen at 390px) */
 .block.tool .call { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-/* arrival (main.ts arrive, Arrive.ts): a row new to the screen rises in,
+/* arrival (main.tsx arrive, Arrive.ts): a row new to the screen rises in,
    each kind its own way, so the eye follows what just happened: your
    message leaves from the box below, a reply's text comes into focus, a
    tool's chip pops in beside the last; never a row redrawn or history */
@@ -932,47 +929,80 @@ header > .mode svg.ic { width: 17px; height: 17px; }
 @media (prefers-reduced-motion: no-preference) {
   #tabs .here::after { transition: scale 260ms var(--ease-out); @starting-style { scale: 0 1; } }
 }
-/* the Mesa and the settings: modals over the chat (main.ts modal). One
-   surface lifted by the shadow over a veil; on a phone, the whole screen.
-   They rise in as they open, a cue that the chat is still under them */
-dialog:is(#mesa, #settings) { padding: 0; border: 1px solid var(--hair); border-radius: 16px; color: var(--ink); background: var(--lift); box-shadow: var(--shadow); overscroll-behavior: contain; }
+/* The Mesa: a sheet from the right over the chat, the chat dimmed beside
+   it; the settings: a dialog in the middle. One surface lifted by the
+   shadow (the only one) over a veil; on a phone, the whole screen */
+dialog:is(#mesa, #settings) { padding: 0; border: 1px solid var(--hair); color: var(--ink); background: var(--lift); box-shadow: var(--shadow); overscroll-behavior: contain; }
 dialog:is(#mesa, #settings)::backdrop { background: var(--veil); }
-#mesa[open] { display: flex; flex-direction: column; width: min(1180px, 100% - 48px); height: min(88dvh, 940px); max-width: none; max-height: none; overflow: hidden; }
-#mesa > .bar { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 20px; border-bottom: 1px solid var(--hair); }
-#mesa > .bar h2 { margin: 0 auto 0 0; font: 400 22px/1.2 var(--serif); letter-spacing: -.01em; }
+#mesa[open] { display: flex; flex-direction: column; inset: 0 0 0 auto; width: min(1040px, 100% - var(--rail) - 120px); height: 100dvh; max-width: none; max-height: none; margin: 0; border-width: 0 0 0 1px; border-radius: 20px 0 0 20px; overflow: hidden; }
+#mesa > .bar { display: flex; align-items: center; gap: 12px; height: var(--head); padding: 0 12px 0 22px; border-bottom: 1px solid var(--hair); }
+#mesa > .bar h2 { margin: 0; font: 600 18px/1 var(--brand); letter-spacing: -.01em; }
+#mesa > .bar .sub { margin: 0 auto 0 0; font: 12.5px var(--mono); }
 #mesa > .bar .keys { font-size: 12.5px; color: var(--mid); }
-#settings[open] { width: min(800px, 100% - 48px); max-height: min(88dvh, 960px); overflow: auto; }
+#settings[open] { width: min(820px, 100% - var(--rail) - 48px); max-height: min(88dvh, 960px); border-radius: 20px; overflow: auto; }
 #settings #account { width: auto; margin: 0; padding: 4px 32px 32px; }
-#settings #account .back { display: none; }
-dialog .shut { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--mid); }
+dialog .shut { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; color: var(--mid); }
 dialog .shut:hover { background: var(--hover); color: var(--ink); }
 dialog .shut svg.ic { width: 20px; height: 20px; }
 #settings > .shut { position: sticky; top: 12px; float: right; margin: 12px 12px 0 0; z-index: 1; background: var(--lift); }
 @media (prefers-reduced-motion: no-preference) {
-  dialog:is(#mesa, #settings)[open] { animation: dialog-rise 260ms var(--ease-out) both; }
+  #mesa[open] { animation: sheet-in 320ms var(--ease-out) both; }
+  #settings[open] { animation: dialog-rise 260ms var(--ease-out) both; }
   dialog:is(#mesa, #settings)[open]::backdrop { animation: veil-in 200ms linear both; }
 }
+/* the task shown beside the list: its ficha under the decision when the
+   pane is narrow (the sheet on a laptop), beside it when there's room */
+#desk .pane { container-type: inline-size; }
+@container (max-width: 640px) {
+  #desk article .cols { grid-template-columns: minmax(0, 1fr); }
+}
+@keyframes sheet-in { from { transform: translateX(48px); opacity: 0; } }
 @keyframes dialog-rise { from { opacity: 0; transform: translateY(10px) scale(.985); } }
 @keyframes veil-in { from { opacity: 0; } }
-@media (max-width: 760px) {
-  dialog:is(#mesa, #settings)[open] { width: 100%; height: 100dvh; max-width: none; max-height: none; border: 0; border-radius: 0; }
-  #mesa > .bar { padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); }
-  #mesa > .bar .keys { display: none; }
-  #settings #account { padding: 0 16px 32px; }
-  dialog .shut { width: 44px; height: 44px; }
-}
-/* the Mesa's and the states' marks (Html.desk_html, main.ts account): a
+/* the Mesa's and the states' marks (Desk.tsx desk_parts, main.tsx account): a
    group's state, a PR, a verdict; the empty, loading and error states
    lead with their icon, larger, so the state is read before the text */
 #desk .find { position: relative; }
-#desk .find > svg.ic { position: absolute; left: 24px; top: 21px; width: 16px; height: 16px; color: var(--mid); pointer-events: none; }
+#desk .find > .icw > svg.ic { position: absolute; left: 24px; top: 21px; width: 16px; height: 16px; color: var(--mid); pointer-events: none; }
 #desk .find input { padding-left: 32px; }
 #desk .group svg.ic { width: 14px; height: 14px; margin-right: 6px; vertical-align: -2px; }
 #desk .group.now svg.ic { color: var(--accent); }
 :is(#desk .pr, #desk a.pr) svg.ic { width: 14px; height: 14px; margin-right: 3px; vertical-align: -2px; }
 #desk .verdict svg.ic { width: 15px; height: 15px; margin-right: 3px; vertical-align: -3px; }
-#desk :is(.none, .empty), #account .state { display: flex; align-items: flex-start; gap: 10px; }
-#desk :is(.none, .empty) svg.ic, #account .state svg.ic { width: 22px; height: 22px; margin-top: -1px; color: var(--mid); }
+#desk :is(p.none, .empty), #account .state { display: flex; align-items: flex-start; gap: 10px; }
+#desk :is(p.none, .empty) svg.ic, #account .state svg.ic { width: 22px; height: 22px; margin-top: -1px; color: var(--mid); }
 #desk .pane .empty { flex-direction: column; align-items: center; gap: 12px; margin: 18vh auto 0; text-align: center; }
 #desk .pane .empty svg.ic { width: 40px; height: 40px; }
 #account .item p svg.ic { margin-right: 6px; color: var(--red); }
+
+/* a phone: the rail a bar at the foot (the screens, a thumb away), the
+   box above it; the sheets the whole screen */
+@media (max-width: 760px) {
+  :root { --head: 52px; --rail: 0px; --bar: 60px; }
+  .rail { inset: auto 0 0 0; width: auto; height: calc(var(--bar) + env(safe-area-inset-bottom)); flex-direction: row; justify-content: space-around; gap: 0; padding: 6px 8px env(safe-area-inset-bottom); border-right: 0; border-top: 1px solid var(--hair); }
+  .rail :is(.logo, .end, .space) { display: none; }
+  .rail .go.here::before { left: 12px; right: 12px; top: -7px; bottom: auto; width: auto; height: 3px; border-radius: 0 0 3px 3px; }
+  .col { padding-bottom: calc(var(--bar) + env(safe-area-inset-bottom)); }
+  header.top { padding: 0 14px; }
+  header.top .ctx { display: none; }
+  footer { bottom: calc(var(--bar) + env(safe-area-inset-bottom)); padding: 12px 10px 10px; }
+  .composer .field { padding: 14px 16px 4px; }
+  .composer .knobs > :not(:first-child) { display: none; }
+  .composer .plus, .composer .plus :is(.attach, .drop), .mic, .send { width: 44px; height: 44px; }
+  .composer .plus > div { width: 132px; }
+  .force { height: 44px; }
+  .mine { right: 14px; }
+  footer > .down { right: 14px; }
+  #toast { left: 50%; bottom: calc(var(--bar) + 150px); max-width: calc(100% - 32px); }
+  #log { width: calc(100% - 28px); }
+  #account { width: calc(100% - 28px); }
+  [popover] { left: 12px; right: 12px; width: auto; }
+  #menu { inset: auto 12px calc(var(--bar) + 8px) auto; width: 240px; }
+  #timers { inset: calc(var(--head) + 8px) 12px auto 12px; }
+  #timers { width: auto; }
+  dialog:is(#mesa, #settings)[open] { inset: 0; width: 100%; height: 100dvh; max-width: none; max-height: none; border: 0; border-radius: 0; }
+  #mesa > .bar { padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); }
+  #mesa > .bar .keys { display: none; }
+  #settings #account { padding: 0 16px 32px; }
+  dialog .shut { width: 44px; height: 44px; }
+}

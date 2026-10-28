@@ -12,7 +12,8 @@ import * as Md from "./Md.ts";
 test("web/app.js and the sources bundled in it hold no regex lookbehind", () => {
   const LB = /\(\?<[!=]/;
   expect(LB.test(fs.readFileSync(import.meta.dir + "/web/app.js", "utf8"))).toBe(false);
-  for (const f of ["Md.ts", "TaskDeps.ts", "web/src/Html.ts", "web/src/main.ts", "View.ts"]) {
+  const web = fs.readdirSync(import.meta.dir + "/web/src").filter((f) => /\.tsx?$/.test(f)).map((f) => "web/src/" + f);
+  for (const f of ["Md.ts", "TaskDeps.ts", "View.ts", ...web]) {
     expect(LB.test(fs.readFileSync(import.meta.dir + "/" + f, "utf8"))).toBe(false);
   }
 });
@@ -59,4 +60,17 @@ test("web/sw.js declares CACHE and runs", () => {
   const ran: unknown = vm.runInNewContext(sw + "\ntypeof CACHE", { self, navigator: { userAgent: "" } });
   expect(ran).toBe("string");
   expect(listeners).toContain("fetch");
+});
+
+// a stray } in style.css drops the rule after it (the CSS parser reads it
+// as part of the next selector): one sat before "#desk { display: grid",
+// and the Mesa's list and task stacked instead of side by side
+test("web/style.css: every { closed, no } without its {", () => {
+  const css = fs.readFileSync(import.meta.dir + "/web/style.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  let depth = 0;
+  for (const ch of css) {
+    depth += ch === "{" ? 1 : ch === "}" ? -1 : 0;
+    expect(depth).toBeGreaterThanOrEqual(0);
+  }
+  expect(depth).toBe(0);
 });
