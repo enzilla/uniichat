@@ -47,7 +47,8 @@ const WIPE     = "\x1b[2J\x1b[3J\x1b[H";
 // bracketed paste, kitty's keys at flag 1 (popped before pushed), the
 // flags asked (a kitty terminal answers CSI ? flags u); off, the cursor
 // shown again
-const MODES_ON  = "\x1b[?2004h\x1b[<u\x1b[>1u\x1b[?u";
+// and the background asked (OSC 11), for the accent (Theme.accent_set)
+const MODES_ON  = "\x1b[?2004h\x1b[<u\x1b[>1u\x1b[?u\x1b]11;?\x1b\\";
 const MODES_OFF = "\x1b[?2004l\x1b[<u\x1b[?25h";
 
 // the full screen: the alternate screen, the mouse's clicks and wheel
@@ -68,6 +69,9 @@ const CURSOR_OFF = "\x1b[?25l";
 // 27u); FLAGS: kitty's answer to the flags asked
 const SEQ   = /^\x1b(?:\[([0-9;:?<=>]*)[\x20-\x2f]*|O)([\x40-\x7e])/;
 const CUT   = /^\x1b(?:\[[0-9;:?<=>\x20-\x2f]*|O)$/;
+// the terminal's background, its answer to OSC 11 (rgb:RRRR/GGGG/BBBB), whole or cut
+const BG     = /^\x1b\]11;rgb:([0-9a-f]+)\/([0-9a-f]+)\/([0-9a-f]+)(?:\x07|\x1b\\)/i;
+const BG_CUT = /^\x1b\](?:1(?:1(?:;[^\x07\x1b]*(?:\x1b)?)?)?)?$/;
 const FLAGS = /^\?\d*$/;
 
 const KEYS: Record<string, string> = {
@@ -202,6 +206,15 @@ function screen_key(scr: Screen, data: string): number {
   }
   if (data.startsWith(PASTE_ON)) {
     return screen_paste(scr, data);
+  }
+  const bg = BG.exec(data);
+  if (bg !== null) {
+    const [r, g, b] = bg.slice(1, 4).map((x) => parseInt(x.slice(0, 2), 16) / 255);
+    Theme.accent_set(0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5);
+    return bg[0].length;
+  }
+  if (BG_CUT.test(data)) {
+    return 0;
   }
   if (CUT.test(data) || (scr.kitty && data === "\x1b")) {
     return 0;

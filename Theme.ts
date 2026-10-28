@@ -14,6 +14,20 @@ export const ANSI = {
   cmd   : "6", id: "3", frees: "5", done: "2",
 };
 
+// the accent, cobalt (DESIGN.md), on the marks that lead the eye: your
+// message's frame, the tab shown, a command, a tool, the pick's model. A
+// hex the terminal can't fit to its theme, so the one for its background,
+// once it says which (Screen.ts asks, OSC 11); until then, or if it never
+// answers, the ANSI ones above
+const ACCENT = { light: "#2747d6", dark: "#8aa2ff" };
+const LEADS = ["you", "here", "cmd", "tool", "model"] as const;
+
+export function accent_set(dark: boolean): void {
+  for (const role of LEADS) {
+    ANSI[role] = dark ? ACCENT.dark : ACCENT.light;
+  }
+}
+
 export const WHO: Record<string, string> = { work: "Report", note: "Note" };
 
 export const KIND: Record<Kind, Look> = {

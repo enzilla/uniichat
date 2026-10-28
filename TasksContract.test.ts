@@ -16,6 +16,9 @@ import { Tools, type Tools as Kit } from "./Tools.ts";
 import * as View from "./View.ts";
 import * as Html from "./web/src/Html.ts";
 
+// the markup without its icons (Icons.ts), which these don't test
+const bare = (html: string | undefined) => (html ?? "").replace(/<svg class="ic"[\s\S]*?<\/svg>/g, "");
+
 // evidence that closes a task (the evidence round): a file that exists
 const EV = { type: "file", path: import.meta.path };
 
@@ -350,7 +353,7 @@ test("the Mesa's detail: each PR verified a card (head, verdict, verifier, notes
   await call("task_add", { title: "Aprovar a R5", origin: "chat", kind: "pr", detail: "Ver também https://github.com/morum/uniichat/pull/17", prs: [{ ...GOOD, notes: [...GOOD.notes, { sev: "medium", text: "<b>x</b>" }] }] });
   const s = T.tasks_load(dir);
   const v = T.tasks_view(s, NOW);
-  const html = Html.desk_html(v, "", "", "P1", NOW).detail.join("");
+  const html = bare(Html.desk_html(v, "", "", "P1", NOW).detail.join(""));
   expect(html).toContain('<section class="checks" aria-label="Verificação"><div class="check approved_with_notes">');
   expect(html).toContain('<span class="lead">head</span> <code class="head">88f18996d287</code> <span class="verdict">aprovado com ressalvas por GoldenJay</span> <span class="count">ressalvas: 1 alta, 1 média e 1 baixa</span>');
   expect(html).toContain('<li class="sev medium"><span class="sev-tag">média</span> &lt;b&gt;x&lt;/b&gt;</li>');

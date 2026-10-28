@@ -106,3 +106,19 @@ test("the live line uses the block, without a fake id", () => {
   expect(ansi).toContain("Pensando…");
   expect(ansi).not.toContain("/open #0");
 });
+
+// "Enviar agora" exists only while a message waits behind Unii's turn: it
+// stops the turn, and the server runs the queue next (Run.loop)
+test("the queue jump shows and stops the turn only while a message waits behind it", () => {
+  const v = View.view_new();
+  expect(View.view_queued(v)).toBe(0);
+  expect(View.view_act(v, { $: "Jump" })).toEqual([]);
+  v.busy = true;
+  expect(View.view_queued(v)).toBe(0);
+  expect(View.view_act(v, { $: "Jump" })).toEqual([]);
+  v.queue = { [View.TURN]: [{ kind: "user", text: "e mais isto" }] };
+  expect(View.view_queued(v)).toBe(1);
+  expect(View.view_act(v, { $: "Jump" })).toEqual([{ $: "stop", name: View.TURN }]);
+  v.busy = false;
+  expect(View.view_queued(v)).toBe(0);
+});

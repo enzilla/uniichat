@@ -100,7 +100,6 @@ export type View = State & {
   ws    : WebSocket | null;
   up    : boolean;
   flush : () => void;
-  force : () => void;
 };
 
 type Pack = { nodes?: Record<string, Node>; whole?: Record<string, Entry> };
@@ -171,6 +170,7 @@ export type Act =
   | { $: "TaskSay"; task: string; text: string }  // a message in a task's thread
   | { $: "TaskAccept"; task: string; note?: string; fields?: Record<string, unknown> } // "Aceitar as recomendadas": the choice and the fields' answers Unii recommends (fields: those given, kept), concluded
   | { $: "TasksTell" }                          // Avisar o Unii agora
+  | { $: "Jump" }                               // Enviar agora: the turn stops, the queued messages go next
 
 export type Row =
   | { $: "Sum"; id: number; n: number; text: string; call: Call.Call | null; mark?: "live" | "tool" | "mind" }
@@ -310,7 +310,6 @@ export function view_new(): View {
     ws        : null,
     up        : false,
     flush     : () => {},
-    force     : () => {},
   };
 }
 
@@ -396,8 +395,17 @@ export function view_hear(v: View, msg: Server): Client[] {
   }
 }
 
+// the user's messages the server holds while Unii's turn runs (Run.queue):
+// they go once the turn ends, or now if the user stops it (Jump)
+export function view_queued(v: View): number {
+  return v.busy ? (v.queue[TURN] ?? []).length : 0;
+}
+
 export function view_act(v: View, act: Act): Client[] {
   switch (act.$) {
+    case "Jump": {
+      return view_queued(v) > 0 ? [{ $: "stop", name: TURN }] : [];
+    }
     case "Send": {
       const text   = act.text.trim();
       const images = act.images ?? [];
@@ -1923,16 +1931,7 @@ export function link_open(v: View, link: Link): void {
       void drop();
     }
   }
-  function force(): void {
-    for (const post of v.out) {
-      if ("body" in post.msg) {
-        void upload(post, post.msg);
-      } else if (v.ws === ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(post.msg));
-      }
-    }
-  }
-  [v.ws, v.flush, v.force] = [ws, flush, force];
+  [v.ws, v.flush] = [ws, flush];
   ws.onmessage = (ev) => {
     heard = Date.now();
     if (ev.data === TICK) {
