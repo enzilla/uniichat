@@ -6198,6 +6198,11 @@ function desk_wire() {
   const set = $2("#settings", HTMLDialogElement);
   set.oncancel = (ev) => {
     ev.preventDefault();
+    const at2 = document.activeElement;
+    if (at2 !== null && set.contains(at2) && at2.matches("input, textarea, select")) {
+      at2.blur();
+      return;
+    }
     go("/");
   };
   $2("#settings .shut").onclick = () => go("/");

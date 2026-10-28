@@ -771,8 +771,14 @@ function desk_wire(): void {
   };
   $("#mesa .shut").onclick = () => desk_mode("chat");
   const set = $("#settings", HTMLDialogElement);
+  // Esc in a box leaves the box first (an edit not saved stays), as on the Mesa
   set.oncancel = (ev) => {
     ev.preventDefault();
+    const at = document.activeElement as HTMLElement | null;
+    if (at !== null && set.contains(at) && at.matches("input, textarea, select")) {
+      at.blur();
+      return;
+    }
     go("/");
   };
   $("#settings .shut").onclick = () => go("/");

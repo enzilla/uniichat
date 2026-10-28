@@ -599,6 +599,7 @@ body.desk header > .mode.turn { background: none; color: inherit; }
   footer { padding: 12px 14px max(8px, env(safe-area-inset-bottom)); }
   .composer { padding: 10px 8px 6px 14px; }
   .send, .attach, .mic { width: 44px; height: 44px; }
+  .force { height: 44px; }
   #account { width: calc(100% - 28px); }
   [popover] { left: 12px; right: 12px; width: auto; }
   #menu { left: auto; width: 210px; }
