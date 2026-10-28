@@ -35,7 +35,7 @@ function RailButton({ icon, label, here, badge, onClick, className }: { icon: Ic
     <button type="button" className={"go" + (here ? " here" : "") + (className ? " " + className : "")} aria-label={badge ? label + ": " + badge + " na sua vez" : label} aria-current={here ? "page" : undefined} title={label} onClick={onClick}>
       <Icon name={icon} />
       <span className="lbl">{label}</span>
-      {badge ? <span className="badge" aria-hidden="true">{badge}</span> : null}
+      {badge ? <span key={badge} className="badge" aria-hidden="true">{badge}</span> : null}
     </button>
   );
 }
@@ -69,12 +69,16 @@ function Menu(): ReactNode {
 
 // what Unii is doing while it works: an orb thinking, its step, the
 // subagents at work
-function Doing({ a }: { a: View.Activity | null }): ReactNode {
+// (its last words kept while it fades out, as the turn ends)
+let DID: View.Activity | null = null;
+function Doing({ a: now }: { a: View.Activity | null }): ReactNode {
+  DID = now ?? DID;
+  const a = DID;
   if (a === null) {
     return <p id="doing" role="status" aria-live="polite" hidden></p>;
   }
   return (
-    <p id="doing" role="status" aria-live="polite">
+    <p id="doing" role="status" aria-live="polite" hidden={now === null}>
       <ThinkingOrb className="orb" state="working" size={32} theme={theme_dark() ? "dark" : "light"} aria-hidden="true" />
       <span className="step">{a.step}</span>
       {a.agents.length === 0 ? null : <span className="agents">{a.agents.length === 1 ? "subagente" : a.agents.length + " subagentes"}: {a.agents.map((x, k) => <span key={x.name}>{k > 0 ? ", " : ""}<span className="agent" title={x.name}>{x.label}</span></span>)}</span>}

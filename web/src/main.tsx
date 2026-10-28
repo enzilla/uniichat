@@ -14,7 +14,7 @@ import { CHECK, SHEETS } from "./Blocks.tsx";
 import * as Box from "./Box.ts";
 import { import_welcome, IMPORT_BUSY } from "./Import.tsx";
 import { fold_reset, fold_show, folds, frames } from "./Log.tsx";
-import { BEFORE, DESK, NARROW, P, PAGES, PIPE, RENEW, SCROLL, STILL, TREE, act, anchor, at_end, draw, kept, scroll_bump, toast, v } from "./state.ts";
+import { BEFORE, DESK, NARROW, P, PAGES, PIPE, RENEW, SCROLL, STILL, TREE, act, anchor, at_end, draw, kept, paint_now, scroll_bump, toast, v } from "./state.ts";
 import * as Viewer from "./Viewer.ts";
 
 type Back = { at: { a: number; top: number } | null; y: number | null; away: { y: number; end: boolean } | null; caret: [number, number]; focus: boolean; open: string[] };
@@ -383,6 +383,9 @@ function click(ev: MouseEvent): void {
   }
   if (a !== undefined) {
     const made = JSON.parse(a) as View.Act;
+    if ((made.$ === "Task" || made.$ === "TaskAccept") && el.closest("#desk") !== null) {
+      P.flip = Date.now();
+    }
     if (made.$ === "TaskSay" && made.text !== "") {
       act(made);
     } else if (made.$ === "TaskSay") {
@@ -401,8 +404,10 @@ function click(ev: MouseEvent): void {
 }
 
 function copied(button: HTMLElement): void {
+  button.classList.add("swap");
   button.innerHTML = CHECK;
   setTimeout(() => (button.innerHTML = SHEETS), 1200);
+  setTimeout(() => button.classList.remove("swap"), 1400);
 }
 
 // a choice's menu, by its knob, inside the screen
@@ -855,7 +860,27 @@ function hear(msg: View.Server): void {
     renew_due(msg.build);
   }
   void import_welcome();
+  if (msg.$ === "state" && Date.now() - P.flip < FLIP && !STILL.matches && document.startViewTransition !== undefined) {
+    P.flip = 0;
+    flip();
+    return;
+  }
   draw(true);
+}
+
+// a task's act answered: its row slides from its old group to its new
+// one (each row named for the transition only while it runs; React leaves
+// the style alone, the row has no style of its own)
+const FLIP = 5000;
+function flip(): void {
+  const rows = [...document.querySelectorAll<HTMLElement>("#desk .row[data-desk]")];
+  const name = (el: HTMLElement) => "task-" + (el.dataset.desk ?? "").replace(/[^A-Za-z0-9_-]/g, "_");
+  rows.forEach((el) => (el.style.viewTransitionName = name(el)));
+  const t = document.startViewTransition(() => {
+    flushSync(paint_now);
+    document.querySelectorAll<HTMLElement>("#desk .row[data-desk]").forEach((el) => (el.style.viewTransitionName = name(el)));
+  });
+  void t.finished.finally(() => document.querySelectorAll<HTMLElement>("#desk .row[data-desk]").forEach((el) => (el.style.viewTransitionName = "")));
 }
 
 export async function signout(): Promise<void> {

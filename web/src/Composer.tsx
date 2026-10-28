@@ -45,6 +45,12 @@ export function Composer({ hooks }: { hooks: ComposerHooks }): ReactNode {
   const stop = on && v.busy && Box.box_blank();
   const queued = View.view_queued(v);
   const first = (v.queue[View.TURN] ?? [])[0]?.text ?? "";
+  // the queue's last words kept while its row fades out
+  const kept = useRef({ n: 0, first: "" });
+  if (queued > 0) {
+    kept.current = { n: queued, first };
+  }
+  const shown = kept.current;
   const voicing = v.out.some((p) => p.msg.$ === "voice");
   const theme = hooks.dark ? "dark" : "light";
   // the attach buttons' size (style.css: 44px on a phone): the picks sit
@@ -69,12 +75,10 @@ export function Composer({ hooks }: { hooks: ComposerHooks }): ReactNode {
       onFocus={() => setFocus(true)}
       onBlur={(ev) => !ev.currentTarget.contains(ev.relatedTarget as Node | null) && setFocus(false)}
     >
-      {queued === 0 ? null : (
-        <div className="queue" role="status">
-          <span className="queued">{queued === 1 ? "1 na fila" : queued + " na fila"}{first === "" ? null : <> · <b>“{first}”</b></>}</span>
-          <button className="force" type="button" title="Interrompe o turno do Unii; as mensagens na fila vão em seguida" onClick={() => act({ $: "Jump" })}>Enviar agora</button>
-        </div>
-      )}
+      <div className="queue" role="status" hidden={queued === 0}>
+        <span className="queued">{shown.n === 1 ? "1 na fila" : shown.n + " na fila"}{shown.first === "" ? null : <> · <b>“{shown.first}”</b></>}</span>
+        <button className="force" type="button" title="Interrompe o turno do Unii; as mensagens na fila vão em seguida" disabled={queued === 0} onClick={() => act({ $: "Jump" })}>Enviar agora</button>
+      </div>
       <div className="field" ref={field} role="textbox" aria-multiline="true" aria-label="Mensagem" spellCheck hidden={rec}></div>
       {rec ? (
         <div className="voice" role="status" aria-live="off">
