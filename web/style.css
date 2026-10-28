@@ -375,8 +375,8 @@ header.top > .imping { flex-direction: column; justify-content: center; align-it
 /* a touch browser zooms the page into a field whose font is under 16px */
 @media (hover: none) { input, select { font-size: 16px; } }
 @media (pointer: coarse) {
-  :is(header > :is(button, a), #pick > button, #tabs button, #tree .tab) { position: relative; }
-  :is(header > :is(button, a), #pick > button, #tabs button, #tree .tab, .mine, .down, .copy, .open.one > .fold)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+  :is(header.top > button, .composer .knobs > button, header.top .ctx .all, #tabs button, #tree .tab) { position: relative; }
+  :is(header.top > button, .composer .knobs > button, header.top .ctx .all, #tabs button, #tree .tab, .mine, .down, .copy, .open.one > .fold)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
   .foot a { padding: 14px 0; }
   .chip { height: 44px; }
   [popover] > button { min-height: 44px; }

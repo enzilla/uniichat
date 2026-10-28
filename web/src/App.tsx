@@ -22,7 +22,7 @@ import { Settings } from "./Settings.tsx";
 import { TreePage } from "./TreePage.tsx";
 import { ViewerDialog } from "./ViewerDialog.tsx";
 import { attach, desk_mode, down, field_key, go, left, mic, mine, mine_above, roam, signout, submit, theme_dark, theme_swap, typed } from "./main.tsx";
-import { P, PAGES, PIPE, SCROLL, TREE, at_end, useTick, v } from "./state.ts";
+import { P, PAGES, PIPE, SCROLL, TREE, at_end, useScrolled, useTick, v } from "./state.ts";
 
 export function Solo({ title, sub }: { title: string; sub: ReactNode }): ReactNode {
   return <main><h1>{title}</h1><p className="sub">{sub}</p></main>;
@@ -82,6 +82,21 @@ function Doing({ a }: { a: View.Activity | null }): ReactNode {
   );
 }
 
+// back to your message (above the screen), to the end (away from it):
+// drawn again as the page scrolls, alone
+function Jumps({ chat }: { chat: boolean }): ReactNode {
+  useScrolled();
+  const first = document.querySelector<HTMLElement>("#log .msg.user");
+  const up = first !== null && chat && mine_above(first);
+  const away = chat && !SCROLL.end && innerHeight + scrollY < document.documentElement.scrollHeight - 1;
+  return (
+    <>
+      <button className="mine" type="button" title="Até a sua mensagem" aria-label="Até a sua mensagem" hidden={!up} onClick={mine}><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6" /></svg></button>
+      <button className="down" type="button" title="Até o fim" aria-label="Até o fim" hidden={!away} onClick={down}><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></svg></button>
+    </>
+  );
+}
+
 export function App(): ReactNode {
   useTick();
   const path = location.pathname;
@@ -119,9 +134,6 @@ export function App(): ReactNode {
     }
     return () => keep.disconnect();
   }, []);
-  const first = document.querySelector<HTMLElement>("#log .msg.user");
-  const up = first !== null && chat && mine_above(first);
-  const away = chat && !SCROLL.end && innerHeight + scrollY < document.documentElement.scrollHeight - 1;
   const here = tabs.find((t) => t.here);
   const title = pipe ? "Pipeline" : tree ? "Memória" : here === undefined || here.name === null ? "Conversa" : here.text;
   return (
@@ -139,8 +151,7 @@ export function App(): ReactNode {
         {pipe ? <PipelinePage /> : null}
         <TreePage on={tree} />
         <footer ref={foot} hidden={!chat}>
-          <button className="mine" type="button" title="Até a sua mensagem" aria-label="Até a sua mensagem" hidden={!up} onClick={mine}><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6" /></svg></button>
-          <button className="down" type="button" title="Até o fim" aria-label="Até o fim" hidden={!away} onClick={down}><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></svg></button>
+          <Jumps chat={chat} />
           <Doing a={View.activity_of(v)} />
           <div onKeyDown={(ev) => ev.target instanceof HTMLElement && ev.target.matches(".field") && field_key(ev.nativeEvent)} onKeyDownCapture={roam} onBlur={left}>
             <Composer hooks={{ typed, attach, submit, mic: () => void mic(), dark }} />

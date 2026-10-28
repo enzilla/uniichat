@@ -14,7 +14,7 @@ import { CHECK, SHEETS } from "./Blocks.tsx";
 import * as Box from "./Box.ts";
 import { import_welcome, IMPORT_BUSY } from "./Import.tsx";
 import { fold_reset, fold_show, folds, frames } from "./Log.tsx";
-import { BEFORE, DESK, NARROW, P, PAGES, PIPE, RENEW, SCROLL, STILL, TREE, act, anchor, at_end, draw, kept, toast, v } from "./state.ts";
+import { BEFORE, DESK, NARROW, P, PAGES, PIPE, RENEW, SCROLL, STILL, TREE, act, anchor, at_end, draw, kept, scroll_bump, toast, v } from "./state.ts";
 import * as Viewer from "./Viewer.ts";
 
 type Back = { at: { a: number; top: number } | null; y: number | null; away: { y: number; end: boolean } | null; caret: [number, number]; focus: boolean; open: string[] };
@@ -76,7 +76,7 @@ async function boot(): Promise<void> {
       SCROLL.end = false;
     }
     SCROLL.y = scrollY;
-    draw(false);
+    scroll_bump();
   };
   let width = innerWidth;
   addEventListener("resize", () => {

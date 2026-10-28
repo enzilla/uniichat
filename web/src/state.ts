@@ -104,6 +104,23 @@ export function useTick(): number {
   return useSyncExternalStore(subscribe, () => version);
 }
 
+// the page scrolled: only what shows by where it is (back to your
+// message, to the end) is drawn again, not the whole page
+let scrolled = 0;
+const scrolls = new Set<() => void>();
+
+export function useScrolled(): number {
+  return useSyncExternalStore((f) => {
+    scrolls.add(f);
+    return () => scrolls.delete(f);
+  }, () => scrolled);
+}
+
+export function scroll_bump(): void {
+  scrolled++;
+  scrolls.forEach((f) => f());
+}
+
 // a change: drawn on the next frame (stick: may the chat stay stuck to
 // its end; a change the user didn't make, as one of theirs, may not
 // pull it away)
