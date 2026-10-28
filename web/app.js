@@ -6206,6 +6206,8 @@ function desk_wire() {
     go("/");
   };
   $2("#settings .shut").onclick = () => go("/");
+  set.onclose = () => PAGES.includes(location.pathname) && go("/");
+  mesa.onclose = () => P.mode === "desk" && desk_mode("chat");
   for (const shut of document.querySelectorAll("dialog .shut:empty")) {
     shut.innerHTML = ICON.close;
   }

@@ -782,6 +782,10 @@ function desk_wire(): void {
     go("/");
   };
   $("#settings .shut").onclick = () => go("/");
+  // the browser may close a modal by itself (a second Esc, no click
+  // since the last): the route follows it
+  set.onclose = () => PAGES.includes(location.pathname) && go("/");
+  mesa.onclose = () => P.mode === "desk" && desk_mode("chat");
   for (const shut of document.querySelectorAll("dialog .shut:empty")) {
     shut.innerHTML = ICON.close;
   }
