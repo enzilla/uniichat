@@ -5,7 +5,7 @@
 // patch. The old 31-enzilla.1.N tag must not come back.
 
 import { expect, test } from "bun:test";
-import { next_version, ships } from "./Release.ts";
+import { jev_impact, next_version, ships } from "./Release.ts";
 
 const term = ["Term.ts"];
 const ci = [".github/workflows/release.yml", "scripts/ci/Release.ts"];
@@ -43,4 +43,25 @@ test("a product commit with no conventional type is a patch", () => {
 
 test("a tag that is not vX.Y.Z is refused", () => {
   expect(() => next_version("31-enzilla.1.3", term, [{ subject: "fix: x", body: "" }])).toThrow("vX.Y.Z");
+});
+
+// Jev (next-version.ts) as vortex uses it: a sure answer decides with the
+// commits' types as its floor; review, unsure or garbled goes by the commits
+const said = (choice: string, p: number) => ({ answers: { impact: { choice, probabilities: { [choice]: p } } } });
+
+test("only a sure, known answer from Jev counts", () => {
+  expect(jev_impact(said("minor", 0.9))).toBe("minor");
+  expect(jev_impact(said("minor", 0.69))).toBeNull();
+  expect(jev_impact(said("review", 0.99))).toBeNull();
+  expect(jev_impact({ answers: {} })).toBeNull();
+  expect(jev_impact(null)).toBeNull();
+});
+
+test("Jev's impact decides, never under the commits' types, and its none publishes nothing", () => {
+  const merge = [{ subject: "Update README title to 'UniiChat'", body: "" }];
+  expect(next_version("v31.3.0", term, merge, "minor")).toBe("v31.4.0");
+  expect(next_version("v31.3.0", term, merge, null)).toBe("v31.3.1");
+  expect(next_version("v31.3.0", term, [{ subject: "feat: x", body: "" }], "patch")).toBe("v31.4.0");
+  expect(next_version("v31.3.0", term, merge, "none")).toBeNull();
+  expect(next_version("v31.3.0", ci, merge, "major")).toBeNull();
 });
