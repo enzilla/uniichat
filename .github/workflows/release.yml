@@ -7,7 +7,8 @@ name: release
 # publish. The Linux builds (arm64, x64), their installer and
 # SHA256SUMS come from that tag. `unii update` installs
 # /releases/latest/download, so the tag shape is not in the URL.
-# pi-infra pins UNII_VERSION and UNII_INSTALL_SHA256.
+# infra-pi is told (repository_dispatch uniichat-published) and pins
+# UNII_VERSION and UNII_INSTALL_SHA256 in its shared deploy PR.
 
 on:
   push:
@@ -78,3 +79,27 @@ jobs:
           inst="$(sha256sum dist/install.sh | cut -d' ' -f1)"
           printf 'unii %s (enzilla fork), from %s.\n\nFor pi-infra (compose/versions.env):\n\n    UNII_VERSION=%s\n    UNII_INSTALL_SHA256=%s\n' "$VER" "$GITHUB_SHA" "$VER" "$inst" > dist/notes.md
           gh release create "$VER" --target "$GITHUB_SHA" --title "$VER" --notes-file dist/notes.md dist/install.sh dist/SHA256SUMS dist/unii-*.tar.gz
+      # infra-pi pins it in its shared PR (deploy/application-images), as
+      # the Vortex images do: a repository_dispatch with a fine-grained
+      # token limited to that repository (INFRA_PI_DISPATCH_TOKEN). infra-pi
+      # computes the installer's sha256 itself; this one is for its log
+      - name: notify infra-pi
+        if: steps.ver.outputs.ver != 'none'
+        env:
+          TOKEN: ${{ secrets.INFRA_PI_DISPATCH_TOKEN }}
+          VER: ${{ steps.build.outputs.ver }}
+        run: |
+          set -eu
+          if [ -z "$TOKEN" ]; then
+            echo "INFRA_PI_DISPATCH_TOKEN is missing: infra-pi won't pin $VER by itself" >&2
+            exit 1
+          fi
+          inst="$(sha256sum dist/install.sh | cut -d' ' -f1)"
+          jq -n --arg tag "$VER" --arg revision "$GITHUB_SHA" --arg sum "$inst" \
+            '{event_type:"uniichat-published",client_payload:{revision:$revision,updates:{UNII_VERSION:$tag,UNII_INSTALL_SHA256:$sum}}}' |
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              https://api.github.com/repos/enzolaOps/infra-pi/dispatches \
+              --data @-
