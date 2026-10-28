@@ -6,6 +6,7 @@
 
 import { expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as vm from "node:vm";
 import * as Md from "./Md.ts";
 
 test("web/app.js and the sources bundled in it hold no regex lookbehind", () => {
@@ -45,4 +46,17 @@ test("a table row splits at each | but an escaped one", () => {
   expect(t).toMatchObject([{ $: "Tabl", x: [[[Text("a")], [Text("b")]], [[Text("c | d")], [Text("e")]]] }]);
   const u = Md.md_parse("| a | b |\n|---|---|\n| c | d \\|\n");
   expect((u[0] as { x: unknown[][] }).x[1]).toEqual([[Text("c")], [Text("d |")]]);
+});
+
+// the service worker's cache name is code, not the end of a comment: a
+// merge once glued it to its heading, every fetch then threw on CACHE and
+// each page it controlled failed to load (ERR_FAILED)
+test("web/sw.js declares CACHE and runs", () => {
+  const sw = fs.readFileSync(import.meta.dir + "/web/sw.js", "utf8").replace("{build}", "test");
+  expect(sw).toMatch(/^const CACHE = "unii-shell-test";$/m);
+  const listeners: string[] = [];
+  const self = { addEventListener: (name: string) => listeners.push(name) };
+  const ran: unknown = vm.runInNewContext(sw + "\ntypeof CACHE", { self, navigator: { userAgent: "" } });
+  expect(ran).toBe("string");
+  expect(listeners).toContain("fetch");
 });
