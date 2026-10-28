@@ -54,6 +54,9 @@ export const P = {
   at    : location.pathname + location.hash,
   ups   : 0,
   toast : { text: "", on: false, id: 0 },
+  // a task's act clicked on the Mesa (its time): the state that answers it
+  // is drawn as a view transition, the row sliding to its group (main.tsx)
+  flip  : 0,
   menu  : false,
 };
 
@@ -134,6 +137,14 @@ export function draw(stick: boolean): void {
 // what runs at each draw before the views (main.tsx: notes to toasts,
 // the reload due, the tab's title)
 export const BEFORE: Array<() => void> = [];
+
+// drawn now, not on the next frame (inside a view transition's update)
+export function paint_now(): void {
+  if (frame !== 0) {
+    cancelAnimationFrame(frame);
+  }
+  paint();
+}
 
 function paint(): void {
   frame = 0;

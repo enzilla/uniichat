@@ -1667,8 +1667,12 @@ export function view_tail(v: View, live = view_stream(v)): Row[] {
   }
   const rows = stream_rows(live);
   const load = v.page === null && v.importing !== null ? [Cap(progress_show(v.importing))] : [];
-  const said = v.page === null && !v.up ? v.out.flatMap((p) => entry_rows(null, "user", p.said)) : [];
-  const kept = said.length > 0 ? [...said, Cap(UNSENT)] : [];
+  // a message sent and not yet heard back: shown at once, waiting (as a
+  // queued one); offline, as it was, with the note that it goes once
+  // connected. The server's echo takes its place (Arrive.ts: the tail
+  // shrank, so the echo doesn't rise again)
+  const said = v.page === null ? v.out.flatMap((p) => entry_rows(null, "user", p.said)) : [];
+  const kept = said.length === 0 ? [] : v.up ? said.map((row) => (row.$ === "Msg" ? { ...row, queued: true } : row)) : [...said, Cap(UNSENT)];
   const name = v.page === null ? TURN : v.page.name;
   const queued = (v.queue[name] ?? []).flatMap((q) => entry_rows(null, q.kind, q.text).map((row) => (row.$ === "Msg" ? { ...row, queued: true } : row)));
   const after = [...queued, ...kept, ...load];

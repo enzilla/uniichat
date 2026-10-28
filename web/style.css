@@ -25,6 +25,7 @@
   --shadow : 0 1px 2px rgb(0 0 0 / .5), 0 18px 48px rgb(0 0 0 / .55);
   --spectrum: linear-gradient(135deg, #5b8cff, #b07cff, #ff7ab6, #ffb35b);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   color-scheme: dark;
 }
 :root[data-theme=light] {
@@ -168,6 +169,10 @@ i.sq { display: block; width: 12px; height: 12px; border-radius: 3px; background
 .send { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; color: #fff; background: #17171b; }
 .send svg { width: 19px; height: 19px; stroke-width: 2.2; }
 :is(.send, .mic, .attach, .drop):active { scale: .94; }
+/* a press answered: every button a little in, while held */
+:is(.force, .chip, .composer .knobs > button, #desk .acts button, #desk .opts button, .rail .go, .timers, .imping, .mine, .down, dialog .shut):active { scale: .97; }
+#desk .row:active { scale: .98; }
+:is(.force, .chip, .composer .knobs > button, #desk .acts button, #desk .opts button, #desk .row, .rail .go, .timers, .imping, .mine, .down, dialog .shut, .send, .mic, .attach, .drop) { transition: scale 120ms var(--ease-out); }
 .composer.off { opacity: .55; }
 /* dictating: the ring that bends with the voice, how long, how to stop */
 .composer .voice { display: flex; align-items: center; gap: 14px; padding: 10px 20px 0; min-height: 84px; }
@@ -191,9 +196,10 @@ footer > .down { position: absolute; width: 34px; margin: 0; bottom: calc(100% -
 :is(.mine, .down):hover { color: var(--ink); background: var(--hover); }
 :is(.mine, .down) svg { width: 15px; height: 15px; stroke-width: 2.2; }
 #toast { position: fixed; z-index: 6; left: calc(50% + var(--rail) / 2); bottom: 132px; translate: -50% 0; width: max-content; max-width: min(560px, 100% - 32px - var(--rail)); padding: 9px 16px; border-radius: 14px; background: var(--ink); color: var(--paper); font-size: 13.5px; box-shadow: var(--shadow); }
-@media (prefers-reduced-motion: no-preference) {
-  #toast:not([hidden]) { transition: opacity 200ms var(--ease-out), translate 200ms var(--ease-out); @starting-style { opacity: 0; translate: -50% 8px; } }
-}
+/* the note rises in and sinks back out the same way */
+#toast { transition: opacity 200ms var(--ease-out), translate 200ms var(--ease-out), display 200ms allow-discrete; }
+#toast[hidden] { opacity: 0; translate: -50% 8px; }
+@starting-style { #toast:not([hidden]) { opacity: 0; translate: -50% 8px; } }
 
 #tabs { display: flex; gap: 16px; margin-top: 10px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; font: 13px/22px var(--sans); color: var(--mid); }
 #tabs button { flex: none; position: relative; }
@@ -326,7 +332,7 @@ header.top > .imping { flex-direction: column; justify-content: center; align-it
 .msg.user { margin-left: auto; width: fit-content; max-width: min(82%, 560px); padding: 10px 17px; border: 1.25px solid var(--edge); border-radius: 20px 20px 6px 20px; font: 16px/1.55 var(--sans); }
 .msg.user { scroll-margin-top: calc(var(--head) + 66px); }
 .msg.work { padding: 14px 20px; border: 1.25px solid var(--edge); border-radius: 14px; font: 16px/1.55 var(--sans); }
-.msg.queued { border-style: dotted; }
+.msg.queued { border-style: dotted; opacity: .75; }
 .msg.work::before { content: attr(data-who); position: absolute; left: 14px; top: -.75em; padding: 0 6px; background: var(--paper); font: 600 12px/1.5 var(--sans); color: var(--mid); }
 .msg.note { color: var(--mid); }
 .msg.unii { font: 16px/1.55 var(--sans); }
@@ -945,20 +951,24 @@ dialog .shut { flex: none; display: grid; place-items: center; width: 38px; heig
 dialog .shut:hover { background: var(--hover); color: var(--ink); }
 dialog .shut svg.ic { width: 20px; height: 20px; }
 #settings > .shut { position: sticky; top: 12px; float: right; margin: 12px 12px 0 0; z-index: 1; background: var(--lift); }
-@media (prefers-reduced-motion: no-preference) {
-  #mesa[open] { animation: sheet-in 320ms var(--ease-out) both; }
-  #settings[open] { animation: dialog-rise 260ms var(--ease-out) both; }
-  dialog:is(#mesa, #settings)[open]::backdrop { animation: veil-in 200ms linear both; }
+/* they leave the way they came (the sheet back to the right, the dialog
+   down), not in one frame: display and the top layer wait for the fade */
+dialog:is(#mesa, #settings) { transition: opacity 200ms var(--ease-out), translate 280ms var(--ease-drawer), scale 240ms var(--ease-out), overlay 280ms allow-discrete, display 280ms allow-discrete; }
+#mesa:not([open]) { opacity: 0; translate: 48px 0; }
+#settings:not([open]) { opacity: 0; translate: 0 10px; scale: .985; }
+@starting-style {
+  #mesa[open] { opacity: 0; translate: 48px 0; }
+  #settings[open] { opacity: 0; translate: 0 10px; scale: .985; }
 }
+dialog:is(#mesa, #settings)::backdrop { transition: opacity 200ms linear, overlay 280ms allow-discrete, display 280ms allow-discrete; }
+dialog:is(#mesa, #settings):not([open])::backdrop { opacity: 0; }
+@starting-style { dialog:is(#mesa, #settings)[open]::backdrop { opacity: 0; } }
 /* the task shown beside the list: its ficha under the decision when the
    pane is narrow (the sheet on a laptop), beside it when there's room */
 #desk .pane { container-type: inline-size; }
 @container (max-width: 640px) {
   #desk article .cols { grid-template-columns: minmax(0, 1fr); }
 }
-@keyframes sheet-in { from { transform: translateX(48px); opacity: 0; } }
-@keyframes dialog-rise { from { opacity: 0; transform: translateY(10px) scale(.985); } }
-@keyframes veil-in { from { opacity: 0; } }
 /* the Mesa's and the states' marks (Desk.tsx desk_parts, main.tsx account): a
    group's state, a PR, a verdict; the empty, loading and error states
    lead with their icon, larger, so the state is read before the text */
@@ -1005,4 +1015,46 @@ dialog .shut svg.ic { width: 20px; height: 20px; }
   #mesa > .bar .keys { display: none; }
   #settings #account { padding: 0 16px 32px; }
   dialog .shut { width: 44px; height: 44px; }
+}
+
+/* Motion (the fourth round): what used to appear or vanish in one frame,
+   bridged; transform and opacity only, short, and under reduced motion
+   only the fade (below) */
+@property --part { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
+/* menus grow from what opened them; they go the same way */
+[popover] { transform-origin: 100% 0; transition: opacity 150ms var(--ease-out), scale 150ms var(--ease-out), overlay 150ms allow-discrete, display 150ms allow-discrete; }
+[popover]:not(:popover-open) { opacity: 0; scale: .97; }
+@starting-style { [popover]:popover-open { opacity: 0; scale: .97; } }
+#menu, .choices { transform-origin: 0 100%; }
+.choices { transition-duration: 120ms; }
+#import { transform-origin: 50% 50%; }
+/* what Unii is doing and the queue: in and out with the turn, not a jump */
+#doing, .composer .queue { transition: opacity 180ms var(--ease-out), translate 180ms var(--ease-out), display 150ms allow-discrete; }
+#doing[hidden], .composer .queue[hidden] { opacity: 0; translate: 0 4px; }
+@starting-style { :is(#doing, .composer .queue):not([hidden]) { opacity: 0; translate: 0 4px; } }
+/* dictating: the box turns into the ring and back, a crossfade */
+.composer :is(.field, .voice) { transition: opacity 200ms var(--ease-out), scale 200ms var(--ease-out); }
+@starting-style { .composer .field { opacity: 0; scale: .98; } .composer .voice { opacity: 0; scale: .9; } }
+/* a file put in the box arrives; its upload's bar moves, not jumps */
+.field .item { transition: opacity 180ms var(--ease-out), scale 180ms var(--ease-out), --part 200ms linear; }
+@starting-style { .field .item { opacity: 0; scale: .9; } }
+/* the Mesa's count, as it changes */
+.rail .badge { animation: badge-pop 240ms var(--ease-out); }
+@keyframes badge-pop { from { scale: 1.25; } }
+/* the copy button's tick, and back */
+.copy.swap svg { animation: copy-in 120ms var(--ease-out); }
+@keyframes copy-in { from { opacity: 0; scale: .8; } }
+/* a task concluded (or dropped, reopened) slides to its new group on the
+   Mesa (main.tsx flip, a view transition) */
+::view-transition-group(*) { animation-duration: 280ms; animation-timing-function: var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  dialog:is(#mesa, #settings), [popover], #doing, .composer .queue, #toast, .composer :is(.field, .voice), .field .item { transition-property: opacity, overlay, display; transition-duration: 150ms; transition-behavior: normal, allow-discrete, allow-discrete; }
+  #mesa:not([open]), #settings:not([open]), [popover]:not(:popover-open), #doing[hidden], .composer .queue[hidden] { translate: none; scale: none; }
+  #toast[hidden] { translate: -50% 0; }
+  @starting-style {
+    #mesa[open], #settings[open], [popover]:popover-open, :is(#doing, .composer .queue):not([hidden]), .composer :is(.field, .voice), .field .item { translate: none; scale: none; }
+    #toast:not([hidden]) { translate: -50% 0; }
+  }
+  :is(.force, .chip, .composer .knobs > button, #desk .acts button, #desk .opts button, #desk .row, .rail .go, .timers, .imping, .mine, .down, dialog .shut, .send, .mic, .attach, .drop):active { scale: none; }
+  .rail .badge, .copy.swap svg { animation: none; }
 }

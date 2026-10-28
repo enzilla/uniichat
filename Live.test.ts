@@ -122,3 +122,23 @@ test("the queue jump shows and stops the turn only while a message waits behind 
   v.busy = false;
   expect(View.view_queued(v)).toBe(0);
 });
+
+// a message sent shows at once, waiting (as a queued one), until the
+// server's echo (and its ack) takes its place; offline, as before, with
+// the note that it goes once connected
+test("a message sent shows at once, waiting; offline, with the note", () => {
+  const v = View.view_new();
+  v.up = true;
+  v.out = [{ msg: { $: "send", id: "a", text: "oi" } as never, ws: null, done: () => {}, said: "oi" }];
+  const on = View.view_tail(v).filter((r) => r.$ === "Msg");
+  expect(on).toHaveLength(1);
+  expect(on[0]).toMatchObject({ kind: "user", text: "oi", queued: true });
+  expect(View.view_tail(v).some((r) => r.$ === "Cap")).toBe(false);
+  v.up = false;
+  const off = View.view_tail(v);
+  expect(off.find((r) => r.$ === "Msg")).toMatchObject({ kind: "user", text: "oi" });
+  expect((off.find((r) => r.$ === "Msg") as { queued?: boolean }).queued).toBeUndefined();
+  expect(off.some((r) => r.$ === "Cap")).toBe(true);
+  v.out = [];
+  expect(View.view_tail(v).filter((r) => r.$ === "Msg")).toHaveLength(0);
+});
