@@ -1,17 +1,17 @@
 :root {
-  --ink    : #111111;
-  --mid    : #5f5f5f;
-  --soft   : #6b6b6b;
-  --hair   : #e6e6e6;
-  --paper  : #ffffff;
-  --lift   : #ffffff;
-  --block  : #f2f2f2;
-  --hover  : #e8e8e8;
-  --frame  : #cccccc;
-  --edge   : #111111;
+  --ink    : #1c1b19;
+  --mid    : #5c5a54;
+  --soft   : #66645e;
+  --hair   : #e4e1d9;
+  --paper  : #f7f6f2;
+  --lift   : #fdfcfa;
+  --block  : #eeece6;
+  --hover  : #e6e3db;
+  --frame  : #cbc7bd;
+  --edge   : #1c1b19;
   --add    : #1a7f37;
   --del    : #cf222e;
-  --accent : #6d3fd8;
+  --accent : #2747d6;
   --red    : #b42318;
   --warm   : #e8590c;
   --veil   : rgb(0 0 0 / .3);
@@ -20,19 +20,19 @@
 }
 /* dark, when picked in the menu (main.ts theme_set) */
 :root[data-theme=dark] {
-  --ink    : #e3e3e6;
-  --mid    : #a6a6ad;
-  --soft   : #9c9ca4;
-  --hair   : #36363c;
-  --paper  : #171719;
-  --lift   : #222226;
-  --block  : #2c2c31;
-  --hover  : #37373d;
-  --frame  : #4c4c53;
-  --edge   : #85858d;
+  --ink    : #ecebe6;
+  --mid    : #a7a59e;
+  --soft   : #9a988f;
+  --hair   : #2d2c29;
+  --paper  : #121212;
+  --lift   : #1b1b1a;
+  --block  : #242422;
+  --hover  : #2f2e2b;
+  --frame  : #4a4944;
+  --edge   : #8a887f;
   --add    : #55b874;
   --del    : #f8857c;
-  --accent : #ad94ff;
+  --accent : #8aa2ff;
   --red    : var(--del);
   --warm   : #f59f4c;
   --veil   : rgb(0 0 0 / .5);
@@ -53,6 +53,9 @@
 html { color-scheme: light dark; -webkit-text-size-adjust: 100%; scrollbar-gutter: stable; overflow-anchor: none; }
 body { margin: 0; background: var(--paper); color: var(--ink); font: 18px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+:is(button, select, input, textarea):disabled { cursor: not-allowed; }
+/* the keyboard's place: a cobalt ring on any control (rules below may move it inside) */
+:is(button, a[href], summary, select, label, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 ::selection { background: var(--ink); color: var(--paper); }
 a { color: inherit; text-underline-offset: 3px; }
@@ -105,10 +108,12 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 #pick .choices [aria-checked=true] { font-weight: 600; }
 #pick .choices [aria-checked=true]::before { content: "✓"; content: "✓" / ""; position: absolute; margin-left: -18px; }
 
-.composer { width: min(var(--col), 100%); margin: 0 auto; display: flex; align-items: flex-end; gap: 10px; border: 1px solid var(--frame); border-radius: 24px; padding: 7px 7px 7px 20px; background: var(--lift); }
-.composer:focus-within { border-color: var(--soft); }
-.composer .field { position: relative; flex: 1; min-width: 0; outline: 0; color: var(--ink); font: 16px/1.5 var(--sans); padding: 7px 0; max-height: 40vh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: wrap; cursor: text; }
+/* the message box: the text on top, its tools in a row below (attach and
+   dictate left, send right); the cobalt only on send and on the focus */
+.composer { width: min(var(--col), 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--frame); border-radius: 18px; padding: 12px 10px 8px 16px; background: var(--lift); transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out); }
+.composer .field { position: relative; min-width: 0; outline: 0; color: var(--ink); font: 16px/1.5 var(--sans); padding: 2px 6px 4px 0; min-height: 28px; max-height: 40vh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: wrap; cursor: text; }
 .composer .field.blank::before { content: attr(data-placeholder); position: absolute; color: var(--soft); pointer-events: none; }
+.composer .bar { display: flex; align-items: center; gap: 4px; margin-left: -6px; }
 .field .item { position: relative; display: inline-block; width: 96px; height: 72px; max-width: 100%; margin: 2px 2px; padding: 0; vertical-align: bottom; overflow: hidden; border: 1px solid var(--hair); border-radius: 8px; background: var(--block); }
 .field .item:has(> :is(img, video)) { box-sizing: content-box; }
 .field .item > :is(img, video) { display: block; width: 100%; height: 100%; object-fit: scale-down; pointer-events: none; }
@@ -119,19 +124,25 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 .field .item[data-state=up] > :is(img, video) { opacity: .6; }
 .field .item[data-state=bad] { border-color: var(--red); }
 .field .item[data-state=bad] .state { background: var(--red); }
-.send, .attach, .mic { flex: none; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; }
-.force { flex: none; height: 38px; padding: 0 12px; border-radius: 19px; background: var(--ink); color: var(--paper); font: 600 14px/1 var(--sans); }
+.send, .attach, .mic { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; }
 .send svg, .attach svg, .mic svg { width: 20px; height: 20px; stroke-width: 2; }
-.send { background: var(--ink); color: var(--paper); }
+.attach, .mic { color: var(--mid); }
+.mic { margin-right: auto; }
+:is(.attach, .mic):hover { color: var(--ink); background: var(--hover); }
+:is(.attach, .mic, .send):active { scale: .94; }
+.mic.rec { background: var(--ink); color: var(--paper); }
+.mic:disabled { opacity: .4; }
+.send { background: var(--accent); color: var(--paper); transition: background-color 160ms var(--ease-out), scale 120ms var(--ease-out); }
+.send:hover { background: color-mix(in srgb, var(--accent) 86%, var(--ink)); }
 .send.stop { background: var(--block); color: var(--ink); }
+.send.stop:hover { background: var(--hover); }
 .send:not(.stop) svg + svg, .send.stop svg:first-child { display: none; }
 .send.stop svg { fill: currentColor; stroke-width: 0; width: 16px; height: 16px; }
-.attach { margin-left: -13px; color: var(--mid); }
-.attach:hover { color: var(--ink); background: var(--hover); }
-.mic { margin-right: -6px; color: var(--mid); }
-.mic:hover { color: var(--ink); background: var(--hover); }
-.mic.rec { background: var(--ink); color: var(--paper); }
-.mic:disabled { opacity: .4; cursor: default; }
+/* the queue jump, beside send while a message waits: how many, and the
+   button that stops the turn so they go now */
+.composer .queued { font: 13px/1 var(--mono); color: var(--mid); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.force { flex: none; height: 32px; margin-right: 4px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); font: 600 13.5px/1 var(--sans); }
+.force:hover { background: var(--accent); color: var(--paper); }
 .composer .voice { display: none; flex: 1; align-items: center; gap: 12px; height: 38px; color: var(--ink); }
 .composer.rec .voice { display: flex; }
 .composer.rec .field { display: none; }
@@ -141,8 +152,7 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 .voice canvas { flex: 1; width: 0; height: 28px; }
 .voice span { font: 14px var(--mono); color: var(--mid); font-variant-numeric: tabular-nums; }
 .composer.off { border-color: var(--hair); }
-.composer.off textarea { color: var(--soft); }
-.composer.off .send { background: var(--hair); cursor: default; }
+.composer.off .send { background: var(--hair); color: var(--mid); cursor: not-allowed; }
 .composer.off :is(.attach, .mic) { visibility: hidden; }
 .mine, .down { width: 30px; height: 26px; display: grid; place-items: center; border-radius: 7px; background: var(--block); }
 .mine { position: fixed; top: calc(var(--head) + 6px); right: max(20px, env(safe-area-inset-right), 50% - var(--col) / 2); }
@@ -207,7 +217,7 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 #import .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 #import .two button { min-height: 64px; padding: 10px 16px; font-size: 15px; white-space: normal; }
 #import .acts button { white-space: nowrap; }
-#import button:disabled { opacity: 0.4; cursor: default; }
+#import button:disabled { opacity: 0.4; cursor: not-allowed; }
 progress { --track: var(--block); --bar: var(--ink); display: block; width: 100%; height: 6px; margin: 14px 0 6px; appearance: none; border: 0; border-radius: 3px; background: var(--track); overflow: hidden; }
 progress::-webkit-progress-bar { background: var(--track); }
 progress::-webkit-progress-value { background: var(--bar); transition: width .4s; }
@@ -389,12 +399,12 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 #desk .rec-text { margin: 2px 0 4px; font-size: 12.5px; color: var(--mid); }
 #desk .acts .accept { border: 2px solid var(--accent); color: var(--accent); font-weight: 600; background: var(--paper); }
 /* under the pointer, inverted (accent fill, paper text): the same pair as at
-   rest, 6.26:1 light and 7.21:1 dark, not accent on --hover (4.76:1 dark) */
+   rest, 6.56:1 light and 7.75:1 dark, not accent on --hover (4.76:1 dark) */
 #desk .acts .accept:hover { background: var(--accent); color: var(--paper); }
 /* a task of Unii's (P6): Cobrar agora, Pode fechar */
 #desk .acts.unii .chase { background: var(--ink); color: var(--paper); }
 #desk .acts.unii .chase:hover { background: var(--ink); opacity: .85; }
-#desk .acts.unii .chase:disabled { background: var(--block); color: var(--mid); opacity: 1; cursor: default; }
+#desk .acts.unii .chase:disabled { background: var(--block); color: var(--mid); opacity: 1; cursor: not-allowed; }
 #desk .note { width: 100%; margin-top: 6px; padding: 5px 8px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans); }
 #desk .frees { padding: 0 6px; border-radius: 6px; background: var(--ink); color: var(--paper); font-weight: 500; }
 /* a task's fields (each answered apart, a draft till Concluir) and its
@@ -556,9 +566,9 @@ body.desk footer > :not(#toast) { display: none; }
 #pics img { height: 64px; cursor: pointer; }
 :is(.pics, .msg .media) img, .field .item:has(> img) { cursor: zoom-in; }
 
-#viewer { --ink: #e3e3e6; --mid: #a6a6ad; --hover: #37373d; position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; flex-direction: column; color: var(--ink); background: #171719; overflow: hidden; overscroll-behavior: contain; touch-action: none; user-select: none; -webkit-user-select: none; text-wrap: wrap; }
+#viewer { --ink: #ecebe6; --mid: #a7a59e; --hover: #2f2e2b; position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; flex-direction: column; color: var(--ink); background: #121212; overflow: hidden; overscroll-behavior: contain; touch-action: none; user-select: none; -webkit-user-select: none; text-wrap: wrap; }
 #viewer[open] { display: flex; }
-#viewer::backdrop { background: #171719; }
+#viewer::backdrop { background: #121212; }
 #viewer .bar { flex: none; display: flex; align-items: center; gap: 4px; min-height: 52px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
 #viewer .name { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; }
 #viewer .zoom { flex: none; margin-right: 6px; font: 12px var(--mono); color: var(--mid); }
@@ -589,7 +599,8 @@ body.desk footer > :not(#toast) { display: none; }
   header > :is(button, a) { height: 30px; padding: 0 10px; font-size: 13px; }
   #log { width: calc(100% - 28px); }
   footer { padding: 12px 14px max(8px, env(safe-area-inset-bottom)); }
-  .composer { padding: 5px 5px 5px 16px; }
+  .composer { padding: 10px 8px 6px 14px; }
+  .send, .attach, .mic { width: 44px; height: 44px; }
   #account { width: calc(100% - 28px); }
   [popover] { left: 12px; right: 12px; width: auto; }
   #menu { left: auto; width: 180px; }
@@ -622,14 +633,14 @@ body.desk footer > :not(#toast) { display: none; }
 #account .item p { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
 #account .chip { min-width: 96px; }
 .item small { display: block; font-size: 13.5px; font-weight: 400; color: var(--mid); overflow-wrap: anywhere; }
-#account .notify:disabled { opacity: .4; cursor: default; }
+#account .notify:disabled { opacity: .4; cursor: not-allowed; }
 .prompt .note { margin: 0 0 10px; font-size: 14px; color: var(--mid); }
 .prompt textarea { display: block; box-sizing: border-box; width: 100%; min-height: 140px; padding: 10px 12px; border: 1px solid var(--frame); border-radius: 9px; background: var(--paper); color: var(--ink); font: 14px/1.5 var(--mono); resize: vertical; }
 @media (hover: none) { .prompt textarea { font-size: 16px; } }
 .prompt div { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 10px; }
 .prompt .why { margin: 0; font-size: 13.5px; color: var(--mid); }
 .prompt.bad .why { color: var(--red); }
-.prompt .chip:disabled { opacity: .4; cursor: default; }
+.prompt .chip:disabled { opacity: .4; cursor: not-allowed; }
 #account .foot { margin: 24px 0 0; font-size: 13px; color: var(--mid); }
 #account .foot a { text-decoration: none; }
 #account .foot a:hover { text-decoration: underline; }
@@ -755,7 +766,7 @@ body.tree { height: 100dvh; }
 #tree { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #tree .top { display: flex; align-items: center; gap: 6px; padding: 10px 20px 0; } #tree .back { padding: 8px 0; margin-right: 6px; font-size: 14px; color: var(--mid); text-decoration: none; } #tree .back:hover { color: var(--ink); }
 #tree .top small { flex: 1; min-width: 0; margin-left: 10px; font: 12px/1.35 var(--sans); color: var(--mid); } #tree .top small b { font-weight: 600; letter-spacing: .06em; font-size: 11px; padding-left: 5px; box-shadow: inset 3px 0 var(--mid); }
-#tree .top :is(button, .tab) { height: 32px; min-width: 36px; padding: 0 12px; border-radius: 8px; background: var(--block); font-size: 13.5px; font-weight: 500; } #tree .top :is(button, .tab):hover { background: var(--hover); } #tree .top button:disabled { opacity: .4; cursor: default; }
+#tree .top :is(button, .tab) { height: 32px; min-width: 36px; padding: 0 12px; border-radius: 8px; background: var(--block); font-size: 13.5px; font-weight: 500; } #tree .top :is(button, .tab):hover { background: var(--hover); } #tree .top button:disabled { opacity: .4; cursor: not-allowed; }
 #tree .tab { display: grid; place-items: center; text-decoration: none; } #tree .tab.here, #tree .tab.here:hover { background: var(--ink); color: var(--paper); }
 #tree .top [hidden] { display: none; } #tree .note { position: absolute; left: 0; right: 0; padding: 0 14px; font: 12.5px/1.45 var(--sans); color: var(--mid); }
 #tree section { display: none; flex: 1; overflow: auto; padding: 0 20px 20px; outline: none; font: 15px/1.55 var(--serif); text-wrap: pretty; } #tree section.on { display: block; }
@@ -883,8 +894,8 @@ html { color-scheme: light; }
 :root { --field: #8a8a8a; }
 :root[data-theme=dark] { --field: #75757d; }
 .composer:not(.off), .set .field :where(input:not([type=checkbox]), select, textarea), #desk .find :is(input, select), #desk :is(.note, .field textarea, .thread textarea), .prompt textarea { border-color: var(--field); }
-/* the message box's focus: an ink ring, as its field draws no outline */
-.composer:not(.off):focus-within { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+/* the message box's focus: a cobalt edge and halo, as its field draws no outline */
+.composer:not(.off):focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 /* the icons (Icons.ts): each draws itself in as it appears, a tool's on
    the call that just ran, the theme's sun or moon as it swaps */
 svg.ic { flex: none; width: 1.15em; height: 1.15em; stroke: none; vertical-align: -.2em; }

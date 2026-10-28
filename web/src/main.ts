@@ -198,10 +198,10 @@ function chat(): void {
     ev.preventDefault();
     submit();
   };
-  $(".force").onclick = () => {
-    submit();
-    v.force();
-  };
+  $(".force").onclick = () => act({ $: "Jump" });
+  $(".attach").innerHTML = ICON.plus;
+  $(".send .go").outerHTML = ICON.send;
+  motion_end($("footer"));
   $(".attach").onclick = () => file.click();
   $("#pick").onkeydown = roam;
   $("#pick").addEventListener("focusout", left);
@@ -1338,7 +1338,7 @@ const MARKUP = new WeakMap<Element, string>();
 // (index.html reads it before the page paints); its button offers the other
 function theme_set(dark: boolean, keep: boolean): void {
   document.documentElement.dataset.theme = dark ? "dark" : "light";
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#171719" : "#ffffff");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#121212" : "#f7f6f2");
   if (keep) {
     try {
       localStorage.setItem(kept("theme"), dark ? "dark" : "light");
@@ -1352,7 +1352,10 @@ function theme_set(dark: boolean, keep: boolean): void {
 // under reduced motion, each jumps to its end
 function motion_end(root: ParentNode): void {
   if (STILL.matches) {
-    root.querySelectorAll<SVGSVGElement>("svg.ic").forEach((svg) => svg.setCurrentTime(60));
+    root.querySelectorAll<SVGSVGElement>("svg.ic").forEach((svg) => {
+      svg.setCurrentTime(60);
+      svg.pauseAnimations();
+    });
   }
 }
 
@@ -1525,6 +1528,10 @@ function bars(): void {
   $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
   $(".mode").setAttribute("aria-label", P.mode === "desk" ? "Voltar à Conversa" : turn === 0 ? "Mesa: nenhuma pendência na sua vez" : "Mesa: " + turn + (turn === 1 ? " pendência" : " pendências") + " na sua vez");
   send.classList.toggle("stop", stop);
+  send.setAttribute("aria-label", stop ? "Parar o Unii" : "Enviar");
+  const queued = View.view_queued(v);
+  $(".force").hidden = $(".queued").hidden = queued === 0;
+  $(".queued").textContent = queued === 1 ? "1 na fila" : queued + " na fila";
   $(".composer").hidden = !on;
   $(".mic", HTMLButtonElement).disabled = v.out.some((p) => p.msg.$ === "voice");
   $(".mic").classList.toggle("rec", P.rec !== null);

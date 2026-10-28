@@ -8,9 +8,9 @@
 <link rel="icon" href="/favicon.svg">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2">
-<meta name="theme-color" content="#ffffff">
+<meta name="theme-color" content="#f7f6f2">
 <!-- the theme picked in the menu (main.ts theme_set), light unless dark, set before the page paints -->
-<script>try{if(localStorage.getItem("unii.theme")==="dark"){document.documentElement.dataset.theme="dark";document.querySelector('meta[name="theme-color"]').content="#171719"}}catch{}</script>
+<script>try{if(localStorage.getItem("unii.theme")==="dark"){document.documentElement.dataset.theme="dark";document.querySelector('meta[name="theme-color"]').content="#121212"}}catch{}</script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="UniiChat">
@@ -54,9 +54,15 @@
   <p id="doing" role="status" aria-live="polite" hidden></p>
   <nav id="pick"></nav>
   <form class="composer">
-    <button class="attach" type="button" aria-label="attach files"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
-    <input type="file" multiple hidden>
-    <div class="field" role="textbox" aria-multiline="true" aria-label="Message" spellcheck="true"></div><div class="voice"><canvas></canvas><span>0:00</span></div><button class="mic" type="button" aria-label="dictate"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button><button class="force" type="button">Enviar agora</button><button class="send" type="submit" aria-label="send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
+    <div class="field" role="textbox" aria-multiline="true" aria-label="Mensagem" spellcheck="true"></div><div class="voice"><canvas></canvas><span>0:00</span></div>
+    <div class="bar">
+      <button class="attach" type="button" aria-label="Anexar arquivos" title="Anexar arquivos"></button>
+      <input type="file" multiple hidden>
+      <button class="mic" type="button" aria-label="Ditar" title="Ditar"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
+      <!-- the queue jump: only while Unii works and a message waits (main.ts bars, View.view_queued) -->
+      <span class="queued" hidden></span><button class="force" type="button" title="Interrompe o turno do Unii; as mensagens na fila vão em seguida" hidden>Enviar agora</button>
+      <button class="send" type="submit" aria-label="Enviar"><span class="go"></span><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
+    </div>
   </form>
   <nav id="tabs"></nav>
 </footer>

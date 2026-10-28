@@ -8,17 +8,21 @@ Elegante · moderno · tech (inovações tech e itens que a comunidade vem crian
 Não é: parecido com o pi coding agent.
 
 ## Paleta
+"Papel e cobalto", escolhida pelo dono em 28/10/2026 entre opções propostas pelo agente.
+
 | Papel | Claro | Escuro | Origem |
 |---|---|---|---|
-| Fundo | #ffffff | #171719 | web/style.css:6 / :28, confirmado |
-| Texto | #111111 | #e3e3e6 | web/style.css:2 / :23, confirmado |
-| Texto secundário | #5f5f5f | #a6a6ad | web/style.css:3 / :24, confirmado |
-| Destaque (um só) | #6d3fd8 | #ad94ff | web/style.css:14 / :35, confirmado |
+| Fundo | #f7f6f2 | #121212 | escolha do dono |
+| Texto | #1c1b19 | #ecebe6 | escolha do dono |
+| Texto secundário | #5c5a54 | #a7a59e | derivado dos neutros, 6,38:1 e 7,60:1 |
+| Destaque (um só) | #2747d6 | #8aa2ff | escolha do dono |
+
+Terminal: neutros do próprio terminal; só o destaque em truecolor, o claro ou o escuro conforme o fundo que o terminal informa.
 
 Tema: prefere o claro, mas quer os dois (claro e escuro).
 
 ## Tipografia
-- Serifa (Iowan Old Style / Palatino): título e citações
+- Serifa (Iowan Old Style / Palatino): título e citações; combina com o papel e o cobalto
 - Sans do sistema: corpo
 - Avenir Next: marca
 - Mono: horários, código, contadores
