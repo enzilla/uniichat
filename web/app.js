@@ -4697,6 +4697,20 @@ function cycle_html(c) {
   return `<li class="${cls}"><span class="pipe-n">Ciclo ${c.n}</span> ${esc(when_said(r.start))}${esc(dur)} · ${run_html(r)} · <b class="pipe-verdict">${esc(verdict)}</b>${esc(notes)}${prs}${work}</li>`;
 }
 
+// web/src/Arrive.ts
+var CROWD = 4;
+function arrivals(last, p) {
+  const had = last.get(p.shown);
+  last.set(p.shown, Math.max(had ?? -1, ...p.ids));
+  if (had === undefined || had < 0) {
+    return { body: [], tail: [] };
+  }
+  const kept = p.tail_now < p.tail_was;
+  const body = kept ? [] : p.body.flatMap((a, k) => a !== null && a > had ? [k] : []);
+  const tail = p.tail.filter((k) => k >= p.tail_was);
+  return body.length + tail.length > CROWD ? { body: [], tail: [] } : { body, tail };
+}
+
 // web/src/Tree.ts
 var LEGEND = { VIEW: "What Unii's prompt holds now, in order: old messages as summaries, recent ones whole.", TREE: "" };
 var S = {
@@ -6697,6 +6711,24 @@ function motion_end(root) {
     root.querySelectorAll("svg.ic").forEach((svg) => svg.setCurrentTime(60));
   }
 }
+function fresh(el, paint) {
+  const had = new Set(el.children);
+  paint();
+  return [...el.children].filter((child) => !had.has(child));
+}
+var LAST2 = new Map;
+function arrive(shown, born, streamed, was) {
+  const kids = [...$2("#log .tail").children];
+  const a = (el) => el instanceof HTMLElement && el.dataset.a !== undefined ? Number(el.dataset.a) : null;
+  const ids = [...document.querySelectorAll("#log .rows > [data-a]")].map((el) => Number(el.dataset.a));
+  const up2 = arrivals(LAST2, { shown, body: born.map(a), tail: streamed.map((el) => kids.indexOf(el)), tail_was: was, tail_now: kids.length, ids });
+  const rise = [...up2.body.map((k) => born[k]), ...up2.tail.map((k) => kids[k])];
+  rise.forEach((el, k) => {
+    el.style.animationDelay = k * 50 + "ms";
+    el.classList.add("arrive");
+    el.addEventListener("animationend", () => el.classList.remove("arrive"), { once: true });
+  });
+}
 function markup(el, htmls) {
   const had = new Map;
   for (const child of el.children) {
@@ -6754,13 +6786,16 @@ function paint() {
   P.frame = 0;
   SCROLL.stick = true;
   bars();
+  const tail = $2("#log .tail");
+  const was = tail.childElementCount;
+  const born = P.rows ? fresh($2("#log .rows"), () => markup($2("#log .rows"), view_body(v).map(row_html))) : [];
   if (P.rows) {
-    markup($2("#log .rows"), view_body(v).map(row_html));
     box_sizes($2("#log .rows"));
     P.rows = false;
   }
-  markup($2("#log .tail"), view_tail(v).map(row_html));
-  box_sizes($2("#log .tail"));
+  const streamed = fresh(tail, () => markup(tail, view_tail(v).map(row_html)));
+  box_sizes(tail);
+  arrive(shown, born, streamed, was);
   folds();
   frames();
   motion_end($2("#log"));
@@ -6774,6 +6809,9 @@ function paint() {
   }
   if (shown !== P.shown) {
     P.shown = shown;
+    if (!STILL.matches) {
+      $2("#log .rows").animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: "cubic-bezier(0.23, 1, 0.32, 1)" });
+    }
     SCROLL.end = v.fold === null;
     scrollTo(0, v.fold === null ? doc.scrollHeight : 0);
     return;

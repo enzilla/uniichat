@@ -899,3 +899,23 @@ header > :is(.menu, .timers) svg.ic { width: 18px; height: 18px; }
 /* a tool's chip is one line: a long command ends in an ellipsis instead of
    wrapping past the chip's height (seen at 390px) */
 .block.tool .call { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* arrival (main.ts arrive, Arrive.ts): a row new to the screen rises in,
+   each kind its own way, so the eye follows what just happened: your
+   message leaves from the box below, a reply's text comes into focus, a
+   tool's chip pops in beside the last; never a row redrawn or history */
+@media (prefers-reduced-motion: no-preference) {
+  #log .arrive { animation: arrive-rise 280ms var(--ease-out) both; }
+  #log .msg.user.arrive { transform-origin: 100% 100%; animation-name: arrive-send; }
+  #log .msg.unii.arrive { animation: arrive-focus 420ms var(--ease-out) both; }
+  #log :is(.block.tool, .block.mind, .block.live).arrive { transform-origin: 0 50%; animation-name: arrive-pop; animation-duration: 240ms; }
+}
+@keyframes arrive-rise { from { opacity: 0; transform: translateY(6px); } }
+@keyframes arrive-send { from { opacity: 0; transform: translateY(14px) scale(.97); } }
+@keyframes arrive-focus { from { opacity: 0; filter: blur(5px); transform: translateY(4px); } }
+@keyframes arrive-pop { from { opacity: 0; transform: scale(.92); } }
+/* the tab shown: a line under it that grows in as it's picked */
+#tabs button { position: relative; }
+#tabs .here::after { content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 2px; border-radius: 1px; background: var(--ink); }
+@media (prefers-reduced-motion: no-preference) {
+  #tabs .here::after { transition: scale 260ms var(--ease-out); @starting-style { scale: 0 1; } }
+}

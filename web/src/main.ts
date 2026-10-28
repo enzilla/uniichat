@@ -7,6 +7,7 @@ import * as View from "../../View.ts";
 import * as Box from "./Box.ts";
 import { find, must } from "./Dom.ts";
 import * as Html from "./Html.ts";
+import * as Arrive from "./Arrive.ts";
 import { ICON } from "./Icons.ts";
 import * as Tree from "./Tree.ts";
 import * as Viewer from "./Viewer.ts";
@@ -1355,6 +1356,28 @@ function motion_end(root: ParentNode): void {
   }
 }
 
+// the children a paint of el put in: markup keeps an unchanged row's element
+function fresh(el: Element, paint: () => void): Element[] {
+  const had = new Set(el.children);
+  paint();
+  return [...el.children].filter((child) => !had.has(child));
+}
+
+// the rows that just arrived rise in (Arrive.ts says which), a few apart
+const LAST = new Map<string, number>();
+function arrive(shown: string, born: Element[], streamed: Element[], was: number): void {
+  const kids = [...$("#log .tail").children];
+  const a = (el: Element) => (el instanceof HTMLElement && el.dataset.a !== undefined ? Number(el.dataset.a) : null);
+  const ids = [...document.querySelectorAll<HTMLElement>("#log .rows > [data-a]")].map((el) => Number(el.dataset.a));
+  const up = Arrive.arrivals(LAST, { shown, body: born.map(a), tail: streamed.map((el) => kids.indexOf(el)), tail_was: was, tail_now: kids.length, ids });
+  const rise = [...up.body.map((k) => born[k]), ...up.tail.map((k) => kids[k])];
+  rise.forEach((el, k) => {
+    (el as HTMLElement).style.animationDelay = k * 50 + "ms";
+    el.classList.add("arrive");
+    el.addEventListener("animationend", () => el.classList.remove("arrive"), { once: true });
+  });
+}
+
 function markup(el: Element, htmls: string[]): void {
   const had = new Map<string | undefined, Element[]>();
   for (const child of el.children) {
@@ -1415,13 +1438,16 @@ function paint(): void {
   P.frame = 0;
   SCROLL.stick = true;
   bars();
+  const tail = $("#log .tail");
+  const was = tail.childElementCount;
+  const born = P.rows ? fresh($("#log .rows"), () => markup($("#log .rows"), View.view_body(v).map(Html.row_html))) : [];
   if (P.rows) {
-    markup($("#log .rows"), View.view_body(v).map(Html.row_html));
     Box.box_sizes($("#log .rows"));
     P.rows = false;
   }
-  markup($("#log .tail"), View.view_tail(v).map(Html.row_html));
-  Box.box_sizes($("#log .tail"));
+  const streamed = fresh(tail, () => markup(tail, View.view_tail(v).map(Html.row_html)));
+  Box.box_sizes(tail);
+  arrive(shown, born, streamed, was);
   folds();
   frames();
   motion_end($("#log"));
@@ -1435,6 +1461,10 @@ function paint(): void {
   }
   if (shown !== P.shown) {
     P.shown = shown;
+    // another tab: its rows fade in, so the swap reads as a move, not a blink
+    if (!STILL.matches) {
+      $("#log .rows").animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: "cubic-bezier(0.23, 1, 0.32, 1)" });
+    }
     SCROLL.end = v.fold === null;
     scrollTo(0, v.fold === null ? doc.scrollHeight : 0);
     return;
