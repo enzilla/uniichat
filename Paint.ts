@@ -103,6 +103,9 @@ function color_sgr(at: number, c: string): string {
   if (c === "") {
     return "";
   }
+  if (c.startsWith("#")) {
+    return ";" + at + ";2;" + [1, 3, 5].map((k) => parseInt(c.slice(k, k + 2), 16)).join(";");
+  }
   const i = Number(c);
   return ";" + (at - 8 + (i < 8 ? i : 60 + i - 8));
 }
