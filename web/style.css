@@ -1,7 +1,7 @@
 :root {
   --ink    : #111111;
   --mid    : #5f5f5f;
-  --soft   : #9a9a9a;
+  --soft   : #6b6b6b;
   --hair   : #e6e6e6;
   --paper  : #ffffff;
   --lift   : #ffffff;
@@ -18,26 +18,25 @@
   --shadow : 0 1px 2px rgba(0, 0, 0, .05), 0 6px 20px rgba(0, 0, 0, .05);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ink    : #e3e3e6;
-    --mid    : #a6a6ad;
-    --soft   : #8a8a92;
-    --hair   : #36363c;
-    --paper  : #171719;
-    --lift   : #222226;
-    --block  : #2c2c31;
-    --hover  : #37373d;
-    --frame  : #4c4c53;
-    --edge   : #85858d;
-    --add    : #55b874;
-    --del    : #f8857c;
-    --accent : #ad94ff;
-    --red    : var(--del);
-    --warm   : #f59f4c;
-    --veil   : rgb(0 0 0 / .5);
-    --shadow : 0 1px 2px rgb(0 0 0 / .4), 0 8px 28px rgb(0 0 0 / .45);
-  }
+/* dark, when picked in the menu (main.ts theme_set) */
+:root[data-theme=dark] {
+  --ink    : #e3e3e6;
+  --mid    : #a6a6ad;
+  --soft   : #9c9ca4;
+  --hair   : #36363c;
+  --paper  : #171719;
+  --lift   : #222226;
+  --block  : #2c2c31;
+  --hover  : #37373d;
+  --frame  : #4c4c53;
+  --edge   : #85858d;
+  --add    : #55b874;
+  --del    : #f8857c;
+  --accent : #ad94ff;
+  --red    : var(--del);
+  --warm   : #f59f4c;
+  --veil   : rgb(0 0 0 / .5);
+  --shadow : 0 1px 2px rgb(0 0 0 / .4), 0 8px 28px rgb(0 0 0 / .45);
 }
 
 :root {
@@ -523,7 +522,7 @@ body.desk footer > :not(#toast) { display: none; }
 }
 #desk .lead { font-size: 12.5px; color: var(--mid); }
 #desk .field[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
-#desk .field[aria-invalid="true"] legend::after { content: " — obrigatório"; color: var(--red); font-weight: 400; }
+#desk .field[aria-invalid="true"] legend::after { content: " (obrigatório)"; color: var(--red); font-weight: 400; }
 #desk .pane .next { display: block; margin-top: 18px; padding: 10px 14px; border-radius: 10px; background: var(--block); font-size: 14px; text-align: left; }
 #desk .pane .next:hover { background: var(--hover); }
 #desk .pane .next .id { font: 12.5px var(--mono); color: var(--mid); }
@@ -874,3 +873,29 @@ body.tree { height: 100dvh; }
   #desk article .main > .acts.unii .hint { flex: 1 0 100%; }
   #desk article .main > .acts.unii button { flex: 1 1 0; }
 }
+
+/* the design pass (DESIGN.md): what it adds, each with its reason */
+/* light unless dark is picked: the theme is the user's, not the system's */
+html { color-scheme: light; }
+:root[data-theme=dark] { color-scheme: dark; }
+/* a field's edge at 3:1 on paper and block, so a field is found by its
+   frame (WCAG 1.4.11); --frame stays for the frames that only group */
+:root { --field: #8a8a8a; }
+:root[data-theme=dark] { --field: #75757d; }
+.composer:not(.off), .set .field :where(input:not([type=checkbox]), select, textarea), #desk .find :is(input, select), #desk :is(.note, .field textarea, .thread textarea), .prompt textarea { border-color: var(--field); }
+/* the message box's focus: an ink ring, as its field draws no outline */
+.composer:not(.off):focus-within { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+/* the icons (Icons.ts): each draws itself in as it appears, a tool's on
+   the call that just ran, the theme's sun or moon as it swaps */
+svg.ic { flex: none; width: 1.15em; height: 1.15em; stroke: none; vertical-align: -.2em; }
+.call svg.ic { margin-right: 8px; }
+header > :is(.menu, .timers) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+header > .menu { width: 36px; padding: 0; }
+header > :is(.menu, .timers) svg.ic { width: 18px; height: 18px; }
+#menu .theme { display: flex; align-items: center; gap: 8px; }
+/* the theme swaps by a crossfade of the whole page, not a jump (main.ts;
+   skipped under reduced motion) */
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 320ms; animation-timing-function: var(--ease-out); }
+/* a tool's chip is one line: a long command ends in an ellipsis instead of
+   wrapping past the chip's height (seen at 390px) */
+.block.tool .call { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

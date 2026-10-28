@@ -210,7 +210,7 @@ export function item_new(name: string, url: string, state: State, kind = View.me
   } else {
     const tile = document.createElement("span");
     tile.className = "tile";
-    tile.textContent = (kind === "audio" ? "♪ " : kind === "html" ? "📄 " : kind === "file" ? "📎 " : "") + name;
+    tile.textContent = name;
     if (kind === "file") {
       const small = document.createElement("small");
       small.textContent = size === null ? "" : View.size_show(size);

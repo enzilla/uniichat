@@ -422,7 +422,7 @@ export function view_act(v: View, act: Act): Client[] {
         return [];
       }
       if (word !== undefined && goal === null && !skill) {
-        v.notes.push(word + " is no command; nothing was sent. The terminal's /help lists its commands; the site's are in its ☰ menu.");
+        v.notes.push(word + " is no command; nothing was sent. The terminal's /help lists its commands; the site's are in its menu.");
         return [];
       }
       const blob = new Blob([...images, text]);
