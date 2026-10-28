@@ -389,7 +389,7 @@ function check_html(p: NonNullable<Task["prs"]>[number]): string {
   const notes = p.notes.length === 0 ? "" : `<ul class="notes">${p.notes.map((n) => `<li class="sev ${esc(n.sev)}"><span class="sev-tag">${esc(View.SEV_SAID[n.sev][0])}</span> ${esc(n.text)}</li>`).join("")}</ul>`;
   const untested = p.untested.length === 0 ? "" : `<p class="untested"><span class="lead">Não testado:</span> ${esc(p.untested.join("; "))}</p>`;
   const by = p.verifier === null ? "" : ` por ${esc(p.verifier)}`;
-  return `<div class="check ${esc(p.verdict)}"><p class="check-head"><a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(View.pr_label(p.url))}</a> <span class="lead">head</span> <code class="head">${esc(p.head.slice(0, 12))}</code> <span class="verdict">${esc(View.VERDICT_SAID[p.verdict])}${by}</span> <span class="count">${esc(View.pr_notes_said(p))}</span></p>${notes}${untested}</div>`;
+  return `<div class="check ${esc(p.verdict)}"><p class="check-head"><a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(View.pr_label(p.url))}</a> <span class="lead">head</span> <code class="head">${esc(p.head.slice(0, 12))}</code> <span class="verdict">${p.verdict === "rejected" ? ICON.close : p.verdict === "pending" ? "" : ICON.check}${esc(View.VERDICT_SAID[p.verdict])}${by}</span> <span class="count">${esc(View.pr_notes_said(p))}</span></p>${notes}${untested}</div>`;
 }
 
 // links to pull requests, each by its "repo#n"
@@ -468,7 +468,7 @@ export function desk_html(tasks: Task[], q: string, ref: string, sel: string | n
       ...(prio === "" ? [] : [`<span class="prio ${esc(Deps.priority_of(t))}">${esc(prio)}</span>`]),
       ...(late === "" ? [] : [`<span class="late">${esc(late)}</span>`]),
       ...(t.ref === null ? [] : [`<span class="ref">${esc(t.ref)}</span>`]),
-      ...(prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`]),
+      ...(prs.length === 0 ? [] : [`<span class="pr">${ICON.pr}${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`]),
       ...(rejected === 0 ? [] : [`<span class="late">${esc(rejected === 1 ? "1 PR reprovado" : rejected + " PRs reprovados")}</span>`]),
       ...(outside === "" ? [] : [`<span class="waits-for">${esc(outside)}</span>`]),
       ...(talk === "" ? [] : [`<span class="talk ${esc(View.talk_cls(talk))}">${esc(talk)}</span>`]),
@@ -483,7 +483,8 @@ export function desk_html(tasks: Task[], q: string, ref: string, sel: string | n
     const on = t.id === sel;
     return `<button class="row ${g}${on ? " sel" : ""}" role="option" aria-selected="${on}" data-desk="${esc(t.id)}"><span class="head"><span class="id">${esc(t.id)}</span><span class="title">${esc(t.title)}</span></span>${more.length === 0 ? "" : `<span class="meta">${more.join(" · ")}</span>`}</button>`;
   };
-  const list = groups.flatMap((g) => [`<p class="group ${g.group}" role="presentation">${esc(g.label)} <span class="n">(${g.tasks.length})</span></p>`, ...g.tasks.map((t) => row(t, g.group))]);
+  const mark = (g: View.Desk) => (g === "now" ? ICON.open : g === "closed" ? ICON.closed : "");
+  const list = groups.flatMap((g) => [`<p class="group ${g.group}" role="presentation">${mark(g.group)}${esc(g.label)} <span class="n">(${g.tasks.length})</span></p>`, ...g.tasks.map((t) => row(t, g.group))]);
   const searched = q.trim() !== "" || ref !== "";
   const none = tasks.length === 0 ? "Nenhuma pendência. Quando o Unii precisar de você, ela aparece aqui." : searched && ids.length === 0 ? "Nenhuma pendência na busca." : "";
   const t = sel === null ? undefined : tasks.find((x) => x.id === sel);
@@ -492,9 +493,9 @@ export function desk_html(tasks: Task[], q: string, ref: string, sel: string | n
   const after = t === undefined || View.desk_group(t, blocked) === "now" ? null : View.desk_next(tasks, t.id, q, ref, opts.order ?? []);
   const next = after === null ? [] : [`<button class="next" type="button" data-desk="${esc(after.id)}">Próxima: <span class="id">${esc(after.id)}</span> ${esc(after.title)} →</button>`];
   const detail = t === undefined
-    ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`]
+    ? [`<p class="empty">${tasks.length === 0 ? ICON.done + "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`]
     : [back, t.state !== "open" ? task_closed_html(t, tasks, now) : blocked.has(t.id) ? task_waiting_html(t, tasks, now) : task_open_html(t, tasks, now, turn), ...next];
-  return { list: none === "" ? list : [...list, `<p class="none">${esc(none)}</p>`], detail, ids };
+  return { list: none === "" ? list : [...list, `<p class="none">${tasks.length === 0 ? ICON.done : ICON.search}${esc(none)}</p>`], detail, ids };
 }
 
 // a task's fields, each a fieldset: a choice and yes or no as radios,
@@ -562,11 +563,11 @@ export function account_html(prompts: View.Prompts | null, notify: Notify | null
     ...(notify === null ? [] : [notify_html(notify)]),
     item("Export memory", "The chat and its summaries, in one file.", `<a class="chip" href="/export">Download</a>`),
   ];
-  const unread  = item("Could not read the prompts.", "", `<button class="chip retry">Try again</button>`);
+  const unread  = item(ICON.alert + "Could not read the prompts.", "", `<button class="chip retry">Try again</button>`);
   const mine    = section_html("Prompts", prompts === null ? unread : prompt_html("prompt", prompts.prompt.text, "The user prompt: Unii's system prompt in every turn; its subagents get it too once you change it. Add who you are and how you want work done at its end. prompt.md in the server's folder; empty: the built-in one.")
     + prompt_html("compact", prompts.compact.text, "The compaction prompt: all a summary of the memory gets, nothing else. compact.md in the server's folder; empty: the built-in one."));
   const mcp     = section_html("MCP servers", `<div class="mcp"></div>`);
-  return `<a class="back" href="/" data-go="/">← Chat</a><h1>Settings</h1>` + mine + section_html("This browser", acts.join("")) + mcp + `<div class="owned"></div>`;
+  return `<a class="back" href="/" data-go="/">← Chat</a><h1>Configurações</h1>` + mine + section_html("This browser", acts.join("")) + mcp + `<div class="owned"></div>`;
 }
 
 function prompt_html(name: string, text: string, note: string): string {

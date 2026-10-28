@@ -13,6 +13,9 @@ import * as T from "./Tasks.ts";
 import * as View from "./View.ts";
 import * as Html from "./web/src/Html.ts";
 
+// the markup without its icons (Icons.ts), which these don't test
+const bare = (html: string | undefined) => (html ?? "").replace(/<svg class="ic"[\s\S]*?<\/svg>/g, "");
+
 const ROOT = fs.mkdtempSync(os.tmpdir() + "/unii-desk-");
 const NOW  = Date.parse("2026-10-23T12:00:00Z");
 let dir    = "";
@@ -108,7 +111,8 @@ test("web: the list by group, the one shown marked; its detail whole, with field
   const tasks = desk();
   const html = Html.desk_html(tasks, "", "", "P4", NOW);
   expect(html.ids).toEqual(["P1", "P4", "P2", "P5", "P3", "P6"]);
-  expect(html.list[0]).toBe('<p class="group now" role="presentation">Agora <span class="n">(1)</span></p>');
+  expect(bare(html.list[0])).toBe('<p class="group now" role="presentation">Agora <span class="n">(1)</span></p>');
+  expect(html.list[0]).toContain('<svg class="ic"');
   const p4 = html.list.find((x) => x.includes('data-desk="P4"'))!;
   expect(p4).toContain('aria-selected="true"');
   expect(p4).toContain('class="row unii sel"');
@@ -146,7 +150,7 @@ test("web: a waiting task links to what it waits for; a closed one shows its ans
   expect(closed).toContain('<dl class="answers"><dt>Ambiente</dt><dd>prod</dd></dl>');
   expect(closed).toContain(">Reabrir</button>");
   expect(Html.desk_html(tasks, "", "", null).detail[0]).toContain("Escolha uma pendência na lista");
-  expect(Html.desk_html(tasks, "zzz", "", null).list).toEqual(['<p class="none">Nenhuma pendência na busca.</p>']);
+  expect(Html.desk_html(tasks, "zzz", "", null).list.map(bare)).toEqual(['<p class="none">Nenhuma pendência na busca.</p>']);
   expect(Html.desk_html(tasks, "mesclar", "", null).list.join("")).not.toContain("Nenhuma pendência");
   expect(Html.desk_html([], "", "", null).list[0]).toContain("Nenhuma pendência. Quando o Unii precisar de você");
 });
@@ -251,8 +255,8 @@ test("PRs: GitHub pull links of the detail and origin, each once, as repo#n; a l
     { url: "https://github.com/Numih/infra-tf-numih/pull/1135", label: "infra-tf-numih#1135" },
   ]);
   const html = Html.desk_html(tasks, "", "", "P1", NOW);
-  expect(html.list.find((x) => x.includes('data-desk="P1"'))).toContain('<span class="pr">3 PRs</span>');
-  expect(html.list.find((x) => x.includes('data-desk="P2"'))).toContain('<span class="pr">PR uniichat#13</span>');
+  expect(bare(html.list.find((x) => x.includes('data-desk="P1"')))).toContain('<span class="pr">3 PRs</span>');
+  expect(bare(html.list.find((x) => x.includes('data-desk="P2"')))).toContain('<span class="pr">PR uniichat#13</span>');
   expect(html.list.find((x) => x.includes('data-desk="P3"'))).not.toContain('class="pr"');
   expect(html.detail.join("")).toContain('<p class="prs"><span class="lead">PRs:</span> <a class="pr" href="https://github.com/Numih/dp-bk-http/pull/42" target="_blank" rel="noopener noreferrer">dp-bk-http#42</a>');
   expect(Html.desk_html(tasks, "", "", "P3", NOW).detail.join("")).not.toContain('class="prs"');

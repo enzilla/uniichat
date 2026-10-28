@@ -4262,7 +4262,7 @@ function check_html(p) {
   const notes = p.notes.length === 0 ? "" : `<ul class="notes">${p.notes.map((n) => `<li class="sev ${esc(n.sev)}"><span class="sev-tag">${esc(SEV_SAID[n.sev][0])}</span> ${esc(n.text)}</li>`).join("")}</ul>`;
   const untested = p.untested.length === 0 ? "" : `<p class="untested"><span class="lead">Não testado:</span> ${esc(p.untested.join("; "))}</p>`;
   const by = p.verifier === null ? "" : ` por ${esc(p.verifier)}`;
-  return `<div class="check ${esc(p.verdict)}"><p class="check-head"><a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(pr_label(p.url))}</a> <span class="lead">head</span> <code class="head">${esc(p.head.slice(0, 12))}</code> <span class="verdict">${esc(VERDICT_SAID[p.verdict])}${by}</span> <span class="count">${esc(pr_notes_said(p))}</span></p>${notes}${untested}</div>`;
+  return `<div class="check ${esc(p.verdict)}"><p class="check-head"><a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(pr_label(p.url))}</a> <span class="lead">head</span> <code class="head">${esc(p.head.slice(0, 12))}</code> <span class="verdict">${p.verdict === "rejected" ? ICON.close : p.verdict === "pending" ? "" : ICON.check}${esc(VERDICT_SAID[p.verdict])}${by}</span> <span class="count">${esc(pr_notes_said(p))}</span></p>${notes}${untested}</div>`;
 }
 function task_links_html(prs) {
   const one = (p) => `<a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.label)}</a>`;
@@ -4316,7 +4316,7 @@ function desk_html(tasks, q, ref, sel, now = Date.now(), opts = {}) {
       ...prio === "" ? [] : [`<span class="prio ${esc(priority_of(t2))}">${esc(prio)}</span>`],
       ...late === "" ? [] : [`<span class="late">${esc(late)}</span>`],
       ...t2.ref === null ? [] : [`<span class="ref">${esc(t2.ref)}</span>`],
-      ...prs.length === 0 ? [] : [`<span class="pr">${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`],
+      ...prs.length === 0 ? [] : [`<span class="pr">${ICON.pr}${esc(prs.length === 1 ? "PR " + prs[0].label : prs.length + " PRs")}</span>`],
       ...rejected === 0 ? [] : [`<span class="late">${esc(rejected === 1 ? "1 PR reprovado" : rejected + " PRs reprovados")}</span>`],
       ...outside === "" ? [] : [`<span class="waits-for">${esc(outside)}</span>`],
       ...talk === "" ? [] : [`<span class="talk ${esc(talk_cls(talk))}">${esc(talk)}</span>`],
@@ -4331,15 +4331,16 @@ function desk_html(tasks, q, ref, sel, now = Date.now(), opts = {}) {
     const on = t2.id === sel;
     return `<button class="row ${g}${on ? " sel" : ""}" role="option" aria-selected="${on}" data-desk="${esc(t2.id)}"><span class="head"><span class="id">${esc(t2.id)}</span><span class="title">${esc(t2.title)}</span></span>${more.length === 0 ? "" : `<span class="meta">${more.join(" · ")}</span>`}</button>`;
   };
-  const list2 = groups.flatMap((g) => [`<p class="group ${g.group}" role="presentation">${esc(g.label)} <span class="n">(${g.tasks.length})</span></p>`, ...g.tasks.map((t2) => row(t2, g.group))]);
+  const mark = (g) => g === "now" ? ICON.open : g === "closed" ? ICON.closed : "";
+  const list2 = groups.flatMap((g) => [`<p class="group ${g.group}" role="presentation">${mark(g.group)}${esc(g.label)} <span class="n">(${g.tasks.length})</span></p>`, ...g.tasks.map((t2) => row(t2, g.group))]);
   const searched = q.trim() !== "" || ref !== "";
   const none = tasks.length === 0 ? "Nenhuma pendência. Quando o Unii precisar de você, ela aparece aqui." : searched && ids.length === 0 ? "Nenhuma pendência na busca." : "";
   const t = sel === null ? undefined : tasks.find((x) => x.id === sel);
   const back = `<button class="back" type="button" data-desk-back aria-label="Voltar à lista">← Pendências</button>`;
   const after = t === undefined || desk_group(t, blocked2) === "now" ? null : desk_next(tasks, t.id, q, ref, opts.order ?? []);
   const next = after === null ? [] : [`<button class="next" type="button" data-desk="${esc(after.id)}">Próxima: <span class="id">${esc(after.id)}</span> ${esc(after.title)} →</button>`];
-  const detail = t === undefined ? [`<p class="empty">${tasks.length === 0 ? "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`] : [back, t.state !== "open" ? task_closed_html(t, tasks, now) : blocked2.has(t.id) ? task_waiting_html(t, tasks, now) : task_open_html(t, tasks, now, turn), ...next];
-  return { list: none === "" ? list2 : [...list2, `<p class="none">${esc(none)}</p>`], detail, ids };
+  const detail = t === undefined ? [`<p class="empty">${tasks.length === 0 ? ICON.done + "Nenhuma pendência." : "Escolha uma pendência na lista (<kbd>j</kbd> e <kbd>k</kbd> navegam)."}</p>`] : [back, t.state !== "open" ? task_closed_html(t, tasks, now) : blocked2.has(t.id) ? task_waiting_html(t, tasks, now) : task_open_html(t, tasks, now, turn), ...next];
+  return { list: none === "" ? list2 : [...list2, `<p class="none">${tasks.length === 0 ? ICON.done : ICON.search}${esc(none)}</p>`], detail, ids };
 }
 function fields_html(t) {
   const fields = t.fields ?? [];
@@ -4390,10 +4391,10 @@ function account_html(prompts, notify = null) {
     ...notify === null ? [] : [notify_html(notify)],
     item("Export memory", "The chat and its summaries, in one file.", `<a class="chip" href="/export">Download</a>`)
   ];
-  const unread = item("Could not read the prompts.", "", `<button class="chip retry">Try again</button>`);
+  const unread = item(ICON.alert + "Could not read the prompts.", "", `<button class="chip retry">Try again</button>`);
   const mine = section_html("Prompts", prompts === null ? unread : prompt_html("prompt", prompts.prompt.text, "The user prompt: Unii's system prompt in every turn; its subagents get it too once you change it. Add who you are and how you want work done at its end. prompt.md in the server's folder; empty: the built-in one.") + prompt_html("compact", prompts.compact.text, "The compaction prompt: all a summary of the memory gets, nothing else. compact.md in the server's folder; empty: the built-in one."));
   const mcp = section_html("MCP servers", `<div class="mcp"></div>`);
-  return `<a class="back" href="/" data-go="/">← Chat</a><h1>Settings</h1>` + mine + section_html("This browser", acts.join("")) + mcp + `<div class="owned"></div>`;
+  return `<a class="back" href="/" data-go="/">← Chat</a><h1>Configurações</h1>` + mine + section_html("This browser", acts.join("")) + mcp + `<div class="owned"></div>`;
 }
 function prompt_html(name, text, note) {
   const area = `<textarea name="${name}" rows="12" spellcheck="false">${esc(text)}</textarea>`;
@@ -6178,7 +6179,31 @@ function desk_wire() {
     P.ref = ref.value;
     draw2(false);
   };
+  for (const b of document.querySelectorAll("#menu [data-ic]")) {
+    b.insertAdjacentHTML("afterbegin", ICON[b.dataset.ic]);
+  }
   $2(".mode").onclick = () => desk_mode(P.mode === "desk" ? "chat" : "desk");
+  $2(".mode").insertAdjacentHTML("afterbegin", ICON.desk);
+  $2("#desk .find").insertAdjacentHTML("afterbegin", ICON.search);
+  const mesa = $2("#mesa", HTMLDialogElement);
+  mesa.oncancel = (ev) => {
+    ev.preventDefault();
+    if (NARROW.matches && P.pane) {
+      desk_back();
+    } else {
+      desk_mode("chat");
+    }
+  };
+  $2("#mesa .shut").onclick = () => desk_mode("chat");
+  const set = $2("#settings", HTMLDialogElement);
+  set.oncancel = (ev) => {
+    ev.preventDefault();
+    go("/");
+  };
+  $2("#settings .shut").onclick = () => go("/");
+  for (const shut of document.querySelectorAll("dialog .shut:empty")) {
+    shut.innerHTML = ICON.close;
+  }
   document.addEventListener("keydown", desk_keys);
   setInterval(() => P.mode === "desk" && document.visibilityState === "visible" && draw2(false), 60000);
   NARROW.addEventListener("change", () => route());
@@ -6254,6 +6279,7 @@ function desk_draw() {
     DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, said, html: desk_html(v.tasks, P.q, P.ref, P.sel, Date.now(), { order, turn, cold: true }) };
   }
   const { list: list3, detail, ids } = DESKED.html;
+  queueMicrotask(() => motion_end($2("#desk")));
   P.ids = ids;
   const select = $2("#desk .ref", HTMLSelectElement);
   markup(select, [`<option value="">Todos os projetos</option>`, ...refs.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`)]);
@@ -6336,15 +6362,6 @@ function desk_keys(ev) {
     }
     $2("#desk .q").focus();
     return;
-  }
-  if (ev.key === "Escape") {
-    if (NARROW.matches && P.pane) {
-      ev.preventDefault();
-      desk_back();
-    } else if (P.sel !== null) {
-      ev.preventDefault();
-      document.querySelector(`#desk .row[data-desk="${CSS.escape(P.sel)}"]`)?.focus();
-    }
   }
 }
 var FOLD2 = 10;
@@ -6716,7 +6733,7 @@ function theme_set(dark, keep) {
       localStorage.setItem(kept("theme"), dark ? "dark" : "light");
     } catch {}
   }
-  $2("#menu .theme").innerHTML = (dark ? ICON.light : ICON.dark) + (dark ? "Light theme" : "Dark theme");
+  $2("#menu .theme").innerHTML = (dark ? ICON.light : ICON.dark) + (dark ? "Tema claro" : "Tema escuro");
   motion_end($2("#menu .theme"));
 }
 function motion_end(root) {
@@ -6790,10 +6807,7 @@ function paint() {
     return;
   }
   if (P.mode === "desk") {
-    P.frame = 0;
-    bars();
     desk_draw();
-    return;
   }
   const doc = document.documentElement;
   const follow = SCROLL.stick && SCROLL.end;
@@ -6882,8 +6896,8 @@ function bars() {
   const turn = desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
   turn_show(turn);
   $2(".mode").hidden = false;
-  $2(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
-  $2(".mode").setAttribute("aria-label", P.mode === "desk" ? "Voltar à Conversa" : turn === 0 ? "Mesa: nenhuma pendência na sua vez" : "Mesa: " + turn + (turn === 1 ? " pendência" : " pendências") + " na sua vez");
+  $2(".mode span").textContent = turn === 0 ? "Mesa" : "Mesa · " + turn;
+  $2(".mode").setAttribute("aria-label", turn === 0 ? "Mesa: nenhuma pendência na sua vez" : "Mesa: " + turn + (turn === 1 ? " pendência" : " pendências") + " na sua vez");
   send.classList.toggle("stop", stop);
   send.setAttribute("aria-label", stop ? "Parar o Unii" : "Enviar");
   const queued = view_queued(v);
@@ -6943,7 +6957,8 @@ function go(path) {
 }
 function route() {
   const pipe = location.pathname === PIPE2;
-  const page = PAGES.includes(location.pathname) || pipe;
+  const set = PAGES.includes(location.pathname);
+  const page = pipe;
   const tree = location.pathname === TREE;
   const st = history.state ?? {};
   if (st.mode === "desk" || st.mode === "chat") {
@@ -6954,7 +6969,8 @@ function route() {
   }
   P.pane = st.pane === true && NARROW.matches;
   const desk = !page && !tree && P.mode === "desk";
-  const chat2 = !page && !tree && !desk;
+  const chat2 = !page && !tree;
+  const stays = chat2 && !$2("#log").hidden && SCROLL.away === null;
   if (!chat2 && !$2("#log").hidden && SCROLL.away === null) {
     SCROLL.away = { y: scrollY, end: SCROLL.end };
   }
@@ -6964,10 +6980,14 @@ function route() {
   document.body.classList.toggle("tree", tree);
   document.body.classList.toggle("desk", desk);
   document.body.classList.toggle("pane", desk && P.pane);
-  $2("#account").hidden = !page;
+  $2("#account").hidden = !page && !set;
+  modal($2("#settings", HTMLDialogElement), set, $2("#account"));
+  modal($2("#mesa", HTMLDialogElement), desk, null);
   $2("#tree").hidden = !tree;
   P.at = location.pathname + location.hash;
-  P.shown = chat2 && SCROLL.away !== null ? shown_key() : location.pathname + (desk ? "/mesa" : "");
+  if (!stays) {
+    P.shown = chat2 && SCROLL.away !== null ? shown_key() : location.pathname;
+  }
   if (chat2 && SCROLL.away !== null) {
     SCROLL.end = SCROLL.away.end;
     P.rows = true;
@@ -6979,7 +6999,7 @@ function route() {
   $2("#account").classList.toggle("pipe", pipe);
   if (pipe) {
     pipeline();
-  } else if (page) {
+  } else if (set) {
     account();
   }
   if (tree) {
@@ -6988,6 +7008,20 @@ function route() {
     tree_hide();
   }
   draw2(chat2 && SCROLL.end);
+}
+function modal(dlg, on, inner) {
+  if (on && inner !== null && inner.parentElement !== dlg) {
+    dlg.append(inner);
+  }
+  if (!on && inner !== null && inner.parentElement === dlg) {
+    $2("#log").after(inner);
+  }
+  if (on && !dlg.open) {
+    dlg.showModal();
+    motion_end(dlg);
+  } else if (!on && dlg.open) {
+    dlg.close();
+  }
 }
 function popped() {
   const st = history.state ?? {};
@@ -7024,6 +7058,9 @@ async function pipeline(tries = 0) {
 }
 async function account() {
   const el = $2("#account");
+  if (el.childElementCount === 0) {
+    el.innerHTML = `<p class="state">${ICON.loading}Lendo as configurações do servidor…</p>`;
+  }
   const [got, set] = await Promise.all([fetch("/api/prompts").catch(() => null), fetch("/api/settings").catch(() => null)]);
   const prompts = got !== null && got.ok ? await got.json().catch(() => null) : null;
   const push = await notify_state().catch(() => null);
@@ -7049,7 +7086,7 @@ async function account() {
   });
   const page = set?.ok ? await set.json().catch(() => null) : null;
   if (page === null) {
-    $2("#account .owned").innerHTML = `<p class="sub">Could not read the server's settings. Try again in a moment.</p>`;
+    $2("#account .owned").innerHTML = `<p class="sub state">${ICON.alert}Could not read the server's settings. Try again in a moment.</p>`;
     return;
   }
   settings_draw(page);

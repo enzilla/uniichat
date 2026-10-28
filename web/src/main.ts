@@ -751,7 +751,34 @@ function desk_wire(): void {
     P.ref = ref.value;
     draw(false);
   };
+  for (const b of document.querySelectorAll<HTMLElement>("#menu [data-ic]")) {
+    b.insertAdjacentHTML("afterbegin", ICON[b.dataset.ic as keyof typeof ICON]);
+  }
   $(".mode").onclick = () => desk_mode(P.mode === "desk" ? "chat" : "desk");
+  $(".mode").insertAdjacentHTML("afterbegin", ICON.desk);
+  $("#desk .find").insertAdjacentHTML("afterbegin", ICON.search);
+  // the Mesa and the settings are modals: Esc (cancel), their close, or
+  // m for the Mesa, go back to the chat; on a phone, the task shown goes
+  // back to the list first
+  const mesa = $("#mesa", HTMLDialogElement);
+  mesa.oncancel = (ev) => {
+    ev.preventDefault();
+    if (NARROW.matches && P.pane) {
+      desk_back();
+    } else {
+      desk_mode("chat");
+    }
+  };
+  $("#mesa .shut").onclick = () => desk_mode("chat");
+  const set = $("#settings", HTMLDialogElement);
+  set.oncancel = (ev) => {
+    ev.preventDefault();
+    go("/");
+  };
+  $("#settings .shut").onclick = () => go("/");
+  for (const shut of document.querySelectorAll("dialog .shut:empty")) {
+    shut.innerHTML = ICON.close;
+  }
   document.addEventListener("keydown", desk_keys);
   // the Mesa drawn again each minute, so how long a task waited or
   // stalled is said as time goes (desk_draw remakes only on a new minute)
@@ -844,6 +871,7 @@ function desk_draw(): void {
     DESKED = { of: v.tasks, q: P.q, ref: P.ref, sel: P.sel, said, html: Html.desk_html(v.tasks, P.q, P.ref, P.sel, Date.now(), { order, turn, cold: true }) };
   }
   const { list, detail, ids } = DESKED.html;
+  queueMicrotask(() => motion_end($("#desk")));
   P.ids = ids;
   const select = $("#desk .ref", HTMLSelectElement);
   markup(select, [`<option value="">Todos os projetos</option>`, ...refs.map((r) => `<option value="${Html.esc(r)}">${Html.esc(r)}</option>`)]);
@@ -932,15 +960,6 @@ function desk_keys(ev: KeyboardEvent): void {
     }
     $("#desk .q").focus();
     return;
-  }
-  if (ev.key === "Escape") {
-    if (NARROW.matches && P.pane) {
-      ev.preventDefault();
-      desk_back();
-    } else if (P.sel !== null) {
-      ev.preventDefault();
-      document.querySelector<HTMLElement>(`#desk .row[data-desk="${CSS.escape(P.sel)}"]`)?.focus();
-    }
   }
 }
 
@@ -1344,7 +1363,7 @@ function theme_set(dark: boolean, keep: boolean): void {
       localStorage.setItem(kept("theme"), dark ? "dark" : "light");
     } catch {}
   }
-  $("#menu .theme").innerHTML = (dark ? ICON.light : ICON.dark) + (dark ? "Light theme" : "Dark theme");
+  $("#menu .theme").innerHTML = (dark ? ICON.light : ICON.dark) + (dark ? "Tema claro" : "Tema escuro");
   motion_end($("#menu .theme"));
 }
 
@@ -1428,11 +1447,9 @@ function paint(): void {
     bars();
     return;
   }
+  // the Mesa over the chat: both drawn
   if (P.mode === "desk") {
-    P.frame = 0;
-    bars();
     desk_draw();
-    return;
   }
   const doc = document.documentElement;
   const follow = SCROLL.stick && SCROLL.end;
@@ -1525,8 +1542,8 @@ function bars(): void {
   const turn = View.desk_list(v.tasks).find((g) => g.group === "now")?.tasks.length ?? 0;
   turn_show(turn);
   $(".mode").hidden = false;
-  $(".mode").textContent = P.mode === "desk" ? "Conversa" : turn === 0 ? "Mesa" : "Mesa · " + turn;
-  $(".mode").setAttribute("aria-label", P.mode === "desk" ? "Voltar à Conversa" : turn === 0 ? "Mesa: nenhuma pendência na sua vez" : "Mesa: " + turn + (turn === 1 ? " pendência" : " pendências") + " na sua vez");
+  $(".mode span").textContent = turn === 0 ? "Mesa" : "Mesa · " + turn;
+  $(".mode").setAttribute("aria-label", turn === 0 ? "Mesa: nenhuma pendência na sua vez" : "Mesa: " + turn + (turn === 1 ? " pendência" : " pendências") + " na sua vez");
   send.classList.toggle("stop", stop);
   send.setAttribute("aria-label", stop ? "Parar o Unii" : "Enviar");
   const queued = View.view_queued(v);
@@ -1593,7 +1610,8 @@ function go(path: string): void {
 
 function route(): void {
   const pipe = location.pathname === PIPE;
-  const page = PAGES.includes(location.pathname) || pipe;
+  const set = PAGES.includes(location.pathname);
+  const page = pipe;
   const tree = location.pathname === TREE;
   const st = history.state ?? {};
   if (st.mode === "desk" || st.mode === "chat") {
@@ -1604,7 +1622,9 @@ function route(): void {
   }
   P.pane = st.pane === true && NARROW.matches;
   const desk = !page && !tree && P.mode === "desk";
-  const chat = !page && !tree && !desk;
+  // the chat stays under the Mesa and the settings (modals)
+  const chat = !page && !tree;
+  const stays = chat && !$("#log").hidden && SCROLL.away === null;
   if (!chat && !$("#log").hidden && SCROLL.away === null) {
     SCROLL.away = { y: scrollY, end: SCROLL.end };
   }
@@ -1614,10 +1634,15 @@ function route(): void {
   document.body.classList.toggle("tree", tree);
   document.body.classList.toggle("desk", desk);
   document.body.classList.toggle("pane", desk && P.pane);
-  $("#account").hidden = !page;
+  $("#account").hidden = !page && !set;
+  modal($("#settings", HTMLDialogElement), set, $("#account"));
+  modal($("#mesa", HTMLDialogElement), desk, null);
   $("#tree").hidden = !tree;
   P.at = location.pathname + location.hash;
-  P.shown = chat && SCROLL.away !== null ? shown_key() : location.pathname + (desk ? "/mesa" : "");
+  // a modal opened or closed over the chat: the chat stays where it was
+  if (!stays) {
+    P.shown = chat && SCROLL.away !== null ? shown_key() : location.pathname;
+  }
   if (chat && SCROLL.away !== null) {
     SCROLL.end = SCROLL.away.end;
     // its rows drawn first (none yet, if the page was reloaded away from it)
@@ -1630,7 +1655,7 @@ function route(): void {
   $("#account").classList.toggle("pipe", pipe);
   if (pipe) {
     void pipeline();
-  } else if (page) {
+  } else if (set) {
     void account();
   }
   if (tree) {
@@ -1639,6 +1664,23 @@ function route(): void {
     Tree.tree_hide();
   }
   draw(chat && SCROLL.end);
+}
+
+// a modal shown or not as the route says; the settings take #account in
+// while they show and give it back to the page (the pipeline's) after
+function modal(dlg: HTMLDialogElement, on: boolean, inner: HTMLElement | null): void {
+  if (on && inner !== null && inner.parentElement !== dlg) {
+    dlg.append(inner);
+  }
+  if (!on && inner !== null && inner.parentElement === dlg) {
+    $("#log").after(inner);
+  }
+  if (on && !dlg.open) {
+    dlg.showModal();
+    motion_end(dlg);
+  } else if (!on && dlg.open) {
+    dlg.close();
+  }
 }
 
 function popped(): void {
@@ -1685,6 +1727,9 @@ async function pipeline(tries = 0): Promise<void> {
 
 async function account(): Promise<void> {
   const el = $("#account");
+  if (el.childElementCount === 0) {
+    el.innerHTML = `<p class="state">${ICON.loading}Lendo as configurações do servidor…</p>`;
+  }
   const [got, set] = await Promise.all([fetch("/api/prompts").catch(() => null), fetch("/api/settings").catch(() => null)]);
   const prompts = got !== null && got.ok ? ((await got.json().catch(() => null)) as View.Prompts | null) : null;
   const push = await notify_state().catch(() => null);
@@ -1710,7 +1755,7 @@ async function account(): Promise<void> {
   });
   const page = set?.ok ? ((await set.json().catch(() => null)) as Page | null) : null;
   if (page === null) {
-    $("#account .owned").innerHTML = `<p class="sub">Could not read the server's settings. Try again in a moment.</p>`;
+    $("#account .owned").innerHTML = `<p class="sub state">${ICON.alert}Could not read the server's settings. Try again in a moment.</p>`;
     return;
   }
   settings_draw(page);
