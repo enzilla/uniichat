@@ -61,3 +61,16 @@ test("web/sw.js declares CACHE and runs", () => {
   expect(ran).toBe("string");
   expect(listeners).toContain("fetch");
 });
+
+// a stray } in style.css drops the rule after it (the CSS parser reads it
+// as part of the next selector): one sat before "#desk { display: grid",
+// and the Mesa's list and task stacked instead of side by side
+test("web/style.css: every { closed, no } without its {", () => {
+  const css = fs.readFileSync(import.meta.dir + "/web/style.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  let depth = 0;
+  for (const ch of css) {
+    depth += ch === "{" ? 1 : ch === "}" ? -1 : 0;
+    expect(depth).toBeGreaterThanOrEqual(0);
+  }
+  expect(depth).toBe(0);
+});
