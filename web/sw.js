@@ -1,5 +1,7 @@
 // UniiChat's service worker
-// ==================const CACHE = "unii-shell-{build}";
+// ==================
+
+const CACHE = "unii-shell-{build}";
 const SHELL = ["/", "/app.js", "/style.css", "/favicon.svg", "/mark.svg", "/manifest.webmanifest", "/icon-192.png"];
 const PAGES = ["/", "/settings", "/account", "/tree"];
 
